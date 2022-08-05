@@ -1,0 +1,71 @@
+# this file is not designed to be run directly
+# instead, use the docker-compose.<os>.<swift> files
+# eg docker-compose -f docker/docker-compose.yaml -f docker/docker-compose.2004.56.yaml run test
+version: "3"
+
+services:
+  cassandra:
+    image: cassandra:3.11
+    environment:
+      CASSANDRA_CQL_PORT: 9042
+      CASSANDRA_USER: cassandra
+      CASSANDRA_PASSWORD: cassandra
+      CASSANDRA_KEYSPACE: cassandra
+    ports:
+      - 9042:9042
+
+  runtime-setup:
+    image: swift-cassandra-client:default
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  common: &common
+    image: swift-cassandra-client:default
+    depends_on: [runtime-setup]
+    volumes:
+      - ~/.ssh:/root/.ssh
+      - ..:/code:z
+    working_dir: /code
+    cap_drop:
+      - CAP_NET_RAW
+      - CAP_NET_BIND_SERVICE
+
+  soundness:
+    <<: *common
+    command: /bin/bash -xcl "./scripts/soundness.sh"
+
+  build:
+    <<: *common
+    environment:
+      SANITIZER_ARG: "--sanitize=thread"
+      TSAN_OPTIONS: "no_huge_pages_for_shadow=0 suppressions=/code/tsan_suppressions.txt"
+    command: /bin/bash -xcl "swift build $${SANITIZER_ARG-}"
+
+  test:
+    <<: *common
+    depends_on: [cassandra, runtime-setup]
+    environment:
+      CASSANDRA_HOST: cassandra
+      CASSANDRA_CQL_PORT: 9042
+      CASSANDRA_USER: cassandra
+      CASSANDRA_PASSWORD: cassandra
+      CASSANDRA_KEYSPACE: cassandra
+      SANITIZER_ARG: "--sanitize=thread"
+      TSAN_OPTIONS: "no_huge_pages_for_shadow=0 suppressions=/code/tsan_suppressions.txt"
+    command: >
+      /bin/bash -xcl "
+        while ! nc -z cassandra 9042;
+        do
+          echo Waiting for Cassandra...;
+        sleep 3;
+        done;
+
+        swift test --enable-test-discovery $${SANITIZER_ARG-}
+      "
+
+  # util
+
+  shell:
+    <<: *common
+    entrypoint: /bin/bash

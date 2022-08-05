@@ -1,0 +1,9 @@
+# C++ Cassandra driver uses classic thread-safe implementation of SharedPtr based on atomics.
+# The implementation is correct but TSAN has false positive data races during SharedPtr
+# destruction.
+race:datastax::internal::RefCounted<datastax::internal::*>::dec_ref
+race:datastax::internal::Allocator<*>
+# Races in libuv.so
+race:uv__io_feed
+race:uv__update_time
+race:uv_timer_start

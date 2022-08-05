@@ -1,0 +1,22 @@
+#ifndef DATASTAX_INTERNAL_DRIVER_CONFIG_HPP
+#define DATASTAX_INTERNAL_DRIVER_CONFIG_HPP
+
+/* #undef HAVE_KERBEROS */
+#define HAVE_OPENSSL
+#define HAVE_STD_ATOMIC
+/* #undef HAVE_BOOST_ATOMIC */
+
+#ifdef __APPLE__
+#define HAVE_NOSIGPIPE
+#endif
+
+/* #undef HAVE_SIGTIMEDWAIT */
+/* #undef HASH_IN_TR1 */
+#define HAVE_BUILTIN_BSWAP32
+#define HAVE_BUILTIN_BSWAP64
+/* #undef HAVE_ARC4RANDOM */
+/* #undef HAVE_GETRANDOM */
+/* #undef HAVE_TIMERFD */
+#undef HAVE_ZLIB
+
+#endif

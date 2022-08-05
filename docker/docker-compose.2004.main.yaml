@@ -1,0 +1,18 @@
+version: "3"
+
+services:
+
+  runtime-setup:
+    image: swift-cassandra-client:20.04-main
+    build:
+      args:
+        base_image: "swiftlang/swift:nightly-main-focal"
+
+  build:
+    image: swift-cassandra-client:20.04-main
+
+  test:
+    image: swift-cassandra-client:20.04-main
+
+  shell:
+    image: swift-cassandra-client:20.04-main
