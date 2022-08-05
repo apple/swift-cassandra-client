@@ -1,4 +1,4 @@
-// swift-tools-version:5.2
+// swift-tools-version:5.3
 import class Foundation.FileManager
 import PackageDescription
 
@@ -82,9 +82,10 @@ let package = Package(
         .library(name: "CassandraClient", targets: ["CassandraClient"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", .upToNextMinor(from: "2.38.0")),
-        .package(url: "https://github.com/apple/swift-nio-ssl.git", .upToNextMinor(from: "2.16.1")),
-        .package(url: "https://github.com/apple/swift-log.git", .upToNextMajor(from: "1.0.0")),
+        .package(url: "https://github.com/apple/swift-nio", .upToNextMinor(from: "2.41.1")),
+        .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMinor(from: "2.16.1")),
+        .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
+        .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
     ],
     targets: [
         .target(
@@ -136,6 +137,7 @@ let package = Package(
             "CDataStaxDriver",
             .product(name: "NIO", package: "swift-nio"),
             .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "Atomics", package: "swift-atomics"),
             .product(name: "Logging", package: "swift-log"),
         ]),
 

@@ -1,3 +1,4 @@
+import Atomics
 @_implementationOnly import CDataStaxDriver
 import Logging
 import NIO
@@ -12,7 +13,7 @@ public class CassandraClient: CassandraSession {
     private let configuration: Configuration
     private let logger: Logger
     private let defaultSession: Session
-    private let isShutdown = NIOAtomic<Bool>.makeAtomic(value: false)
+    private let isShutdown = ManagedAtomic<Bool>(false)
 
     public init(eventLoopGroupProvider: EventLoopGroupProvider = .createNew, configuration: Configuration, logger: Logger? = nil) {
         self.configuration = configuration
@@ -27,11 +28,11 @@ public class CassandraClient: CassandraSession {
     }
 
     deinit {
-        precondition(self.isShutdown.load(), "Client not shut down before the deinit. Please call client.shutdown() when no longer needed.")
+        precondition(self.isShutdown.load(ordering: .relaxed), "Client not shut down before the deinit. Please call client.shutdown() when no longer needed.")
     }
 
     public func shutdown() throws {
-        if !self.isShutdown.compareAndExchange(expected: false, desired: true) {
+        if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged {
             return
         }
 
