@@ -1,4 +1,4 @@
-// swift-tools-version:5.3
+// swift-tools-version:5.4
 import class Foundation.FileManager
 import PackageDescription
 
@@ -52,18 +52,31 @@ libuvExclude += [
 #endif
 
 var datastaxExclude = [
-    "./datastax-cpp-driver/src/gssapi/",
+    "./datastax-cpp-driver/src/CMakeLists.txt",
+    "./datastax-cpp-driver/src/fixnl.sh",
+    "./datastax-cpp-driver/src/wkt.rl",
+    "./datastax-cpp-driver/src/wktgen.sh",
+    "./datastax-cpp-driver/src/gssapi",
     "./datastax-cpp-driver/src/ssl/ssl_no_impl.cpp",
     "./datastax-cpp-driver/src/ssl/ssl_openssl_impl.cpp", // See ./custom/src/ssl/ssl_openssl_impl.cpp
+    "./datastax-cpp-driver/src/third_party/curl/CMakeLists.txt",
+    "./datastax-cpp-driver/src/third_party/curl/COPYING",
+    "./datastax-cpp-driver/src/third_party/hdr_histogram/CMakeLists.txt",
+    "./datastax-cpp-driver/src/third_party/hdr_histogram/LICENSE.txt",
+    "./datastax-cpp-driver/src/third_party/http-parser/AUTHORS",
     "./datastax-cpp-driver/src/third_party/http-parser/bench.c",
+    "./datastax-cpp-driver/src/third_party/http-parser/CMakeLists.txt",
+    "./datastax-cpp-driver/src/third_party/http-parser/http_parser.gyp",
+    "./datastax-cpp-driver/src/third_party/http-parser/LICENSE-MIT",
+    "./datastax-cpp-driver/src/third_party/http-parser/README",
+    "./datastax-cpp-driver/src/third_party/http-parser/README.md",
     "./datastax-cpp-driver/src/third_party/http-parser/test.c",
     "./datastax-cpp-driver/src/third_party/http-parser/contrib/parsertrace.c",
     "./datastax-cpp-driver/src/third_party/http-parser/contrib/url_parser.c",
-    "./datastax-cpp-driver/src/third_party/minizip/iowin32.c",
-    "./datastax-cpp-driver/src/third_party/minizip/miniunz.c",
-    "./datastax-cpp-driver/src/third_party/minizip/minizip.c",
-    "./datastax-cpp-driver/src/third_party/minizip/unzip.c",
-    "./datastax-cpp-driver/src/third_party/minizip/zip.c",
+    "./datastax-cpp-driver/src/third_party/minizip",
+    "./datastax-cpp-driver/src/third_party/mt19937_64",
+    "./datastax-cpp-driver/src/third_party/rapidjson",
+    "./datastax-cpp-driver/src/third_party/sparsehash",
     "./datastax-cpp-driver/tests",
     "./datastax-cpp-driver/examples",
 ]
@@ -83,7 +96,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio", .upToNextMinor(from: "2.41.1")),
-        .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMinor(from: "2.16.1")),
+        .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMinor(from: "2.21.0")),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
     ],
@@ -128,8 +141,8 @@ let package = Package(
                 .headerSearchPath("./custom/include"),
                 .headerSearchPath("./extras"),
                 .headerSearchPath("./datastax-cpp-driver/src"),
-                .headerSearchPath("./datastax-cpp-driver/src/third_party/sparsehash/src/"),
                 .headerSearchPath("./datastax-cpp-driver/src/third_party/http-parser"),
+                .headerSearchPath("./datastax-cpp-driver/src/third_party/sparsehash/src/"),
             ]
         ),
 
