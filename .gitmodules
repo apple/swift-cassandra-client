@@ -1,0 +1,6 @@
+[submodule "datastax-cpp-driver"]
+	path = Sources/CDataStaxDriver/datastax-cpp-driver
+	url = https://github.com/datastax/cpp-driver.git
+[submodule "libuv"]
+	path = Sources/Clibuv/libuv
+	url = https://github.com/libuv/libuv.git
