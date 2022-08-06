@@ -1,3 +1,17 @@
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift Cassandra Client open source project
+//
+// Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift Cassandra Client project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
+
 @_implementationOnly import CDataStaxDriver
 import Dispatch
 import Logging
@@ -43,7 +57,8 @@ public extension CassandraSession {
              parameters: [CassandraClient.Statement.Value] = [],
              options: CassandraClient.Statement.Options = .init(),
              on eventLoop: EventLoop? = nil,
-             logger: Logger? = nil) -> EventLoopFuture<Void> {
+             logger: Logger? = nil) -> EventLoopFuture<Void>
+    {
         self.query(command, parameters: parameters, options: options, on: eventLoop, logger: logger).map { _ in () }
     }
 
@@ -55,7 +70,8 @@ public extension CassandraSession {
                   options: CassandraClient.Statement.Options = .init(),
                   on eventLoop: EventLoop? = nil,
                   logger: Logger? = nil,
-                  transform: @escaping (CassandraClient.Row) -> T?) -> EventLoopFuture<[T]> {
+                  transform: @escaping (CassandraClient.Row) -> T?) -> EventLoopFuture<[T]>
+    {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map { rows in
             rows.compactMap(transform)
         }
@@ -68,7 +84,8 @@ public extension CassandraSession {
                              parameters: [CassandraClient.Statement.Value] = [],
                              options: CassandraClient.Statement.Options = .init(),
                              on eventLoop: EventLoop? = nil,
-                             logger: Logger? = nil) -> EventLoopFuture<[T]> {
+                             logger: Logger? = nil) -> EventLoopFuture<[T]>
+    {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).flatMapThrowing { rows in
             try rows.map { row in
                 try T(from: CassandraClient.RowDecoder(row: row))
@@ -87,12 +104,13 @@ public extension CassandraSession {
                parameters: [CassandraClient.Statement.Value] = [],
                options: CassandraClient.Statement.Options = .init(),
                on eventLoop: EventLoop? = nil,
-               logger: Logger? = nil) -> EventLoopFuture<CassandraClient.Rows> {
+               logger: Logger? = nil) -> EventLoopFuture<CassandraClient.Rows>
+    {
         do {
             let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
-            let eventLoop = eventLoop ?? self.eventLoopGroup.next()
+            let eventLoop = eventLoop ?? eventLoopGroup.next()
             return eventLoop.makeFailedFuture(error)
         }
     }
@@ -105,12 +123,13 @@ public extension CassandraSession {
                pageSize: Int32,
                options: CassandraClient.Statement.Options = .init(),
                on eventLoop: EventLoop? = nil,
-               logger: Logger? = nil) -> EventLoopFuture<CassandraClient.PaginatedRows> {
+               logger: Logger? = nil) -> EventLoopFuture<CassandraClient.PaginatedRows>
+    {
         do {
             let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
         } catch {
-            let eventLoop = eventLoop ?? self.eventLoopGroup.next()
+            let eventLoop = eventLoop ?? eventLoopGroup.next()
             return eventLoop.makeFailedFuture(error)
         }
     }
@@ -154,7 +173,7 @@ internal extension CassandraClient {
             cass_session_free(self.rawPointer)
         }
 
-        public func shutdown() throws {
+        func shutdown() throws {
             self.lock.lock()
             defer {
                 self.state = .disconnected
@@ -168,7 +187,7 @@ internal extension CassandraClient {
             }
         }
 
-        public func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<Rows> {
+        func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<Rows> {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
             let logger = logger ?? self.logger
 
@@ -206,7 +225,7 @@ internal extension CassandraClient {
                 logger.debug("executing: \(statement.query)")
                 logger.trace("\(statement.parameters)")
                 let promise = eventLoop.makePromise(of: Rows.self)
-                let future = cass_session_execute(self.rawPointer, statement.rawPointer)
+                let future = cass_session_execute(rawPointer, statement.rawPointer)
                 futureSetResultCallback(future!) { result in
                     promise.completeWith(result)
                 }
@@ -221,7 +240,7 @@ internal extension CassandraClient {
             }
         }
 
-        public func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<CassandraClient.PaginatedRows> {
+        func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<CassandraClient.PaginatedRows> {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
 
             do {
@@ -258,7 +277,7 @@ internal extension CassandraClient {
         private func disconect() throws {
             var error: Swift.Error?
             let semaphore = DispatchSemaphore(value: 0)
-            let future = cass_session_close(self.rawPointer)
+            let future = cass_session_close(rawPointer)
             futureSetCallback(future!) { result in
                 defer { semaphore.signal() }
                 if case .failure(let e) = result {
@@ -270,16 +289,16 @@ internal extension CassandraClient {
                 throw error
             }
         }
-        
+
         #if compiler(>=5.5) && canImport(_Concurrency)
         private struct ConnectionTask {
             private let _task: Any
-            
+
             @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
             var task: Task<Void, Swift.Error> {
                 self._task as! Task<Void, Swift.Error>
             }
-            
+
             @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
             init(_ task: Task<Void, Swift.Error>) {
                 self._task = task
@@ -351,42 +370,42 @@ public extension CassandraSession {
 
 extension CassandraClient.Session {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func execute(statement: CassandraClient.Statement, logger: Logger? = nil) async throws -> CassandraClient.Rows {
+    func execute(statement: CassandraClient.Statement, logger: Logger? = nil) async throws -> CassandraClient.Rows {
         let logger = logger ?? self.logger
-        
-        self.lock.lock()
-        switch self.state {
+
+        lock.lock()
+        switch state {
         case .idle:
             let task = self.connect(logger: logger)
-            self.state = .connecting(ConnectionTask(task))
-            self.lock.unlock()
+            state = .connecting(ConnectionTask(task))
+            lock.unlock()
 
             try await task.value
-            self.lock.withLock {
+            lock.withLock {
                 self.state = .connected
             }
             return try await self.execute(statement: statement, logger: logger)
         case .connectingFuture(let future):
-            self.lock.unlock()
+            lock.unlock()
             try await future.get()
             return try await self.execute(statement: statement, logger: logger)
         case .connecting(let task):
-            self.lock.unlock()
+            lock.unlock()
             try await task.task.value
             return try await self.execute(statement: statement, logger: logger)
         case .connected:
-            self.lock.unlock()
+            lock.unlock()
             logger.debug("executing: \(statement.query)")
             logger.trace("\(statement.parameters)")
-            let future = cass_session_execute(self.rawPointer, statement.rawPointer)
+            let future = cass_session_execute(rawPointer, statement.rawPointer)
             return try await withCheckedThrowingContinuation { continuation in
                 futureSetResultCallback(future!) { result in
                     continuation.resume(with: result)
                 }
             }
         case .disconnected:
-            self.lock.unlock()
-            if self.eventLoopGroupContainer.managed {
+            lock.unlock()
+            if eventLoopGroupContainer.managed {
                 // eventloop *is* shutdown now
                 preconditionFailure("client is disconnected")
             }
@@ -395,7 +414,7 @@ extension CassandraClient.Session {
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func execute(statement: CassandraClient.Statement, pageSize: Int32, logger: Logger? = nil) async throws -> CassandraClient.PaginatedRows {
+    func execute(statement: CassandraClient.Statement, pageSize: Int32, logger: Logger? = nil) async throws -> CassandraClient.PaginatedRows {
         try statement.setPagingSize(pageSize)
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
     }

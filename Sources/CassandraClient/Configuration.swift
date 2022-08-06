@@ -1,3 +1,17 @@
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift Cassandra Client open source project
+//
+// Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift Cassandra Client project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
+
 @_implementationOnly import CDataStaxDriver
 import NIO
 
@@ -149,40 +163,40 @@ public extension CassandraClient {
             if let ssl = self.ssl {
                 try cluster.setSSL(try ssl.makeSSLContext())
             }
-            if let value = self.numIOThreads {
+            if let value = numIOThreads {
                 try cluster.setNumThreadsIO(value)
             }
-            if let value = self.connectTimeoutMillis {
+            if let value = connectTimeoutMillis {
                 try cluster.setConnectTimeout(value)
             }
-            if let value = self.requestTimeoutMillis {
+            if let value = requestTimeoutMillis {
                 try cluster.setRequestTimeout(value)
             }
-            if let value = self.resolveTimeoutMillis {
+            if let value = resolveTimeoutMillis {
                 try cluster.setResolveTimeout(value)
             }
-            if let value = self.coreConnectionsPerHost {
+            if let value = coreConnectionsPerHost {
                 try cluster.setCoreConnectionsPerHost(value)
             }
-            if let value = self.tcpNodelay {
+            if let value = tcpNodelay {
                 try cluster.setTcpNodelay(value)
             }
-            if let value = self.tcpKeepalive {
+            if let value = tcpKeepalive {
                 try cluster.setTcpKeepalive(value, delayInSeconds: self.tcpKeepaliveDelaySeconds)
             }
-            if let value = self.connectionHeartbeatInterval {
+            if let value = connectionHeartbeatInterval {
                 try cluster.setConnectionHeartbeatInterval(value)
             }
-            if let value = self.connectionIdleTimeout {
+            if let value = connectionIdleTimeout {
                 try cluster.setConnectionIdleTimeout(value)
             }
-            if let value = self.schema {
+            if let value = schema {
                 try cluster.setUseSchema(value)
             }
-            if let value = self.hostnameResolution {
+            if let value = hostnameResolution {
                 try cluster.setUseHostnameResolution(value)
             }
-            if let value = self.randomizedContactPoints {
+            if let value = randomizedContactPoints {
                 try cluster.setUseRandomizedContactPoints(value)
             }
             switch self.speculativeExecutionPolicy {
@@ -201,7 +215,7 @@ public extension CassandraClient {
             case .none:
                 break
             }
-            if let value = self.compact {
+            if let value = compact {
                 try cluster.setNoCompact(!value)
             }
 
@@ -209,7 +223,7 @@ public extension CassandraClient {
         }
 
         public var description: String {
-            return """
+            """
             [\(Configuration.self):
             port: \(self.port),
             username: \(self.username ?? "none"),
@@ -362,7 +376,7 @@ public extension CassandraClient.Configuration {
         func makeSSLContext() throws -> SSLContext {
             let sslContext = SSLContext()
 
-            if let trustedCerts = self.trustedCertificates {
+            if let trustedCerts = trustedCertificates {
                 for cert in trustedCerts {
                     try sslContext.addTrustedCert(cert)
                 }

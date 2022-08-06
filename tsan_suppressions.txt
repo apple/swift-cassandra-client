@@ -1,3 +1,17 @@
+##===----------------------------------------------------------------------===##
+##
+## This source file is part of the Swift Cassandra Client open source project
+##
+## Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+## Licensed under Apache License v2.0
+##
+## See LICENSE.txt for license information
+## See CONTRIBUTORS.txt for the list of Swift Cassandra Client project authors
+##
+## SPDX-License-Identifier: Apache-2.0
+##
+##===----------------------------------------------------------------------===##
+
 # C++ Cassandra driver uses classic thread-safe implementation of SharedPtr based on atomics.
 # The implementation is correct but TSAN has false positive data races during SharedPtr
 # destruction.

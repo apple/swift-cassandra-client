@@ -1,3 +1,17 @@
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift Cassandra Client open source project
+//
+// Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift Cassandra Client project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
+
 @_implementationOnly import CDataStaxDriver
 import Foundation
 import Logging
@@ -16,19 +30,19 @@ public extension CassandraClient {
         }
 
         public var first: Row? {
-            return self.makeIterator().next()
+            self.makeIterator().next()
         }
 
         public var count: Int {
-            return cass_result_row_count(self.rawPointer)
+            cass_result_row_count(self.rawPointer)
         }
 
         public var columnsCount: Int {
-            return cass_result_column_count(self.rawPointer)
+            cass_result_column_count(self.rawPointer)
         }
 
         public func makeIterator() -> Iterator {
-            return Iterator(rows: self)
+            Iterator(rows: self)
         }
 
         public final class Iterator: IteratorProtocol {
@@ -166,7 +180,7 @@ public extension CassandraClient {
             }
 
             do {
-                let rows = try await self.session.execute(statement: self.statement, logger: self.logger)
+                let rows = try await session.execute(statement: self.statement, logger: self.logger)
                 self.hasMorePages = cass_result_has_more_pages(rows.rawPointer) == cass_true
                 if self.hasMorePages {
                     cass_statement_set_paging_state(self.statement.rawPointer, rows.rawPointer)
@@ -184,7 +198,7 @@ public extension CassandraClient {
             precondition(self.hasMorePages, "Only one of 'forEach' or 'map' can be called once per PaginatedRows")
 
             func _forEach() async throws {
-                let rows = try await self.nextPage()
+                let rows = try await nextPage()
                 try rows.forEach(body)
 
                 guard self.hasMorePages else {
@@ -201,7 +215,7 @@ public extension CassandraClient {
             precondition(self.hasMorePages, "Only one of 'forEach' or 'map' can be called once per PaginatedRows")
 
             func _map(_ accumulated: [T]) async throws -> [T] {
-                let rows = try await self.nextPage()
+                let rows = try await nextPage()
                 let transformed = try rows.map(transform)
                 let newAccumulated = accumulated + transformed
 
@@ -227,11 +241,11 @@ public extension CassandraClient {
         }
 
         public func column(_ index: Int) -> Column? {
-            return Column(row: self, index: index)
+            Column(row: self, index: index)
         }
 
         public func column(_ name: String) -> Column? {
-            return Column(row: self, name: name)
+            Column(row: self, name: name)
         }
     }
 
@@ -269,7 +283,7 @@ public extension CassandraClient {
 public extension CassandraClient.Column {
     var int8: Int8? {
         var value: Int8 = 0
-        let error = cass_value_get_int8(self.rawPointer, &value)
+        let error = cass_value_get_int8(rawPointer, &value)
         if error == CASS_OK {
             return value
         } else {
@@ -280,11 +294,11 @@ public extension CassandraClient.Column {
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Int8? {
-        return self.column(name)?.int8
+        self.column(name)?.int8
     }
 
     func column(_ index: Int) -> Int8? {
-        return self.column(index)?.int8
+        self.column(index)?.int8
     }
 }
 
@@ -293,18 +307,18 @@ public extension CassandraClient.Row {
 public extension CassandraClient.Column {
     var int16: Int16? {
         var value: Int16 = 0
-        let error = cass_value_get_int16(self.rawPointer, &value)
+        let error = cass_value_get_int16(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Int16? {
-        return self.column(name)?.int16
+        self.column(name)?.int16
     }
 
     func column(_ index: Int) -> Int16? {
-        return self.column(index)?.int16
+        self.column(index)?.int16
     }
 }
 
@@ -313,18 +327,18 @@ public extension CassandraClient.Row {
 public extension CassandraClient.Column {
     var int32: Int32? {
         var value: Int32 = 0
-        let error = cass_value_get_int32(self.rawPointer, &value)
+        let error = cass_value_get_int32(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Int32? {
-        return self.column(name)?.int32
+        self.column(name)?.int32
     }
 
     func column(_ index: Int) -> Int32? {
-        return self.column(index)?.int32
+        self.column(index)?.int32
     }
 }
 
@@ -333,18 +347,18 @@ public extension CassandraClient.Row {
 public extension CassandraClient.Column {
     var uint32: UInt32? {
         var value: UInt32 = 0
-        let error = cass_value_get_uint32(self.rawPointer, &value)
+        let error = cass_value_get_uint32(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> UInt32? {
-        return self.column(name)?.uint32
+        self.column(name)?.uint32
     }
 
     func column(_ index: Int) -> UInt32? {
-        return self.column(index)?.uint32
+        self.column(index)?.uint32
     }
 }
 
@@ -353,18 +367,18 @@ public extension CassandraClient.Row {
 public extension CassandraClient.Column {
     var int64: Int64? {
         var value: cass_int64_t = 0
-        let error = cass_value_get_int64(self.rawPointer, &value)
+        let error = cass_value_get_int64(rawPointer, &value)
         return error == CASS_OK ? Int64(value) : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Int64? {
-        return self.column(name)?.int64
+        self.column(name)?.int64
     }
 
     func column(_ index: Int) -> Int64? {
-        return self.column(index)?.int64
+        self.column(index)?.int64
     }
 }
 
@@ -373,18 +387,18 @@ public extension CassandraClient.Row {
 public extension CassandraClient.Column {
     var float32: Float32? {
         var value: Float32 = 0
-        let error = cass_value_get_float(self.rawPointer, &value)
+        let error = cass_value_get_float(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Float32? {
-        return self.column(name)?.float32
+        self.column(name)?.float32
     }
 
     func column(_ index: Int) -> Float32? {
-        return self.column(index)?.float32
+        self.column(index)?.float32
     }
 }
 
@@ -393,18 +407,18 @@ public extension CassandraClient.Row {
 public extension CassandraClient.Column {
     var double: Double? {
         var value: Double = 0
-        let error = cass_value_get_double(self.rawPointer, &value)
+        let error = cass_value_get_double(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Double? {
-        return self.column(name)?.double
+        self.column(name)?.double
     }
 
     func column(_ index: Int) -> Double? {
-        return self.column(index)?.double
+        self.column(index)?.double
     }
 }
 
@@ -413,18 +427,18 @@ public extension CassandraClient.Row {
 public extension CassandraClient.Column {
     var bool: Bool? {
         var value = cass_bool_t(0)
-        let error = cass_value_get_bool(self.rawPointer, &value)
+        let error = cass_value_get_bool(rawPointer, &value)
         return error == CASS_OK ? value == cass_true : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Bool? {
-        return self.column(name)?.bool
+        self.column(name)?.bool
     }
 
     func column(_ index: Int) -> Bool? {
-        return self.column(index)?.bool
+        self.column(index)?.bool
     }
 }
 
@@ -434,7 +448,7 @@ public extension CassandraClient.Column {
     var string: String? {
         var value: UnsafePointer<CChar>?
         var valueSize = 0
-        let error = cass_value_get_string(self.rawPointer, &value, &valueSize)
+        let error = cass_value_get_string(rawPointer, &value, &valueSize)
         guard let definiteValue = value, error == CASS_OK else {
             return nil
         }
@@ -447,11 +461,11 @@ public extension CassandraClient.Column {
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> String? {
-        return self.column(name)?.string
+        self.column(name)?.string
     }
 
     func column(_ index: Int) -> String? {
-        return self.column(index)?.string
+        self.column(index)?.string
     }
 }
 
@@ -490,7 +504,7 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
         let rawPointer: OpaquePointer
 
         init() {
-            self.rawPointer = cass_uuid_gen_new()
+            rawPointer = cass_uuid_gen_new()
         }
 
         deinit {
@@ -499,7 +513,7 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
 
         func generateTimeBased() -> Foundation.UUID {
             var value = CassUuid()
-            cass_uuid_gen_time(self.rawPointer, &value)
+            cass_uuid_gen_time(rawPointer, &value)
             return value.uuid()
         }
     }
@@ -508,7 +522,7 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
 public extension CassandraClient.Column {
     var uuid: Foundation.UUID? {
         var value = CassUuid()
-        let error = cass_value_get_uuid(self.rawPointer, &value)
+        let error = cass_value_get_uuid(rawPointer, &value)
         guard error == CASS_OK else {
             return nil
         }
@@ -517,7 +531,7 @@ public extension CassandraClient.Column {
 
     var timeuuid: TimeBasedUUID? {
         var value = CassUuid()
-        let error = cass_value_get_uuid(self.rawPointer, &value)
+        let error = cass_value_get_uuid(rawPointer, &value)
         guard error == CASS_OK else {
             return nil
         }
@@ -527,19 +541,19 @@ public extension CassandraClient.Column {
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> Foundation.UUID? {
-        return self.column(name)?.uuid
+        self.column(name)?.uuid
     }
 
     func column(_ index: Int) -> Foundation.UUID? {
-        return self.column(index)?.uuid
+        self.column(index)?.uuid
     }
 
     func column(_ name: String) -> TimeBasedUUID? {
-        return self.column(name)?.timeuuid
+        self.column(name)?.timeuuid
     }
 
     func column(_ index: Int) -> TimeBasedUUID? {
-        return self.column(index)?.timeuuid
+        self.column(index)?.timeuuid
     }
 }
 
@@ -556,7 +570,7 @@ internal extension CassUuid {
         timeAndVersion.append(uuid.1)
         timeAndVersion.append(uuid.2)
         timeAndVersion.append(uuid.3)
-        self.time_and_version = cass_uint64_t(UInt64(bigEndian: timeAndVersion.withUnsafeBufferPointer {
+        time_and_version = cass_uint64_t(UInt64(bigEndian: timeAndVersion.withUnsafeBufferPointer {
             ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
         }.pointee))
 
@@ -569,7 +583,7 @@ internal extension CassUuid {
         clockSeqAndNode.append(uuid.13)
         clockSeqAndNode.append(uuid.14)
         clockSeqAndNode.append(uuid.15)
-        self.clock_seq_and_node = cass_uint64_t(UInt64(bigEndian: clockSeqAndNode.withUnsafeBufferPointer {
+        clock_seq_and_node = cass_uint64_t(UInt64(bigEndian: clockSeqAndNode.withUnsafeBufferPointer {
             ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
         }.pointee))
     }
@@ -577,7 +591,7 @@ internal extension CassUuid {
     func uuid() -> Foundation.UUID {
         var buffer: uuid_t
 
-        let timeAndVersion = withUnsafeBytes(of: self.time_and_version.bigEndian) { Array($0) }
+        let timeAndVersion = withUnsafeBytes(of: time_and_version.bigEndian) { Array($0) }
         buffer.0 = timeAndVersion[4]
         buffer.1 = timeAndVersion[5]
         buffer.2 = timeAndVersion[6]
@@ -587,7 +601,7 @@ internal extension CassUuid {
         buffer.6 = timeAndVersion[0]
         buffer.7 = timeAndVersion[1]
 
-        let clockSeqAndNode = withUnsafeBytes(of: self.clock_seq_and_node.bigEndian) { Array($0) }
+        let clockSeqAndNode = withUnsafeBytes(of: clock_seq_and_node.bigEndian) { Array($0) }
         buffer.8 = clockSeqAndNode[0]
         buffer.9 = clockSeqAndNode[1]
         buffer.10 = clockSeqAndNode[2]
@@ -606,7 +620,7 @@ internal extension CassUuid {
 public extension CassandraClient.Column {
     var date: UInt32? {
         var value: UInt32 = 0
-        let error = cass_value_get_uint32(self.rawPointer, &value)
+        let error = cass_value_get_uint32(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
@@ -625,18 +639,18 @@ public extension CassandraClient.Column {
     var bytes: [UInt8]? {
         var value: UnsafePointer<UInt8>?
         var size = 0
-        let error = cass_value_get_bytes(self.rawPointer, &value, &size)
+        let error = cass_value_get_bytes(rawPointer, &value, &size)
         return error == CASS_OK ? Array(UnsafeBufferPointer(start: value, count: size)) : nil
     }
 }
 
 public extension CassandraClient.Row {
     func column(_ name: String) -> [UInt8]? {
-        return self.column(name)?.bytes
+        self.column(name)?.bytes
     }
 
     func column(_ index: Int) -> [UInt8]? {
-        return self.column(index)?.bytes
+        self.column(index)?.bytes
     }
 }
 
@@ -646,7 +660,7 @@ public extension CassandraClient.Column {
     func withUnsafeBuffer<R>(closure: (UnsafeBufferPointer<UInt8>?) throws -> R) rethrows -> R {
         var value: UnsafePointer<UInt8>?
         var valueSize = Int()
-        let error = cass_value_get_bytes(self.rawPointer, &value, &valueSize)
+        let error = cass_value_get_bytes(rawPointer, &value, &valueSize)
         if error == CASS_OK {
             return try closure(UnsafeBufferPointer(start: value, count: valueSize))
         } else {
