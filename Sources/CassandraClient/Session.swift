@@ -53,25 +53,27 @@ public extension CassandraSession {
     /// Run insert / update / detete  or DDL commands where no result is expected.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func run(_ command: String,
-             parameters: [CassandraClient.Statement.Value] = [],
-             options: CassandraClient.Statement.Options = .init(),
-             on eventLoop: EventLoop? = nil,
-             logger: Logger? = nil) -> EventLoopFuture<Void>
-    {
+    func run(
+        _ command: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = nil,
+        logger: Logger? = nil
+    ) -> EventLoopFuture<Void> {
         self.query(command, parameters: parameters, options: options, on: eventLoop, logger: logger).map { _ in () }
     }
 
     /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func query<T>(_ query: String,
-                  parameters: [CassandraClient.Statement.Value] = [],
-                  options: CassandraClient.Statement.Options = .init(),
-                  on eventLoop: EventLoop? = nil,
-                  logger: Logger? = nil,
-                  transform: @escaping (CassandraClient.Row) -> T?) -> EventLoopFuture<[T]>
-    {
+    func query<T>(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = nil,
+        logger: Logger? = nil,
+        transform: @escaping (CassandraClient.Row) -> T?
+    ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map { rows in
             rows.compactMap(transform)
         }
@@ -80,12 +82,13 @@ public extension CassandraSession {
     /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func query<T: Decodable>(_ query: String,
-                             parameters: [CassandraClient.Statement.Value] = [],
-                             options: CassandraClient.Statement.Options = .init(),
-                             on eventLoop: EventLoop? = nil,
-                             logger: Logger? = nil) -> EventLoopFuture<[T]>
-    {
+    func query<T: Decodable>(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = nil,
+        logger: Logger? = nil
+    ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).flatMapThrowing { rows in
             try rows.map { row in
                 try T(from: CassandraClient.RowDecoder(row: row))
@@ -100,12 +103,13 @@ public extension CassandraSession {
     /// - Important:
     ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
     ///   - Attempting to wrap the `Rows` sequence in an `Array` will not work, use the transformer variant instead.
-    func query(_ query: String,
-               parameters: [CassandraClient.Statement.Value] = [],
-               options: CassandraClient.Statement.Options = .init(),
-               on eventLoop: EventLoop? = nil,
-               logger: Logger? = nil) -> EventLoopFuture<CassandraClient.Rows>
-    {
+    func query(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = nil,
+        logger: Logger? = nil
+    ) -> EventLoopFuture<CassandraClient.Rows> {
         do {
             let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
             return self.execute(statement: statement, on: eventLoop, logger: logger)
@@ -118,13 +122,14 @@ public extension CassandraSession {
     /// Query large data-sets where the number of rows fetch at a time is limited by `pageSize`.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func query(_ query: String,
-               parameters: [CassandraClient.Statement.Value] = [],
-               pageSize: Int32,
-               options: CassandraClient.Statement.Options = .init(),
-               on eventLoop: EventLoop? = nil,
-               logger: Logger? = nil) -> EventLoopFuture<CassandraClient.PaginatedRows>
-    {
+    func query(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        pageSize: Int32,
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = nil,
+        logger: Logger? = nil
+    ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
         do {
             let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
@@ -314,30 +319,36 @@ internal extension CassandraClient {
 public extension CassandraSession {
     /// Run  insert / update / detete  or DDL commands where no result is expected
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func run(_ command: String,
-             parameters: [CassandraClient.Statement.Value] = [],
-             options: CassandraClient.Statement.Options = .init(),
-             logger: Logger? = nil) async throws {
+    func run(
+        _ command: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = nil
+    ) async throws {
         _ = try await self.query(command, parameters: parameters, options: options, logger: logger)
     }
 
     /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query<T>(_ query: String,
-                  parameters: [CassandraClient.Statement.Value] = [],
-                  options: CassandraClient.Statement.Options = .init(),
-                  logger: Logger? = nil,
-                  transform: @escaping (CassandraClient.Row) -> T?) async throws -> [T] {
+    func query<T>(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = nil,
+        transform: @escaping (CassandraClient.Row) -> T?
+    ) async throws -> [T] {
         let rows = try await self.query(query, parameters: parameters, options: options, logger: logger)
         return rows.compactMap(transform)
     }
 
     /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query<T: Decodable>(_ query: String,
-                             parameters: [CassandraClient.Statement.Value] = [],
-                             options: CassandraClient.Statement.Options = .init(),
-                             logger: Logger? = nil) async throws -> [T] {
+    func query<T: Decodable>(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = nil
+    ) async throws -> [T] {
         let rows = try await self.query(query, parameters: parameters, options: options, logger: logger)
         return try rows.map { row in
             try T(from: CassandraClient.RowDecoder(row: row))
@@ -348,21 +359,25 @@ public extension CassandraSession {
     /// Important Note:  Advancing the iterator invalidates values retrieved by the previous iteration.
     /// Attempting to wrap the `Rows` sequence in an `Array` will not work, use the transformer variant instead.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query(_ query: String,
-               parameters: [CassandraClient.Statement.Value] = [],
-               options: CassandraClient.Statement.Options = .init(),
-               logger: Logger? = nil) async throws -> CassandraClient.Rows {
+    func query(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = nil
+    ) async throws -> CassandraClient.Rows {
         let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, logger: logger)
     }
 
     /// Query large data-sets where the number of rows fetch at a time is limited by `pageSize`.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query(_ query: String,
-               parameters: [CassandraClient.Statement.Value] = [],
-               pageSize: Int32,
-               options: CassandraClient.Statement.Options = .init(),
-               logger: Logger? = nil) async throws -> CassandraClient.PaginatedRows {
+    func query(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        pageSize: Int32,
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = nil
+    ) async throws -> CassandraClient.PaginatedRows {
         let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }

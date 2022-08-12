@@ -504,7 +504,7 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
         let rawPointer: OpaquePointer
 
         init() {
-            rawPointer = cass_uuid_gen_new()
+            self.rawPointer = cass_uuid_gen_new()
         }
 
         deinit {
@@ -513,7 +513,7 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
 
         func generateTimeBased() -> Foundation.UUID {
             var value = CassUuid()
-            cass_uuid_gen_time(rawPointer, &value)
+            cass_uuid_gen_time(self.rawPointer, &value)
             return value.uuid()
         }
     }
