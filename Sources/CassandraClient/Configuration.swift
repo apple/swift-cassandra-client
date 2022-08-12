@@ -62,30 +62,31 @@ public extension CassandraClient {
             case v5 = 5
         }
 
-        public init(contactPointsProvider: @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void,
-                    port: Int32,
-                    protocolVersion: ProtocolVersion,
-                    username: String? = nil,
-                    password: String? = nil,
-                    ssl: SSL? = nil,
-                    keyspace: String? = nil,
-                    numIOThreads: UInt32? = nil,
-                    connectTimeoutMillis: UInt32? = nil,
-                    requestTimeoutMillis: UInt32? = nil,
-                    resolveTimeoutMillis: UInt32? = nil,
-                    coreConnectionsPerHost: UInt32? = nil,
-                    tcpNodelay: Bool? = nil,
-                    tcpKeepalive: Bool? = nil,
-                    tcpKeepaliveDelaySeconds: UInt32 = 0,
-                    connectionHeartbeatInterval: UInt32? = nil,
-                    connectionIdleTimeout: UInt32? = nil,
-                    schema: Bool? = nil,
-                    hostnameResolution: Bool? = nil,
-                    randomizedContactPoints: Bool? = nil,
-                    speculativeExecutionPolicy: SpeculativeExecutionPolicy? = nil,
-                    prepareStrategy: PrepareStrategy? = nil,
-                    compact: Bool? = nil)
-        {
+        public init(
+            contactPointsProvider: @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void,
+            port: Int32,
+            protocolVersion: ProtocolVersion,
+            username: String? = nil,
+            password: String? = nil,
+            ssl: SSL? = nil,
+            keyspace: String? = nil,
+            numIOThreads: UInt32? = nil,
+            connectTimeoutMillis: UInt32? = nil,
+            requestTimeoutMillis: UInt32? = nil,
+            resolveTimeoutMillis: UInt32? = nil,
+            coreConnectionsPerHost: UInt32? = nil,
+            tcpNodelay: Bool? = nil,
+            tcpKeepalive: Bool? = nil,
+            tcpKeepaliveDelaySeconds: UInt32 = 0,
+            connectionHeartbeatInterval: UInt32? = nil,
+            connectionIdleTimeout: UInt32? = nil,
+            schema: Bool? = nil,
+            hostnameResolution: Bool? = nil,
+            randomizedContactPoints: Bool? = nil,
+            speculativeExecutionPolicy: SpeculativeExecutionPolicy? = nil,
+            prepareStrategy: PrepareStrategy? = nil,
+            compact: Bool? = nil
+        ) {
             self.contactPointsProvider = contactPointsProvider
             self.port = port
             self.protocolVersion = protocolVersion
