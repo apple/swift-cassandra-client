@@ -133,3 +133,5 @@ With docker (takes about 1 minute to be ready to accept connections):
 ```bash
 $ docker run --name cassandra -p 127.0.0.1:9042:9042 -d cassandra:3
 ```
+
+
