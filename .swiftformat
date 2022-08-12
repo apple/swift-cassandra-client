@@ -2,7 +2,7 @@
 
 # file options
 
---exclude .build
+--exclude .build,**/CDataStaxDriver,**/Clibuv
 
 # format options
 
