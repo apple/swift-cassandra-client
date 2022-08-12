@@ -11,8 +11,10 @@ services:
       CASSANDRA_USER: cassandra
       CASSANDRA_PASSWORD: cassandra
       CASSANDRA_KEYSPACE: cassandra
+    networks:
+      - cassandra
     ports:
-      - 9042:9042
+      - 9042
 
   runtime-setup:
     image: swift-cassandra-client:default
@@ -37,10 +39,8 @@ services:
 
   build:
     <<: *common
-    environment:
-      SANITIZER_ARG: "--sanitize=thread"
-      TSAN_OPTIONS: "no_huge_pages_for_shadow=0 suppressions=/code/tsan_suppressions.txt"
-    command: /bin/bash -xcl "swift build $${SANITIZER_ARG-}"
+    environment: []
+    command: /bin/bash -cl "swift build"
 
   test:
     <<: *common
@@ -51,21 +51,27 @@ services:
       CASSANDRA_USER: cassandra
       CASSANDRA_PASSWORD: cassandra
       CASSANDRA_KEYSPACE: cassandra
-      SANITIZER_ARG: "--sanitize=thread"
-      TSAN_OPTIONS: "no_huge_pages_for_shadow=0 suppressions=/code/tsan_suppressions.txt"
     command: >
       /bin/bash -xcl "
-        while ! nc -z cassandra 9042;
-        do
+        swift build --build-tests $${SANITIZER_ARG-} && \
+
+        while ! nc -z cassandra 9042; do
           echo Waiting for Cassandra...;
-        sleep 3;
+          sleep 3;
         done;
 
-        swift test --enable-test-discovery $${SANITIZER_ARG-}
+        swift test $${SANITIZER_ARG-}
       "
+    networks:
+     - cassandra
 
   # util
 
   shell:
     <<: *common
     entrypoint: /bin/bash
+
+# dedicated network
+
+networks:
+  cassandra:
