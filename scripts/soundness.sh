@@ -60,7 +60,7 @@ for language in swift-or-c bash dtrace; do
   matching_files=( -name '*' )
   case "$language" in
       swift-or-c)
-        exceptions=( -path '*Sources/CDataStaxDriver/datastax-cpp-driver/*' -o -path '*Sources/Clibuv/libuv/*' -o -name uv.h -o -name Package.swift -o -name Package@*.swift )
+        exceptions=( -path '*Sources/CDataStaxDriver/datastax-cpp-driver/*' -o -path '*Sources/Clibuv/libuv/*' -o -name uv.h -o -name Package.swift -o -name 'Package@*.swift' )
         matching_files=( -name '*.swift' -o -name '*.c' -o -name '*.h' )
         cat > "$tmp" <<"EOF"
 //===----------------------------------------------------------------------===//

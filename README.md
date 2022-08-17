@@ -2,7 +2,7 @@
 
 CassandraClient is a Cassandra client in Swift. The client is based on [Datastax Cassandra C++ Driver](https://github.com/datastax/cpp-driver) wrapping it with Swift friendly APIs and data structures.
 
-CassandraClient API currently exposes [SwiftNIO](https://github.com/apple/swift-nio) based futures to simplify integration with SwiftNIO based servers.
+CassandraClient API currently exposes [SwiftNIO](https://github.com/apple/swift-nio) based futures to simplify integration with SwiftNIO based servers. Swift concurrency based API is also available in Swift 5.5 and newer.
 
 ## Usage
 

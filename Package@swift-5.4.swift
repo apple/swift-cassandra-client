@@ -1,4 +1,4 @@
-// swift-tools-version:5.6
+// swift-tools-version:5.4
 import class Foundation.FileManager
 import PackageDescription
 
@@ -95,11 +95,10 @@ let package = Package(
         .library(name: "CassandraClient", targets: ["CassandraClient"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio", .upToNextMajor(from: "2.41.1")),
-        .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMajor(from: "2.21.0")),
+        .package(url: "https://github.com/apple/swift-nio", .upToNextMinor(from: "2.41.1")),
+        .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMinor(from: "2.21.0")),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
-        .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.0.0"),
     ],
     targets: [
         .target(

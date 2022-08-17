@@ -14,8 +14,8 @@
 
 @_implementationOnly import CDataStaxDriver
 
-/// Possible client errors.
 public extension CassandraClient {
+    /// Possible ``CassandraClient`` errors.
     struct Error: Swift.Error, Equatable, CustomStringConvertible {
         private enum Code: Equatable {
             case rowsExhausted
@@ -259,7 +259,7 @@ public extension CassandraClient {
             }
         }
 
-        /// All rows for a query result have been consumed
+        /// All rows for a query result have been consumed.
         public static let rowsExhausted = Error(code: .rowsExhausted)
 
         /// Unexpected client connection state.

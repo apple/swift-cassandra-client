@@ -17,9 +17,12 @@ import NIO
 
 // TODO: add more config option per C++ cluster impl
 public extension CassandraClient {
+    /// Configuration for the ``CassandraClient``.
     struct Configuration: CustomStringConvertible {
         public typealias ContactPoints = [String]
 
+        /// Provides the initial `ContactPoints` of the Cassandra cluster.
+        /// This can be a subset since each Cassandra instance is capable of discovering its peers.
         public var contactPointsProvider: (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void
         public var port: Int32
         public var protocolVersion: ProtocolVersion
