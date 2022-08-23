@@ -14,6 +14,9 @@ services:
 
   test:
     image: swift-cassandra-client:20.04-5.4
+    environment: []
+      #- SANITIZER_ARG: "--sanitize=thread"
+      #- TSAN_OPTIONS: "no_huge_pages_for_shadow=0 suppressions=/code/tsan_suppressions.txt"
 
   shell:
     image: swift-cassandra-client:20.04-5.4
