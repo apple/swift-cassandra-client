@@ -16,12 +16,14 @@
 import Foundation // for date and uuid
 
 public extension CassandraClient {
+    /// A prepared statement to run in a Cassandra database.
     final class Statement: CustomStringConvertible {
         internal let query: String
         internal let parameters: [Value]
         internal let options: Options
         internal let rawPointer: OpaquePointer
 
+        /// Create a new `Statement`.
         public init(query: String, parameters: [Value] = [], options: Options = .init()) throws {
             self.query = query
             self.parameters = parameters
@@ -119,6 +121,7 @@ public extension CassandraClient {
             "\(self.query) \(self.parameters)"
         }
 
+        /// Value types
         public enum Value {
             case null
             case int8(Int8)
@@ -138,6 +141,7 @@ public extension CassandraClient {
             case bytesUnsafe(UnsafeBufferPointer<UInt8>)
         }
 
+        /// Consistency levels
         public enum Consistency {
             case any
             case one
@@ -153,6 +157,7 @@ public extension CassandraClient {
         }
 
         public struct Options: CustomStringConvertible {
+            /// Desired consistency level
             public var consistency: Consistency?
 
             public init(consistency: Consistency? = nil) {

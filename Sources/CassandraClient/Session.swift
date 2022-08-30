@@ -19,38 +19,83 @@ import NIO
 import NIOConcurrencyHelpers
 import NIOCore // for async-await bridge
 
+/// API for executing statements against Cassandra.
 public protocol CassandraSession {
     var eventLoopGroup: EventLoopGroup { get }
 
-    /// Runs prepared statement
+    /// Execute a prepared statement.
+    ///
+    /// **All** rows are returned.
+    ///
+    /// - Parameters:
+    ///   - statement: The ``CassandraClient/Statement`` to execute.
+    ///   - eventLoop: The `EventLoop` to use. Optional.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/Rows``.
     func execute(statement: CassandraClient.Statement, on eventLoop: EventLoop?, logger: Logger?) -> EventLoopFuture<CassandraClient.Rows>
 
-    /// Runs prepared statement and returns paginated result
+    /// Execute a prepared statement.
+    ///
+    /// Resulting rows are paginated.
+    ///
+    /// - Parameters:
+    ///   - statement: The ``CassandraClient/Statement`` to execute.
+    ///   - pageSize: The maximum number of rows returned per page.
+    ///   - eventLoop: The `EventLoop` to use. Optional.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
     func execute(statement: CassandraClient.Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger?) -> EventLoopFuture<CassandraClient.PaginatedRows>
 
     #if compiler(>=5.5) && canImport(_Concurrency)
-    /// Runs prepared statement
+    /// Execute a prepared statement.
+    ///
+    /// **All** rows are returned.
+    ///
+    /// - Parameters:
+    ///   - statement: The ``CassandraClient/Statement`` to execute.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/Rows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(statement: CassandraClient.Statement, logger: Logger?) async throws -> CassandraClient.Rows
 
-    /// Runs prepared statement and returns paginated result
+    /// Execute a prepared statement.
+    ///
+    /// Resulting rows are paginated.
+    ///
+    /// - Parameters:
+    ///   - statement: The ``CassandraClient/Statement`` to execute.
+    ///   - pageSize: The maximum number of rows returned per page.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(statement: CassandraClient.Statement, pageSize: Int32, logger: Logger?) async throws -> CassandraClient.PaginatedRows
     #endif
 
-    /// Frees resources
+    /// Terminate the session and free resources.
     func shutdown() throws
 }
 
 internal extension CassandraSession {
-    /// Run prepared statement
+    /// Execute a prepared statement.
+    ///
+    /// **All** rows are returned.
+    ///
+    /// - Parameters:
+    ///   - statement: The ``CassandraClient/Statement`` to execute.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/Rows``.
     func execute(statement: CassandraClient.Statement, logger: Logger? = nil) -> EventLoopFuture<CassandraClient.Rows> {
         self.execute(statement: statement, on: nil, logger: logger)
     }
 }
 
 public extension CassandraSession {
-    /// Run insert / update / detete  or DDL commands where no result is expected.
+    /// Run insert / update / delete or DDL command where no result is expected.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     func run(
@@ -63,7 +108,7 @@ public extension CassandraSession {
         self.query(command, parameters: parameters, options: options, on: eventLoop, logger: logger).map { _ in () }
     }
 
-    /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
+    /// Query small data-sets that fit into memory. Only use this when it is safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     func query<T>(
@@ -79,7 +124,7 @@ public extension CassandraSession {
         }
     }
 
-    /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
+    /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     func query<T: Decodable>(
@@ -102,7 +147,7 @@ public extension CassandraSession {
     ///
     /// - Important:
     ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
-    ///   - Attempting to wrap the `Rows` sequence in an `Array` will not work, use the transformer variant instead.
+    ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
     func query(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -119,7 +164,7 @@ public extension CassandraSession {
         }
     }
 
-    /// Query large data-sets where the number of rows fetch at a time is limited by `pageSize`.
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     func query(
@@ -317,7 +362,7 @@ internal extension CassandraClient {
 
 #if compiler(>=5.5) && canImport(_Concurrency)
 public extension CassandraSession {
-    /// Run  insert / update / detete  or DDL commands where no result is expected
+    /// Run  insert / update / delete or DDL commands where no result is expected
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func run(
         _ command: String,
@@ -328,7 +373,7 @@ public extension CassandraSession {
         _ = try await self.query(command, parameters: parameters, options: options, logger: logger)
     }
 
-    /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
+    /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func query<T>(
         _ query: String,
@@ -341,7 +386,7 @@ public extension CassandraSession {
         return rows.compactMap(transform)
     }
 
-    /// Query small data-sets that fit into memory. Only use this when its safe to buffer the entire data-set into memory.
+    /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func query<T: Decodable>(
         _ query: String,
@@ -356,8 +401,10 @@ public extension CassandraSession {
     }
 
     /// Query large data-sets where using an interator helps control memory usage.
-    /// Important Note:  Advancing the iterator invalidates values retrieved by the previous iteration.
-    /// Attempting to wrap the `Rows` sequence in an `Array` will not work, use the transformer variant instead.
+    ///
+    /// - Important:
+    ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
+    ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func query(
         _ query: String,
@@ -369,7 +416,7 @@ public extension CassandraSession {
         return try await self.execute(statement: statement, logger: logger)
     }
 
-    /// Query large data-sets where the number of rows fetch at a time is limited by `pageSize`.
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func query(
         _ query: String,

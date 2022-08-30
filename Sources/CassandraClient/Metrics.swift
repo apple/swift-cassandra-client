@@ -14,8 +14,9 @@
 
 @_implementationOnly import CDataStaxDriver
 
+/// ``CassandraClient`` metrics.
 public struct CassMetrics: Codable {
-    // MARK: Requests
+    // MARK: - Requests
 
     /// Minimum in microseconds
     public let requestsMin: UInt
@@ -46,7 +47,7 @@ public struct CassMetrics: Codable {
     /// 15 minute rate in requests per second
     public let requestsFifteenMinuteRate: Double
 
-    // MARK: Stats
+    // MARK: - Stats
 
     /// The total number of connections
     public let statsTotalConnections: UInt
@@ -57,7 +58,7 @@ public struct CassMetrics: Codable {
     /// Occurrences when number of bytes exceeded a connection's water mark
     public let statsExceededWriteBytesWaterMark: UInt
 
-    // MARK: Errors
+    // MARK: - Errors
 
     /// Occurrences of a connection timeout
     public let errorsConnectionTimeouts: UInt
