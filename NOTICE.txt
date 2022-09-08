@@ -35,7 +35,7 @@ This product is based on DataStax C/C++ Driver for Apache Cassandra.
     
 ---
 
-This product contains libuv.
+This product uses libuv.
 
   * LICENSE (CC BY 4.0):
     * https://creativecommons.org/licenses/by/4.0
