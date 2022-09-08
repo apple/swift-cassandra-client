@@ -6,7 +6,7 @@ Please visit the Swift Cassandra Client web site for more information:
 
   * https://github.com/apple/swift-cassandra-client
 
-Copyright 2018, 2019 The Swift Cassandra Client Project
+Copyright 2022 The Swift Cassandra Client Project
 
 The Swift Cassandra Client Project licenses this file to you under the Apache License,
 version 2.0 (the "License"); you may not use this file except in compliance
@@ -26,29 +26,27 @@ components that this product depends on.
 
 -------------------------------------------------------------------------------
 
+This product is based on DataStax C/C++ Driver for Apache Cassandra.
+
+  * LICENSE (Apache License 2.0):
+    * https://www.apache.org/licenses/LICENSE-2.0
+  * HOMEPAGE:
+    * https://github.com/datastax/cpp-driver
+    
 ---
 
-This product contains some modified data-structures from Apple/Swift-NIO.
+This product uses libuv.
 
-  * LICENSE (Apache 2.0):
-    * https://github.com/apple/swift-nio/blob/main/LICENSE.txt
+  * LICENSE (CC BY 4.0):
+    * https://creativecommons.org/licenses/by/4.0
+  * HOMEPAGE:
+    * https://github.com/libuv/libuv
+    
+---
+
+This product contains a derivation of various scripts from SwiftNIO.
+
+  * LICENSE (Apache License 2.0):
+    * https://www.apache.org/licenses/LICENSE-2.0
   * HOMEPAGE:
     * https://github.com/apple/swift-nio
-
----
-
-This project was influenced by:
-
-* Akka
-  * LICENSE (Apache License 2.0):
-    * https://github.com/akka/akka/blob/master/LICENSE
-  * HOMEPAGE:
-    * https://akka.io
-
-* Erlang/OTP
-  * LICENSE (Apache License 2.0):
-    * https://github.com/erlang/otp/blob/master/LICENSE.txt
-  * HOMEPAGE:
-    * https://www.erlang.org
-    * https://github.com/erlang/otp
-
