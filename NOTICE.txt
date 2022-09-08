@@ -26,7 +26,7 @@ components that this product depends on.
 
 -------------------------------------------------------------------------------
 
-This product contains DataStax C/C++ Driver for Apache Cassandra.
+This product is based on DataStax C/C++ Driver for Apache Cassandra.
 
   * LICENSE (Apache License 2.0):
     * https://www.apache.org/licenses/LICENSE-2.0
