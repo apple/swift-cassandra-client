@@ -77,6 +77,9 @@ public protocol CassandraSession {
 
     /// Terminate the session and free resources.
     func shutdown() throws
+
+    /// Get metrics for this session.
+    func getMetrics() -> CassandraMetrics
 }
 
 internal extension CassandraSession {
@@ -195,7 +198,7 @@ internal extension CassandraClient {
         private let configuration: Configuration
         private let logger: Logger
         private var state = State.idle
-        private let lock = Lock()
+        private let lock = NIOLock()
 
         private let rawPointer: OpaquePointer
 
@@ -338,6 +341,12 @@ internal extension CassandraClient {
             if let error = error {
                 throw error
             }
+        }
+
+        func getMetrics() -> CassandraMetrics {
+            var metrics = CDataStaxDriver.CassMetrics()
+            cass_session_get_metrics(self.rawPointer, &metrics)
+            return CassandraMetrics(metrics: metrics)
         }
 
         #if compiler(>=5.5) && canImport(_Concurrency)
