@@ -198,7 +198,7 @@ internal extension CassandraClient {
         private let configuration: Configuration
         private let logger: Logger
         private var state = State.idle
-        private let lock = NIOLock()
+        private let lock = Lock()
 
         private let rawPointer: OpaquePointer
 
