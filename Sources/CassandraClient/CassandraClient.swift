@@ -160,6 +160,10 @@ public class CassandraClient: CassandraSession {
         }
     }
 
+    public func getMetrics() -> CassandraMetrics {
+        self.defaultSession.getMetrics()
+    }
+
     /// A `EventLoopGroupProvider` defines how the underlying `EventLoopGroup` used to create the `EventLoop` is provided.
     ///
     /// When `shared`, the `EventLoopGroup` is provided externally and its lifecycle will be managed by the caller.

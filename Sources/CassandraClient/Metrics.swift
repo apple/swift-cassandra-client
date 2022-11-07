@@ -15,7 +15,7 @@
 @_implementationOnly import CDataStaxDriver
 
 /// ``CassandraClient`` metrics.
-public struct CassMetrics: Codable {
+public struct CassandraMetrics: Codable {
     // MARK: - Requests
 
     /// Minimum in microseconds
@@ -25,7 +25,7 @@ public struct CassMetrics: Codable {
     /// Mean in microseconds
     public let requestsMean: UInt
     /// Standard deviation in microseconds
-    public let requestsStddev: UInt
+    public let requestsStdDev: UInt
     /// Median in microseconds
     public let requestsMedian: UInt
     /// 75th percentile in microseconds
@@ -71,7 +71,7 @@ public struct CassMetrics: Codable {
         self.requestsMin = UInt(metrics.requests.min)
         self.requestsMax = UInt(metrics.requests.max)
         self.requestsMean = UInt(metrics.requests.mean)
-        self.requestsStddev = UInt(metrics.requests.stddev)
+        self.requestsStdDev = UInt(metrics.requests.stddev)
         self.requestsMedian = UInt(metrics.requests.median)
         self.requestsPercentile75th = UInt(metrics.requests.percentile_75th)
         self.requestsPercentile95th = UInt(metrics.requests.percentile_95th)
