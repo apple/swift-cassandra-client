@@ -14,9 +14,9 @@
 
 @_implementationOnly import CDataStaxDriver
 
-extension CassandraClient {
+public extension CassandraClient {
     /// Consistency levels
-    public enum Consistency {
+    enum Consistency {
         case any
         case one
         case two
@@ -28,7 +28,7 @@ extension CassandraClient {
         case serial
         case localSerial
         case localOne
-        
+
         var cassConsistency: CassConsistency {
             switch self {
             case .any:

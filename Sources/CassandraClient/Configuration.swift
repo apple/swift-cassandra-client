@@ -343,7 +343,7 @@ internal final class Cluster {
     func setNoCompact(_ enabled: Bool) throws {
         try self.checkResult { cass_cluster_set_no_compact(self.rawPointer, enabled ? cass_true : cass_false) }
     }
-    
+
     func setConsistency(_ consistency: CassConsistency) throws {
         try self.checkResult { cass_cluster_set_consistency(self.rawPointer, consistency) }
     }
