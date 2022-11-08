@@ -58,7 +58,7 @@ public extension CassandraClient {
             self.init(errorCode, message: message)
         }
 
-        init(_ error: CassError, message: String? = nil) {
+        init(_ error: CassError, message: String? = .none) {
             let message = message ?? ""
             switch error {
             case CASS_ERROR_SERVER_SERVER_ERROR:
