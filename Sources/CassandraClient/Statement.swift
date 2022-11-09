@@ -15,9 +15,9 @@
 @_implementationOnly import CDataStaxDriver
 import Foundation // for date and uuid
 
-public extension CassandraClient {
+extension CassandraClient {
     /// A prepared statement to run in a Cassandra database.
-    final class Statement: CustomStringConvertible {
+    public final class Statement: CustomStringConvertible {
         internal let query: String
         internal let parameters: [Value]
         internal let options: Options
@@ -79,33 +79,7 @@ public extension CassandraClient {
             }
 
             if let consistency = options.consistency {
-                let cassConsistency: CassConsistency
-                switch consistency {
-                case .any:
-                    cassConsistency = CASS_CONSISTENCY_ANY
-                case .one:
-                    cassConsistency = CASS_CONSISTENCY_ONE
-                case .two:
-                    cassConsistency = CASS_CONSISTENCY_TWO
-                case .three:
-                    cassConsistency = CASS_CONSISTENCY_THREE
-                case .quorum:
-                    cassConsistency = CASS_CONSISTENCY_QUORUM
-                case .all:
-                    cassConsistency = CASS_CONSISTENCY_ALL
-                case .localQuorum:
-                    cassConsistency = CASS_CONSISTENCY_LOCAL_QUORUM
-                case .eachQuorum:
-                    cassConsistency = CASS_CONSISTENCY_EACH_QUORUM
-                case .serial:
-                    cassConsistency = CASS_CONSISTENCY_SERIAL
-                case .localSerial:
-                    cassConsistency = CASS_CONSISTENCY_LOCAL_SERIAL
-                case .localOne:
-                    cassConsistency = CASS_CONSISTENCY_LOCAL_ONE
-                }
-
-                try checkResult { cass_statement_set_consistency(self.rawPointer, cassConsistency) }
+                try checkResult { cass_statement_set_consistency(self.rawPointer, consistency.cassConsistency) }
             }
         }
 
@@ -141,26 +115,11 @@ public extension CassandraClient {
             case bytesUnsafe(UnsafeBufferPointer<UInt8>)
         }
 
-        /// Consistency levels
-        public enum Consistency {
-            case any
-            case one
-            case two
-            case three
-            case quorum
-            case all
-            case localQuorum
-            case eachQuorum
-            case serial
-            case localSerial
-            case localOne
-        }
-
         public struct Options: CustomStringConvertible {
-            /// Desired consistency level
-            public var consistency: Consistency?
+            /// Sets the statement's consistency level. Default is `.localOne`.
+            public var consistency: CassandraClient.Consistency?
 
-            public init(consistency: Consistency? = nil) {
+            public init(consistency: CassandraClient.Consistency? = .none) {
                 self.consistency = consistency
             }
 

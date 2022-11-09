@@ -14,9 +14,9 @@
 
 @_implementationOnly import CDataStaxDriver
 
-public extension CassandraClient {
+extension CassandraClient {
     /// Possible ``CassandraClient`` errors.
-    struct Error: Swift.Error, Equatable, CustomStringConvertible {
+    public struct Error: Swift.Error, Equatable, CustomStringConvertible {
         private enum Code: Equatable {
             case rowsExhausted
             case disconnected
@@ -58,7 +58,7 @@ public extension CassandraClient {
             self.init(errorCode, message: message)
         }
 
-        init(_ error: CassError, message: String? = nil) {
+        init(_ error: CassError, message: String? = .none) {
             let message = message ?? ""
             switch error {
             case CASS_ERROR_SERVER_SERVER_ERROR:
@@ -343,8 +343,8 @@ public extension CassandraClient {
     }
 }
 
-public extension CassandraClient {
-    struct ConfigurationError: Swift.Error, CustomStringConvertible {
+extension CassandraClient {
+    public struct ConfigurationError: Swift.Error, CustomStringConvertible {
         public let message: String
 
         public var description: String {

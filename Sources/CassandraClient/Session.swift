@@ -82,7 +82,7 @@ public protocol CassandraSession {
     func getMetrics() -> CassandraMetrics
 }
 
-internal extension CassandraSession {
+extension CassandraSession {
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -92,21 +92,21 @@ internal extension CassandraSession {
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
-    func execute(statement: CassandraClient.Statement, logger: Logger? = nil) -> EventLoopFuture<CassandraClient.Rows> {
+    internal func execute(statement: CassandraClient.Statement, logger: Logger? = .none) -> EventLoopFuture<CassandraClient.Rows> {
         self.execute(statement: statement, on: nil, logger: logger)
     }
 }
 
-public extension CassandraSession {
+extension CassandraSession {
     /// Run insert / update / delete or DDL command where no result is expected.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func run(
+    public func run(
         _ command: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = nil,
-        logger: Logger? = nil
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
     ) -> EventLoopFuture<Void> {
         self.query(command, parameters: parameters, options: options, on: eventLoop, logger: logger).map { _ in () }
     }
@@ -114,12 +114,12 @@ public extension CassandraSession {
     /// Query small data-sets that fit into memory. Only use this when it is safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func query<T>(
+    public func query<T>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = nil,
-        logger: Logger? = nil,
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none,
         transform: @escaping (CassandraClient.Row) -> T?
     ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map { rows in
@@ -130,12 +130,12 @@ public extension CassandraSession {
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func query<T: Decodable>(
+    public func query<T: Decodable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = nil,
-        logger: Logger? = nil
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
     ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).flatMapThrowing { rows in
             try rows.map { row in
@@ -151,12 +151,12 @@ public extension CassandraSession {
     /// - Important:
     ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
     ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
-    func query(
+    public func query(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = nil,
-        logger: Logger? = nil
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.Rows> {
         do {
             let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
@@ -170,13 +170,13 @@ public extension CassandraSession {
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    func query(
+    public func query(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = nil,
-        logger: Logger? = nil
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
         do {
             let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
@@ -188,8 +188,8 @@ public extension CassandraSession {
     }
 }
 
-internal extension CassandraClient {
-    final class Session: CassandraSession {
+extension CassandraClient {
+    internal final class Session: CassandraSession {
         private let eventLoopGroupContainer: EventLoopGroupConainer
         public var eventLoopGroup: EventLoopGroup {
             self.eventLoopGroupContainer.value
@@ -240,7 +240,7 @@ internal extension CassandraClient {
             }
         }
 
-        func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<Rows> {
+        func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<Rows> {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
             let logger = logger ?? self.logger
 
@@ -293,7 +293,7 @@ internal extension CassandraClient {
             }
         }
 
-        func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<CassandraClient.PaginatedRows> {
+        func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<CassandraClient.PaginatedRows> {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
 
             do {
@@ -370,25 +370,25 @@ internal extension CassandraClient {
 // MARK: - Cassandra session with async-await support
 
 #if compiler(>=5.5) && canImport(_Concurrency)
-public extension CassandraSession {
+extension CassandraSession {
     /// Run  insert / update / delete or DDL commands where no result is expected
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func run(
+    public func run(
         _ command: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = nil
+        logger: Logger? = .none
     ) async throws {
         _ = try await self.query(command, parameters: parameters, options: options, logger: logger)
     }
 
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query<T>(
+    public func query<T>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = nil,
+        logger: Logger? = .none,
         transform: @escaping (CassandraClient.Row) -> T?
     ) async throws -> [T] {
         let rows = try await self.query(query, parameters: parameters, options: options, logger: logger)
@@ -397,11 +397,11 @@ public extension CassandraSession {
 
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query<T: Decodable>(
+    public func query<T: Decodable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = nil
+        logger: Logger? = .none
     ) async throws -> [T] {
         let rows = try await self.query(query, parameters: parameters, options: options, logger: logger)
         return try rows.map { row in
@@ -415,11 +415,11 @@ public extension CassandraSession {
     ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
     ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query(
+    public func query(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = nil
+        logger: Logger? = .none
     ) async throws -> CassandraClient.Rows {
         let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, logger: logger)
@@ -427,12 +427,12 @@ public extension CassandraSession {
 
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func query(
+    public func query(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = nil
+        logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
         let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
@@ -441,7 +441,7 @@ public extension CassandraSession {
 
 extension CassandraClient.Session {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: CassandraClient.Statement, logger: Logger? = nil) async throws -> CassandraClient.Rows {
+    func execute(statement: CassandraClient.Statement, logger: Logger? = .none) async throws -> CassandraClient.Rows {
         let logger = logger ?? self.logger
 
         lock.lock()
@@ -485,7 +485,7 @@ extension CassandraClient.Session {
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: CassandraClient.Statement, pageSize: Int32, logger: Logger? = nil) async throws -> CassandraClient.PaginatedRows {
+    func execute(statement: CassandraClient.Statement, pageSize: Int32, logger: Logger? = .none) async throws -> CassandraClient.PaginatedRows {
         try statement.setPagingSize(pageSize)
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
     }

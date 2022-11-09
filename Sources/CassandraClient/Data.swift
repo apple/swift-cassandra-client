@@ -17,9 +17,9 @@ import Foundation
 import Logging
 import NIO
 
-public extension CassandraClient {
+extension CassandraClient {
     /// Resulting row(s) of a Cassandra query. Data are returned all at once.
-    final class Rows: Sequence {
+    public final class Rows: Sequence {
         internal let rawPointer: OpaquePointer
 
         internal init(_ resultFutureRawPointer: OpaquePointer) {
@@ -74,7 +74,7 @@ public extension CassandraClient {
     }
 
     /// Resulting row(s) of a Cassandra query. Data are paginated.
-    final class PaginatedRows {
+    public final class PaginatedRows {
         let session: Session
         let statement: Statement
         let eventLoop: EventLoop?
@@ -232,7 +232,7 @@ public extension CassandraClient {
     }
 
     /// A resulting row of a Cassandra query.
-    struct Row {
+    public struct Row {
         internal let rawPointer: OpaquePointer
         // Used to make sure the iterator isn't freed while a reference to one
         // of its rows still exists
@@ -257,7 +257,7 @@ public extension CassandraClient {
     /// A column in a resulting ``Row`` of a Cassandra query.
     ///
     /// Note that the value is only good as long as the iterator it came from hasn't been advanced.
-    struct Column {
+    public struct Column {
         let rawPointer: OpaquePointer
         // Used to make sure the row isn't freed while a reference to one
         // of its columns still exists
@@ -287,9 +287,9 @@ public extension CassandraClient {
 
 // MARK: - Int8
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `Int8`.
-    var int8: Int8? {
+    public var int8: Int8? {
         var value: Int8 = 0
         let error = cass_value_get_int8(rawPointer, &value)
         if error == CASS_OK {
@@ -300,184 +300,184 @@ public extension CassandraClient.Column {
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `Int8`.
-    func column(_ name: String) -> Int8? {
+    public func column(_ name: String) -> Int8? {
         self.column(name)?.int8
     }
 
     /// Get column value as `Int8`.
-    func column(_ index: Int) -> Int8? {
+    public func column(_ index: Int) -> Int8? {
         self.column(index)?.int8
     }
 }
 
 // MARK: - Int16
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `Int16`.
-    var int16: Int16? {
+    public var int16: Int16? {
         var value: Int16 = 0
         let error = cass_value_get_int16(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `Int16`.
-    func column(_ name: String) -> Int16? {
+    public func column(_ name: String) -> Int16? {
         self.column(name)?.int16
     }
 
     /// Get column value as `Int16`.
-    func column(_ index: Int) -> Int16? {
+    public func column(_ index: Int) -> Int16? {
         self.column(index)?.int16
     }
 }
 
 // MARK: - Int32
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `Int32`.
-    var int32: Int32? {
+    public var int32: Int32? {
         var value: Int32 = 0
         let error = cass_value_get_int32(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `Int32`.
-    func column(_ name: String) -> Int32? {
+    public func column(_ name: String) -> Int32? {
         self.column(name)?.int32
     }
 
     /// Get column value as `Int32`.
-    func column(_ index: Int) -> Int32? {
+    public func column(_ index: Int) -> Int32? {
         self.column(index)?.int32
     }
 }
 
 // MARK: - UInt32
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `UInt32`.
-    var uint32: UInt32? {
+    public var uint32: UInt32? {
         var value: UInt32 = 0
         let error = cass_value_get_uint32(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `UInt32`.
-    func column(_ name: String) -> UInt32? {
+    public func column(_ name: String) -> UInt32? {
         self.column(name)?.uint32
     }
 
     /// Get column value as `UInt32`.
-    func column(_ index: Int) -> UInt32? {
+    public func column(_ index: Int) -> UInt32? {
         self.column(index)?.uint32
     }
 }
 
 // MARK: - Int64
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `Int64`.
-    var int64: Int64? {
+    public var int64: Int64? {
         var value: cass_int64_t = 0
         let error = cass_value_get_int64(rawPointer, &value)
         return error == CASS_OK ? Int64(value) : nil
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `Int64`.
-    func column(_ name: String) -> Int64? {
+    public func column(_ name: String) -> Int64? {
         self.column(name)?.int64
     }
 
     /// Get column value as `Int64`.
-    func column(_ index: Int) -> Int64? {
+    public func column(_ index: Int) -> Int64? {
         self.column(index)?.int64
     }
 }
 
 // MARK: - Float32
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `Float32`.
-    var float32: Float32? {
+    public var float32: Float32? {
         var value: Float32 = 0
         let error = cass_value_get_float(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `Float32`.
-    func column(_ name: String) -> Float32? {
+    public func column(_ name: String) -> Float32? {
         self.column(name)?.float32
     }
 
     /// Get column value as `Float32`.
-    func column(_ index: Int) -> Float32? {
+    public func column(_ index: Int) -> Float32? {
         self.column(index)?.float32
     }
 }
 
 // MARK: - Double
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `Double`.
-    var double: Double? {
+    public var double: Double? {
         var value: Double = 0
         let error = cass_value_get_double(rawPointer, &value)
         return error == CASS_OK ? value : nil
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `Double`.
-    func column(_ name: String) -> Double? {
+    public func column(_ name: String) -> Double? {
         self.column(name)?.double
     }
 
     /// Get column value as `Double`.
-    func column(_ index: Int) -> Double? {
+    public func column(_ index: Int) -> Double? {
         self.column(index)?.double
     }
 }
 
 // MARK: - Bool
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `Bool`.
-    var bool: Bool? {
+    public var bool: Bool? {
         var value = cass_bool_t(0)
         let error = cass_value_get_bool(rawPointer, &value)
         return error == CASS_OK ? value == cass_true : nil
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `Bool`.
-    func column(_ name: String) -> Bool? {
+    public func column(_ name: String) -> Bool? {
         self.column(name)?.bool
     }
 
     /// Get column value as `Bool`.
-    func column(_ index: Int) -> Bool? {
+    public func column(_ index: Int) -> Bool? {
         self.column(index)?.bool
     }
 }
 
 // MARK: - String
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `String`.
-    var string: String? {
+    public var string: String? {
         var value: UnsafePointer<CChar>?
         var valueSize = 0
         let error = cass_value_get_string(rawPointer, &value, &valueSize)
@@ -491,14 +491,14 @@ public extension CassandraClient.Column {
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `String`.
-    func column(_ name: String) -> String? {
+    public func column(_ name: String) -> String? {
         self.column(name)?.string
     }
 
     /// Get column value as `String`.
-    func column(_ index: Int) -> String? {
+    public func column(_ index: Int) -> String? {
         self.column(index)?.string
     }
 }
@@ -553,9 +553,9 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
     }
 }
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `UUID`.
-    var uuid: Foundation.UUID? {
+    public var uuid: Foundation.UUID? {
         var value = CassUuid()
         let error = cass_value_get_uuid(rawPointer, &value)
         guard error == CASS_OK else {
@@ -565,7 +565,7 @@ public extension CassandraClient.Column {
     }
 
     /// Get column value as ``TimeBasedUUID``.
-    var timeuuid: TimeBasedUUID? {
+    public var timeuuid: TimeBasedUUID? {
         var value = CassUuid()
         let error = cass_value_get_uuid(rawPointer, &value)
         guard error == CASS_OK else {
@@ -575,30 +575,30 @@ public extension CassandraClient.Column {
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `UUID`.
-    func column(_ name: String) -> Foundation.UUID? {
+    public func column(_ name: String) -> Foundation.UUID? {
         self.column(name)?.uuid
     }
 
     /// Get column value as `UUID`.
-    func column(_ index: Int) -> Foundation.UUID? {
+    public func column(_ index: Int) -> Foundation.UUID? {
         self.column(index)?.uuid
     }
 
     /// Get column value as ``TimeBasedUUID``.
-    func column(_ name: String) -> TimeBasedUUID? {
+    public func column(_ name: String) -> TimeBasedUUID? {
         self.column(name)?.timeuuid
     }
 
     /// Get column value as ``TimeBasedUUID``.
-    func column(_ index: Int) -> TimeBasedUUID? {
+    public func column(_ index: Int) -> TimeBasedUUID? {
         self.column(index)?.timeuuid
     }
 }
 
-internal extension CassUuid {
-    init(_ uuid: uuid_t) {
+extension CassUuid {
+    internal init(_ uuid: uuid_t) {
         self.init()
 
         var timeAndVersion = [UInt8]()
@@ -628,7 +628,7 @@ internal extension CassUuid {
         }.pointee))
     }
 
-    func uuid() -> Foundation.UUID {
+    internal func uuid() -> Foundation.UUID {
         var buffer: uuid_t
 
         let timeAndVersion = withUnsafeBytes(of: time_and_version.bigEndian) { Array($0) }
@@ -657,9 +657,9 @@ internal extension CassUuid {
 
 // MARK: - Date
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column date value as `UInt32`.
-    var date: UInt32? {
+    public var date: UInt32? {
         var value: UInt32 = 0
         let error = cass_value_get_uint32(rawPointer, &value)
         return error == CASS_OK ? value : nil
@@ -668,18 +668,18 @@ public extension CassandraClient.Column {
 
 // MARK: - Timestamp
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column timestamp value as `Int64`.
-    var timestamp: Int64? {
+    public var timestamp: Int64? {
         self.int64
     }
 }
 
 // MARK: - Bytes
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as `[UInt8]`.
-    var bytes: [UInt8]? {
+    public var bytes: [UInt8]? {
         var value: UnsafePointer<UInt8>?
         var size = 0
         let error = cass_value_get_bytes(rawPointer, &value, &size)
@@ -687,23 +687,23 @@ public extension CassandraClient.Column {
     }
 }
 
-public extension CassandraClient.Row {
+extension CassandraClient.Row {
     /// Get column value as `[UInt8]`.
-    func column(_ name: String) -> [UInt8]? {
+    public func column(_ name: String) -> [UInt8]? {
         self.column(name)?.bytes
     }
 
     /// Get column value as `[UInt8]`.
-    func column(_ index: Int) -> [UInt8]? {
+    public func column(_ index: Int) -> [UInt8]? {
         self.column(index)?.bytes
     }
 }
 
 // MARK: - Unsafe bytes
 
-public extension CassandraClient.Column {
+extension CassandraClient.Column {
     /// Get column value as buffer pointer and pass it to the given closure.
-    func withUnsafeBuffer<R>(closure: (UnsafeBufferPointer<UInt8>?) throws -> R) rethrows -> R {
+    public func withUnsafeBuffer<R>(closure: (UnsafeBufferPointer<UInt8>?) throws -> R) rethrows -> R {
         var value: UnsafePointer<UInt8>?
         var valueSize = Int()
         let error = cass_value_get_bytes(rawPointer, &value, &valueSize)

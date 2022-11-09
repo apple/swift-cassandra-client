@@ -90,7 +90,7 @@ public class CassandraClient: CassandraSession {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The resulting ``Rows``.
-    public func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<Rows> {
+    public func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<Rows> {
         self.defaultSession.execute(statement: statement, on: eventLoop, logger: logger)
     }
 
@@ -105,7 +105,7 @@ public class CassandraClient: CassandraSession {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The ``PaginatedRows``.
-    public func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = nil) -> EventLoopFuture<PaginatedRows> {
+    public func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<PaginatedRows> {
         self.defaultSession.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
     }
 
@@ -116,7 +116,7 @@ public class CassandraClient: CassandraSession {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The newly created session.
-    public func makeSession(keyspace: String?, logger: Logger? = nil) -> CassandraSession {
+    public func makeSession(keyspace: String?, logger: Logger? = .none) -> CassandraSession {
         var configuration = self.configuration
         configuration.keyspace = keyspace
         let logger = logger ?? self.logger
@@ -129,7 +129,7 @@ public class CassandraClient: CassandraSession {
     ///   - keyspace: If `nil`, the client's default keyspace is used.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - handler: The closure to invoke, passing in the newly created session.
-    public func withSession(keyspace: String?, logger: Logger? = nil, handler: (CassandraSession) throws -> Void) rethrows {
+    public func withSession(keyspace: String?, logger: Logger? = .none, handler: (CassandraSession) throws -> Void) rethrows {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         defer {
             do {
@@ -149,7 +149,7 @@ public class CassandraClient: CassandraSession {
     ///   - handler: The closure to invoke, passing in the newly created session.
     ///
     /// - Returns: The resulting `EventLoopFuture` of the closure.
-    public func withSession<T>(keyspace: String?, logger: Logger? = nil, handler: (CassandraSession) -> EventLoopFuture<T>) -> EventLoopFuture<T> {
+    public func withSession<T>(keyspace: String?, logger: Logger? = .none, handler: (CassandraSession) -> EventLoopFuture<T>) -> EventLoopFuture<T> {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         return handler(session).always { _ in
             do {
@@ -175,7 +175,7 @@ public class CassandraClient: CassandraSession {
 }
 
 #if compiler(>=5.5) && canImport(_Concurrency)
-public extension CassandraClient {
+extension CassandraClient {
     /// Execute a ``Statement`` using the default ``CassandraSession``.
     ///
     /// **All** rows are returned.
@@ -186,7 +186,7 @@ public extension CassandraClient {
     ///
     /// - Returns: The resulting ``Rows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: Statement, logger: Logger? = nil) async throws -> Rows {
+    public func execute(statement: Statement, logger: Logger? = .none) async throws -> Rows {
         try await self.defaultSession.execute(statement: statement, logger: logger)
     }
 
@@ -201,7 +201,7 @@ public extension CassandraClient {
     ///
     /// - Returns: The ``PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: Statement, pageSize: Int32, logger: Logger? = nil) async throws -> PaginatedRows {
+    public func execute(statement: Statement, pageSize: Int32, logger: Logger? = .none) async throws -> PaginatedRows {
         try await self.defaultSession.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
 
@@ -212,7 +212,7 @@ public extension CassandraClient {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - closure: The closure to invoke, passing in the newly created session.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func withSession(keyspace: String?, logger: Logger? = nil, closure: (CassandraSession) async throws -> Void) async throws {
+    public func withSession(keyspace: String?, logger: Logger? = .none, closure: (CassandraSession) async throws -> Void) async throws {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         defer {
             do {
@@ -233,7 +233,7 @@ public extension CassandraClient {
     ///
     /// - Returns: The result of the closure.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func withSession<T>(keyspace: String?, logger: Logger? = nil, handler: (CassandraSession) async throws -> T) async throws -> T {
+    public func withSession<T>(keyspace: String?, logger: Logger? = .none, handler: (CassandraSession) async throws -> T) async throws -> T {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         defer {
             do {

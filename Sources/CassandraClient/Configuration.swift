@@ -16,14 +16,15 @@
 import NIO
 
 // TODO: add more config option per C++ cluster impl
-public extension CassandraClient {
+extension CassandraClient {
     /// Configuration for the ``CassandraClient``.
-    struct Configuration: CustomStringConvertible {
+    public struct Configuration: CustomStringConvertible {
         public typealias ContactPoints = [String]
 
         /// Provides the initial `ContactPoints` of the Cassandra cluster.
         /// This can be a subset since each Cassandra instance is capable of discovering its peers.
         public var contactPointsProvider: (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void
+
         public var port: Int32
         public var protocolVersion: ProtocolVersion
         public var username: String?
@@ -37,7 +38,7 @@ public extension CassandraClient {
         public var coreConnectionsPerHost: UInt32?
         public var tcpNodelay: Bool?
         public var tcpKeepalive: Bool?
-        public var tcpKeepaliveDelaySeconds: UInt32
+        public var tcpKeepaliveDelaySeconds: UInt32 = 0
         public var connectionHeartbeatInterval: UInt32?
         public var connectionIdleTimeout: UInt32?
         public var schema: Bool?
@@ -46,6 +47,9 @@ public extension CassandraClient {
         public var speculativeExecutionPolicy: SpeculativeExecutionPolicy?
         public var prepareStrategy: PrepareStrategy?
         public var compact: Bool?
+
+        /// Sets the cluster's consistency level. Default is `.localOne`.
+        public var consistency: CassandraClient.Consistency?
 
         public enum SpeculativeExecutionPolicy {
             case constant(delayInMillseconds: Int64, maxExecutions: Int32)
@@ -68,51 +72,11 @@ public extension CassandraClient {
         public init(
             contactPointsProvider: @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void,
             port: Int32,
-            protocolVersion: ProtocolVersion,
-            username: String? = nil,
-            password: String? = nil,
-            ssl: SSL? = nil,
-            keyspace: String? = nil,
-            numIOThreads: UInt32? = nil,
-            connectTimeoutMillis: UInt32? = nil,
-            requestTimeoutMillis: UInt32? = nil,
-            resolveTimeoutMillis: UInt32? = nil,
-            coreConnectionsPerHost: UInt32? = nil,
-            tcpNodelay: Bool? = nil,
-            tcpKeepalive: Bool? = nil,
-            tcpKeepaliveDelaySeconds: UInt32 = 0,
-            connectionHeartbeatInterval: UInt32? = nil,
-            connectionIdleTimeout: UInt32? = nil,
-            schema: Bool? = nil,
-            hostnameResolution: Bool? = nil,
-            randomizedContactPoints: Bool? = nil,
-            speculativeExecutionPolicy: SpeculativeExecutionPolicy? = nil,
-            prepareStrategy: PrepareStrategy? = nil,
-            compact: Bool? = nil
+            protocolVersion: ProtocolVersion
         ) {
             self.contactPointsProvider = contactPointsProvider
             self.port = port
             self.protocolVersion = protocolVersion
-            self.username = username
-            self.password = password
-            self.ssl = ssl
-            self.keyspace = keyspace
-            self.numIOThreads = numIOThreads
-            self.connectTimeoutMillis = connectTimeoutMillis
-            self.requestTimeoutMillis = requestTimeoutMillis
-            self.resolveTimeoutMillis = resolveTimeoutMillis
-            self.coreConnectionsPerHost = coreConnectionsPerHost
-            self.tcpNodelay = tcpNodelay
-            self.tcpKeepalive = tcpKeepalive
-            self.tcpKeepaliveDelaySeconds = tcpKeepaliveDelaySeconds
-            self.connectionHeartbeatInterval = connectionHeartbeatInterval
-            self.connectionIdleTimeout = connectionIdleTimeout
-            self.schema = schema
-            self.hostnameResolution = hostnameResolution
-            self.randomizedContactPoints = randomizedContactPoints
-            self.speculativeExecutionPolicy = speculativeExecutionPolicy
-            self.prepareStrategy = prepareStrategy
-            self.compact = compact
         }
 
         internal func makeCluster(on eventLoop: EventLoop) -> EventLoopFuture<Cluster> {
@@ -167,40 +131,40 @@ public extension CassandraClient {
             if let ssl = self.ssl {
                 try cluster.setSSL(try ssl.makeSSLContext())
             }
-            if let value = numIOThreads {
+            if let value = self.numIOThreads {
                 try cluster.setNumThreadsIO(value)
             }
-            if let value = connectTimeoutMillis {
+            if let value = self.connectTimeoutMillis {
                 try cluster.setConnectTimeout(value)
             }
-            if let value = requestTimeoutMillis {
+            if let value = self.requestTimeoutMillis {
                 try cluster.setRequestTimeout(value)
             }
-            if let value = resolveTimeoutMillis {
+            if let value = self.resolveTimeoutMillis {
                 try cluster.setResolveTimeout(value)
             }
-            if let value = coreConnectionsPerHost {
+            if let value = self.coreConnectionsPerHost {
                 try cluster.setCoreConnectionsPerHost(value)
             }
-            if let value = tcpNodelay {
+            if let value = self.tcpNodelay {
                 try cluster.setTcpNodelay(value)
             }
-            if let value = tcpKeepalive {
+            if let value = self.tcpKeepalive {
                 try cluster.setTcpKeepalive(value, delayInSeconds: self.tcpKeepaliveDelaySeconds)
             }
-            if let value = connectionHeartbeatInterval {
+            if let value = self.connectionHeartbeatInterval {
                 try cluster.setConnectionHeartbeatInterval(value)
             }
-            if let value = connectionIdleTimeout {
+            if let value = self.connectionIdleTimeout {
                 try cluster.setConnectionIdleTimeout(value)
             }
-            if let value = schema {
+            if let value = self.schema {
                 try cluster.setUseSchema(value)
             }
-            if let value = hostnameResolution {
+            if let value = self.hostnameResolution {
                 try cluster.setUseHostnameResolution(value)
             }
-            if let value = randomizedContactPoints {
+            if let value = self.randomizedContactPoints {
                 try cluster.setUseRandomizedContactPoints(value)
             }
             switch self.speculativeExecutionPolicy {
@@ -219,8 +183,11 @@ public extension CassandraClient {
             case .none:
                 break
             }
-            if let value = compact {
+            if let value = self.compact {
                 try cluster.setNoCompact(!value)
+            }
+            if let value = self.consistency {
+                try cluster.setConsistency(value.cassConsistency)
             }
 
             return cluster
@@ -338,6 +305,10 @@ internal final class Cluster {
         try self.checkResult { cass_cluster_set_no_compact(self.rawPointer, enabled ? cass_true : cass_false) }
     }
 
+    func setConsistency(_ consistency: CassConsistency) throws {
+        try self.checkResult { cass_cluster_set_consistency(self.rawPointer, consistency) }
+    }
+
     func setSSL(_ ssl: SSLContext) throws {
         cass_cluster_set_ssl(self.rawPointer, ssl.rawPointer)
     }
@@ -352,8 +323,8 @@ internal final class Cluster {
 
 // MARK: - SSL
 
-public extension CassandraClient.Configuration {
-    struct SSL {
+extension CassandraClient.Configuration {
+    public struct SSL {
         public var trustedCertificates: [String]?
         public var verifyFlag: VerifyFlag?
         public var cert: String?
@@ -373,9 +344,7 @@ public extension CassandraClient.Configuration {
             case peerIdentityDNS
         }
 
-        public init(trustedCertificates: [String]?) {
-            self.trustedCertificates = trustedCertificates
-        }
+        public init() {}
 
         func makeSSLContext() throws -> SSLContext {
             let sslContext = SSLContext()
