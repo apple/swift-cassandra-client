@@ -8,6 +8,7 @@
 
 --ifdef no-indent
 --indent 4
+--extensionacl on-declarations
 --patternlet inline
 --self insert
 --stripunusedargs closure-only

@@ -15,9 +15,9 @@
 @_implementationOnly import CDataStaxDriver
 import Foundation // for date and uuid
 
-public extension CassandraClient {
+extension CassandraClient {
     /// A prepared statement to run in a Cassandra database.
-    final class Statement: CustomStringConvertible {
+    public final class Statement: CustomStringConvertible {
         internal let query: String
         internal let parameters: [Value]
         internal let options: Options

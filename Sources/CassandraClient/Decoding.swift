@@ -14,8 +14,8 @@
 
 import Foundation // for date and uuid
 
-internal extension CassandraClient {
-    struct RowDecoder: Decoder {
+extension CassandraClient {
+    internal struct RowDecoder: Decoder {
         private let row: Row
 
         var codingPath = [CodingKey]()

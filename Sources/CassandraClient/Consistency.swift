@@ -14,9 +14,9 @@
 
 @_implementationOnly import CDataStaxDriver
 
-public extension CassandraClient {
+extension CassandraClient {
     /// Consistency levels
-    enum Consistency {
+    public enum Consistency {
         case any
         case one
         case two

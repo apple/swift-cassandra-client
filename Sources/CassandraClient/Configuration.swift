@@ -16,9 +16,9 @@
 import NIO
 
 // TODO: add more config option per C++ cluster impl
-public extension CassandraClient {
+extension CassandraClient {
     /// Configuration for the ``CassandraClient``.
-    struct Configuration: CustomStringConvertible {
+    public struct Configuration: CustomStringConvertible {
         public typealias ContactPoints = [String]
 
         /// Provides the initial `ContactPoints` of the Cassandra cluster.
@@ -362,8 +362,8 @@ internal final class Cluster {
 
 // MARK: - SSL
 
-public extension CassandraClient.Configuration {
-    struct SSL {
+extension CassandraClient.Configuration {
+    public struct SSL {
         public var trustedCertificates: [String]?
         public var verifyFlag: VerifyFlag?
         public var cert: String?
