@@ -30,11 +30,11 @@ final class Tests: XCTestCase {
         self.configuration = CassandraClient.Configuration(
             contactPointsProvider: { callback in callback(.success([env["CASSANDRA_HOST"] ?? "127.0.0.1"])) },
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
-            protocolVersion: .v3,
-            username: env["CASSANDRA_USER"],
-            password: env["CASSANDRA_PASSWORD"],
-            keyspace: keyspace
+            protocolVersion: .v3
         )
+        self.configuration.username = env["CASSANDRA_USER"]
+        self.configuration.password = env["CASSANDRA_PASSWORD"]
+        self.configuration.keyspace = keyspace
 
         var logger = Logger(label: "test")
         logger.logLevel = .debug

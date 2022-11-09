@@ -37,7 +37,7 @@ extension CassandraClient {
         public var coreConnectionsPerHost: UInt32?
         public var tcpNodelay: Bool?
         public var tcpKeepalive: Bool?
-        public var tcpKeepaliveDelaySeconds: UInt32
+        public var tcpKeepaliveDelaySeconds: UInt32 = 0
         public var connectionHeartbeatInterval: UInt32?
         public var connectionIdleTimeout: UInt32?
         public var schema: Bool?
@@ -69,53 +69,11 @@ extension CassandraClient {
         public init(
             contactPointsProvider: @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void,
             port: Int32,
-            protocolVersion: ProtocolVersion,
-            username: String? = .none,
-            password: String? = .none,
-            ssl: SSL? = .none,
-            keyspace: String? = .none,
-            numIOThreads: UInt32? = .none,
-            connectTimeoutMillis: UInt32? = .none,
-            requestTimeoutMillis: UInt32? = .none,
-            resolveTimeoutMillis: UInt32? = .none,
-            coreConnectionsPerHost: UInt32? = .none,
-            tcpNodelay: Bool? = .none,
-            tcpKeepalive: Bool? = .none,
-            tcpKeepaliveDelaySeconds: UInt32 = 0,
-            connectionHeartbeatInterval: UInt32? = .none,
-            connectionIdleTimeout: UInt32? = .none,
-            schema: Bool? = .none,
-            hostnameResolution: Bool? = .none,
-            randomizedContactPoints: Bool? = .none,
-            speculativeExecutionPolicy: SpeculativeExecutionPolicy? = .none,
-            prepareStrategy: PrepareStrategy? = .none,
-            compact: Bool? = .none,
-            consistency: CassandraClient.Consistency? = .none
+            protocolVersion: ProtocolVersion
         ) {
             self.contactPointsProvider = contactPointsProvider
             self.port = port
             self.protocolVersion = protocolVersion
-            self.username = username
-            self.password = password
-            self.ssl = ssl
-            self.keyspace = keyspace
-            self.numIOThreads = numIOThreads
-            self.connectTimeoutMillis = connectTimeoutMillis
-            self.requestTimeoutMillis = requestTimeoutMillis
-            self.resolveTimeoutMillis = resolveTimeoutMillis
-            self.coreConnectionsPerHost = coreConnectionsPerHost
-            self.tcpNodelay = tcpNodelay
-            self.tcpKeepalive = tcpKeepalive
-            self.tcpKeepaliveDelaySeconds = tcpKeepaliveDelaySeconds
-            self.connectionHeartbeatInterval = connectionHeartbeatInterval
-            self.connectionIdleTimeout = connectionIdleTimeout
-            self.schema = schema
-            self.hostnameResolution = hostnameResolution
-            self.randomizedContactPoints = randomizedContactPoints
-            self.speculativeExecutionPolicy = speculativeExecutionPolicy
-            self.prepareStrategy = prepareStrategy
-            self.compact = compact
-            self.consistency = consistency
         }
 
         internal func makeCluster(on eventLoop: EventLoop) -> EventLoopFuture<Cluster> {
