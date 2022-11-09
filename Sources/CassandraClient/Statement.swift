@@ -116,7 +116,7 @@ extension CassandraClient {
         }
 
         public struct Options: CustomStringConvertible {
-            /// Desired consistency level
+            /// Sets the statement's consistency level. Default is `.localOne`.
             public var consistency: CassandraClient.Consistency?
 
             public init(consistency: CassandraClient.Consistency? = .none) {

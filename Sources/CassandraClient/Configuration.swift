@@ -24,6 +24,7 @@ extension CassandraClient {
         /// Provides the initial `ContactPoints` of the Cassandra cluster.
         /// This can be a subset since each Cassandra instance is capable of discovering its peers.
         public var contactPointsProvider: (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void
+
         public var port: Int32
         public var protocolVersion: ProtocolVersion
         public var username: String?
@@ -46,6 +47,8 @@ extension CassandraClient {
         public var speculativeExecutionPolicy: SpeculativeExecutionPolicy?
         public var prepareStrategy: PrepareStrategy?
         public var compact: Bool?
+
+        /// Sets the cluster's consistency level. Default is `.localOne`.
         public var consistency: CassandraClient.Consistency?
 
         public enum SpeculativeExecutionPolicy {
@@ -341,9 +344,7 @@ extension CassandraClient.Configuration {
             case peerIdentityDNS
         }
 
-        public init(trustedCertificates: [String]?) {
-            self.trustedCertificates = trustedCertificates
-        }
+        public init() {}
 
         func makeSSLContext() throws -> SSLContext {
             let sslContext = SSLContext()
