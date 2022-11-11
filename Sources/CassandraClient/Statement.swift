@@ -81,6 +81,10 @@ extension CassandraClient {
             if let consistency = options.consistency {
                 try checkResult { cass_statement_set_consistency(self.rawPointer, consistency.cassConsistency) }
             }
+
+            if let requestTimeout = options.requestTimeout {
+                try checkResult { cass_statement_set_request_timeout(self.rawPointer, requestTimeout) }
+            }
         }
 
         func setPagingSize(_ pagingSize: Int32) throws {
@@ -118,13 +122,21 @@ extension CassandraClient {
         public struct Options: CustomStringConvertible {
             /// Sets the statement's consistency level. Default is `.localOne`.
             public var consistency: CassandraClient.Consistency?
+            /// Sets the statement's request timeout in milliseconds. Default is `CASS_UINT64_MAX`
+            public var requestTimeout: UInt64?
 
-            public init(consistency: CassandraClient.Consistency? = .none) {
+            public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: UInt64? = nil) {
                 self.consistency = consistency
+                self.requestTimeout = requestTimeout
             }
 
             public var description: String {
-                "Options { consistency: \(String(describing: self.consistency)) }"
+                """
+                Options {
+                consistency: \(String(describing: self.consistency)),
+                requestTimeout: \(String(describing: self.requestTimeout))
+                }
+                """
             }
         }
     }
