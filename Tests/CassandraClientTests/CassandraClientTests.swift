@@ -194,8 +194,7 @@ final class Tests: XCTestCase {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait())
 
-        var options = CassandraClient.Statement.Options()
-        options.consistency = .localQuorum
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
 
         let count = Int.random(in: 5000 ... 6000)
         var futures = [EventLoopFuture<Void>]()
