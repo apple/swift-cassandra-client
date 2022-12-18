@@ -326,12 +326,15 @@ internal final class Cluster {
 extension CassandraClient.Configuration {
     public struct SSL {
         public var trustedCertificates: [String]?
-        public var verifyFlag: VerifyFlag?
+        public var verifyFlag: VerifyFlag = .default
         public var cert: String?
         public var privateKey: (key: String, password: String)?
 
         /// Verification performed on the peer's certificate.
         public enum VerifyFlag {
+            /// Use DataStax driver's default, which is .peerCert
+            case `default`
+
             /// No verification is performed
             case none
             /// Certificate is present and valid
@@ -354,18 +357,20 @@ extension CassandraClient.Configuration {
                     try sslContext.addTrustedCert(cert)
                 }
             }
-            if let verifyFlag = self.verifyFlag {
-                switch verifyFlag {
-                case .none:
-                    sslContext.setVerifyFlags(CASS_SSL_VERIFY_NONE)
-                case .peerCert:
-                    sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_CERT)
-                case .peerIdentity:
-                    sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_IDENTITY)
-                case .peerIdentityDNS:
-                    sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_IDENTITY_DNS)
-                }
+
+            switch self.verifyFlag {
+            case .none:
+                sslContext.setVerifyFlags(CASS_SSL_VERIFY_NONE)
+            case .peerCert:
+                sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_CERT)
+            case .peerIdentity:
+                sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_IDENTITY)
+            case .peerIdentityDNS:
+                sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_IDENTITY_DNS)
+            case .default:
+                () // use DataStax driver's default
             }
+
             if let cert = self.cert {
                 try sslContext.setCert(cert)
             }
