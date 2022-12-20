@@ -66,12 +66,16 @@ Returning a model object, having `Model: Codable`
   cassandraClient.query("select * from table ...").map { (result: [Model]) in
     ...
   }
+  
+  let result: [Model] = try await cassandraClient.query("select * from table ...")
 ```
 
 ```swift
   session.query("select * from table ...").map { (result: [Model]) in
     ...
   }
+
+  let result: [Model] = try await session.query("select * from table ...")
 ```
 
 Or using free-form transformations on the row
