@@ -17,6 +17,8 @@ import Foundation
 import Logging
 import NIO
 
+public protocol PagingStateToken: ContiguousBytes {}
+
 extension CassandraClient {
     /// Resulting row(s) of a Cassandra query. Data are returned all at once.
     public final class Rows: Sequence {
@@ -44,6 +46,35 @@ extension CassandraClient {
 
         public func makeIterator() -> Iterator {
             Iterator(rows: self)
+        }
+
+        /// Returns a reusable paging token.
+        ///
+        /// - Warning: This token is not suitable or safe for sharing externally.
+        public func opaquePagingStateToken() throws -> OpaquePagingStateToken {
+            try OpaquePagingStateToken(token: self.rawPagingStateToken())
+        }
+
+        private func rawPagingStateToken() throws -> [UInt8] {
+            var buffer: UnsafePointer<CChar>?
+            var length = 0
+
+            // The underlying memory is freed with the Rows result
+            let result = cass_result_paging_state_token(self.rawPointer, &buffer, &length)
+            guard result == CASS_OK, let bytesPointer = buffer else {
+                throw CassandraClient.Error(result)
+            }
+
+            let tokenBytes: [UInt8] = bytesPointer.withMemoryRebound(to: UInt8.self, capacity: length) {
+                let bufferPointer = UnsafeBufferPointer(start: $0, count: length)
+                return Array(unsafeUninitializedCapacity: length) { storagePointer, storageCount in
+                    var (unwritten, endIndex) = storagePointer.initialize(from: bufferPointer)
+                    precondition(unwritten.next() == nil)
+                    storageCount = storagePointer.distance(from: storagePointer.startIndex, to: endIndex)
+                }
+            }
+
+            return tokenBytes
         }
 
         public final class Iterator: IteratorProtocol {
@@ -281,6 +312,20 @@ extension CassandraClient {
 
         func isNull() -> Bool {
             cass_value_is_null(self.rawPointer) == cass_true
+        }
+    }
+
+    /// A reusable page token that can be used by `Statement` to resume querying
+    /// at a specific position.
+    public struct OpaquePagingStateToken: PagingStateToken {
+        let token: [UInt8]
+
+        internal init(token: [UInt8]) {
+            self.token = token
+        }
+
+        public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
+            try self.token.withUnsafeBytes(body)
         }
     }
 }

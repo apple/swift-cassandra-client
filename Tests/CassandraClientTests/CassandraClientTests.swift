@@ -233,6 +233,44 @@ final class Tests: XCTestCase {
         }
     }
 
+    func testPagingToken() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait()
+
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+
+        let count = Int.random(in: 5000 ... 6000)
+        var futures = [EventLoopFuture<Void>]()
+        (0 ..< count).forEach { index in
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                    options: options
+                )
+            )
+        }
+
+        let initialPages = try self.cassandraClient.query("select id, data from \(tableName);", pageSize: Int32(5)).wait()
+
+        for _ in 0 ..< Int.random(in: 10 ... 20) {
+            _ = try! initialPages.nextPage().wait()
+        }
+
+        let page = try initialPages.nextPage().wait()
+        let pageToken = try page.opaquePagingStateToken()
+        let row = try initialPages.nextPage().wait().first!
+
+        let statement = try CassandraClient.Statement(query: "select id, data from \(tableName);")
+        try! statement.setPagingStateToken(pageToken)
+        let offsetPages = try self.cassandraClient.execute(statement: statement, pageSize: Int32(5), on: nil).wait()
+        let pagedRow: CassandraClient.Row = try offsetPages.nextPage().wait().first!
+
+        let id1: CassandraClient.Column = pagedRow.column(0)!
+        let id2: CassandraClient.Column = row.column(0)!
+        XCTAssertEqual(id1.int32, id2.int32)
+    }
+
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testQueryAsyncIterator() throws {
         #if !(compiler(>=5.5) && canImport(_Concurrency))
