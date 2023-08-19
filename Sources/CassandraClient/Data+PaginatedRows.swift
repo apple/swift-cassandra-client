@@ -226,19 +226,19 @@ extension CassandraClient.PaginatedRows: AsyncSequence {
         public mutating func next() async throws -> CassandraClient.Row? {
             // Initialize current page
             if self.currentPage == nil {
-                self.currentPage = try await self.pageStream.next()?.makeIterator()
+                guard let nextPage = try await self.pageStream.next()?.makeIterator() else {
+                    return nil
+                }
+                self.currentPage = nextPage
             }
 
-            var next = self.currentPage?.next()
-
-            // Current page has no more element
-            if next == nil {
-                // Fetch next page if any, otherwise we are done.
-                self.currentPage = try await self.pageStream.next()?.makeIterator()
-                next = self.currentPage?.next()
+            guard let nextRow = self.currentPage?.next() else {
+                // Current page has no more element
+                self.currentPage = nil
+                return try await self.next()
             }
 
-            return next
+            return nextRow
         }
     }
 }
