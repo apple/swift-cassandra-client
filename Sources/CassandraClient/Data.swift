@@ -653,29 +653,29 @@ extension CassandraClient.Column {
             case is Int8.Type:
                 var v: Int8 = 0
                 let error = cass_value_get_int8(valuePointer, &v)
-                value = error == CASS_OK ? v as! T? : nil
+                value = error == CASS_OK ? v as? T : nil
             case is Int16.Type:
                 var v: Int16 = 0
                 let error = cass_value_get_int16(valuePointer, &v)
-                value = error == CASS_OK ? v as! T? : nil
+                value = error == CASS_OK ? v as? T : nil
             case is Int32.Type:
                 var v: Int32 = 0
                 let error = cass_value_get_int32(valuePointer, &v)
-                value = error == CASS_OK ? v as! T? : nil
+                value = error == CASS_OK ? v as? T : nil
             case is Int64.Type:
                 var v: Int64 = 0
                 let error = cass_value_get_int64(valuePointer, &v)
-                value = error == CASS_OK ? v as! T? : nil
+                value = error == CASS_OK ? v as? T : nil
             case is Float32.Type:
                 var v: Float32 = 0
                 let error = cass_value_get_float(valuePointer, &v)
-                value = error == CASS_OK ? v as! T? : nil
+                value = error == CASS_OK ? v as? T : nil
             case is Double.Type:
                 var v: Double = 0
                 let error = cass_value_get_double(valuePointer, &v)
-                value = error == CASS_OK ? v as! T? : nil
+                value = error == CASS_OK ? v as? T : nil
             case is String.Type:
-                value = valuePointer.flatMap { toString(cassValue: $0) as! T? }
+                value = valuePointer.flatMap { toString(cassValue: $0) as? T }
             default:
                 value = nil
             }
