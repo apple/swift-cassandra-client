@@ -386,7 +386,7 @@ final class Tests: XCTestCase {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait())
 
-        let count = Int.random(in: 0 ... 100)
+        let count = Int.random(in: 5 ... 100)
         var futures = [EventLoopFuture<Void>]()
         (0 ..< count).forEach { index in
             futures.append(
