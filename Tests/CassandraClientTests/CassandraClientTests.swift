@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift Cassandra Client open source project
 //
-// Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+// Copyright (c) 2022-2023 Apple Inc. and the Swift Cassandra Client project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -304,7 +304,11 @@ final class Tests: XCTestCase {
             }
 
             let paginatedRows = try await self.cassandraClient.query("select id, data from \(tableName);", pageSize: Int32(300))
-            let paginatedIDs = try await paginatedRows.map { row in row.column(0)?.int32 }.compactMap { $0 }
+
+            var paginatedIDs: [Int32] = []
+            for try await paginatedID in paginatedRows.map({ row in row.column(0)?.int32 }).compactMap({ $0 }) {
+                paginatedIDs.append(paginatedID)
+            }
 
             XCTAssertEqual(paginatedIDs.count, count, "result count should match")
             paginatedIDs.sorted().enumerated().forEach { index, id in

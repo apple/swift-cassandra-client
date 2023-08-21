@@ -3,7 +3,7 @@
 ##
 ## This source file is part of the Swift Cassandra Client open source project
 ##
-## Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+## Copyright (c) 2022-2023 Apple Inc. and the Swift Cassandra Client project authors
 ## Licensed under Apache License v2.0
 ##
 ## See LICENSE.txt for license information
@@ -18,7 +18,7 @@ here="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 function replace_acceptable_years() {
     # this needs to replace all acceptable forms with 'YEARS'
-    sed -e 's/2022/YEARS/'
+    sed -e 's/2022-2023/YEARS/' -e 's/202[23]/YEARS/'
 }
 
 printf "=> Checking for unacceptable language... "
