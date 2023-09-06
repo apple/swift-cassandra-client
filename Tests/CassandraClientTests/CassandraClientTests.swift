@@ -382,6 +382,33 @@ final class Tests: XCTestCase {
         #endif
     }
 
+    func testSelectIn() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait())
+
+        let count = Int.random(in: 5 ... 100)
+        var futures = [EventLoopFuture<Void>]()
+        (0 ..< count).forEach { index in
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)]
+                )
+            )
+        }
+
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
+        XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
+
+        let selectIDs: [Int32] = (0 ... Int.random(in: 1 ... 5)).map { _ in Int32.random(in: 0 ..< Int32(count)) }
+        let rows = try self.cassandraClient.query(
+            "select id, data from \(tableName) where id in ?;",
+            parameters: [.int32Array(selectIDs)]
+        ).wait()
+        XCTAssertEqual(Set(rows.compactMap { row in row.column(0)?.int32 }), Set(selectIDs), "result should match")
+    }
+
     func testDecoding() {
         struct Model: Codable, Equatable {
             let col1: Int8
@@ -397,6 +424,13 @@ final class Tests: XCTestCase {
             let col11: [UInt8]
             let col12: Bool
             let col13: String?
+            let col14: [Int8]
+            let col15: [Int16]
+            let col16: [Int32]
+            let col17: [Int64]
+            let col18: [Float32]
+            let col19: [Double]
+            let col20: [String]
             let doesNotExist: Bool?
         }
 
@@ -415,6 +449,13 @@ final class Tests: XCTestCase {
                 col11: randomBytes(size: Int.random(in: 10 ... 1024 * 1024)),
                 col12: Bool.random(),
                 col13: nil,
+                col14: (0 ... Int.random(in: 1 ... 3)).map { _ in Int8.random(in: Int8.min ... Int8.max) },
+                col15: (0 ... Int.random(in: 1 ... 3)).map { _ in Int16.random(in: Int16.min ... Int16.max) },
+                col16: (0 ... Int.random(in: 1 ... 3)).map { _ in Int32.random(in: Int32.min ... Int32.max) },
+                col17: (0 ... Int.random(in: 1 ... 3)).map { _ in Int64.random(in: Int64.min ... Int64.max) },
+                col18: (0 ... Int.random(in: 1 ... 3)).map { _ in Float32.random(in: Float(Int32.min) ... Float(Int32.max)) },
+                col19: (0 ... Int.random(in: 1 ... 3)).map { _ in Double.random(in: Double(Int64.min) ... Double(Int64.max)) },
+                col20: (0 ... Int.random(in: 1 ... 3)).map { _ in UUID().uuidString },
                 doesNotExist: nil
             )
         }
@@ -437,7 +478,14 @@ final class Tests: XCTestCase {
             col10 timeuuid,
             col11 blob,
             col12 boolean,
-            col13 text
+            col13 text,
+            col14 list<tinyint>,
+            col15 list<smallint>,
+            col16 list<int>,
+            col17 list<bigint>,
+            col18 list<float>,
+            col19 list<double>,
+            col20 list<text>
             );
             """
         ).wait())
@@ -456,14 +504,21 @@ final class Tests: XCTestCase {
                                                                  .timeuuid(model.col10),
                                                                  .bytes(model.col11),
                                                                  .bool(model.col12),
-                                                                 .null]
+                                                                 .null,
+                                                                 .int8Array(model.col14),
+                                                                 .int16Array(model.col15),
+                                                                 .int32Array(model.col16),
+                                                                 .int64Array(model.col17),
+                                                                 .float32Array(model.col18),
+                                                                 .doubleArray(model.col19),
+                                                                 .stringArray(model.col20)]
             futures.append(
                 self.cassandraClient.run(
                     """
                     insert into \(tableName)
-                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13)
+                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20)
                     values
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters: parameters
                 )
@@ -490,6 +545,13 @@ final class Tests: XCTestCase {
             XCTAssertEqual(item.col11, data[index].col11, "results should match")
             XCTAssertEqual(item.col12, data[index].col12, "results should match")
             XCTAssertEqual(item.col13, data[index].col13, "results should match")
+            XCTAssertEqual(item.col14, data[index].col14, "results should match")
+            XCTAssertEqual(item.col15, data[index].col15, "results should match")
+            XCTAssertEqual(item.col16, data[index].col16, "results should match")
+            XCTAssertEqual(item.col17, data[index].col17, "results should match")
+            XCTAssertEqual(item.col18, data[index].col18, "results should match")
+            XCTAssertEqual(item.col19, data[index].col19, "results should match")
+            XCTAssertEqual(item.col20, data[index].col20, "results should match")
         }
     }
 
@@ -539,6 +601,13 @@ final class Tests: XCTestCase {
         col14 blob,
         col15 boolean,
         col16 text,
+        col17 list<tinyint>,
+        col18 list<smallint>,
+        col19 list<int>,
+        col20 list<bigint>,
+        col21 list<float>,
+        col22 list<double>,
+        col23 list<text>,
         )
         """).wait())
 
@@ -559,6 +628,13 @@ final class Tests: XCTestCase {
             let blob = self.randomBytes(size: Int.random(in: 10 ... 1024 * 1024))
             let bool = Bool.random()
             let null: String? = nil
+            let int8List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int8.random(in: Int8.min ... Int8.max) }
+            let int16List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int16.random(in: Int16.min ... Int16.max) }
+            let int32List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int32.random(in: Int32.min ... Int32.max) }
+            let int64List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int64.random(in: Int64.min ... Int64.max) }
+            let float32List = (0 ... Int.random(in: 1 ... 3)).map { _ in Float32.random(in: Float(Int32.min) ... Float(Int32.max)) }
+            let doubleList = (0 ... Int.random(in: 1 ... 3)).map { _ in Double.random(in: Double(Int64.min) ... Double(Int64.max)) }
+            let textList = (0 ... Int.random(in: 1 ... 3)).map { _ in UUID().uuidString }
 
             let parameters: [CassandraClient.Statement.Value] = [
                 .int8(index), // tinyint
@@ -577,13 +653,20 @@ final class Tests: XCTestCase {
                 .bytes(blob), // bytes
                 .bool(bool),
                 .null,
+                .int8Array(int8List), // list<tinyint>
+                .int16Array(int16List), // list<smallint>
+                .int32Array(int32List), // list<int>
+                .int64Array(int64List), // list<bigint>
+                .float32Array(float32List), // list<float>
+                .doubleArray(doubleList), // list<double>
+                .stringArray(textList), // list<text>
             ]
 
             XCTAssertNoThrow(try self.cassandraClient.run("""
             insert into \(tableName)
-            (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16)
+            (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23)
             values
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, parameters: parameters).wait())
 
             let result = try! self.cassandraClient.query("select * from \(tableName);").wait()
@@ -605,6 +688,13 @@ final class Tests: XCTestCase {
             XCTAssertEqual(row.column("col14"), blob, "expected value to match")
             XCTAssertEqual(row.column("col15"), bool, "expected value to match")
             XCTAssertEqual(row.column("col16"), null, "expected value to match")
+            XCTAssertEqual(row.column("col17"), int8List, "expected value to match")
+            XCTAssertEqual(row.column("col18"), int16List, "expected value to match")
+            XCTAssertEqual(row.column("col19"), int32List, "expected value to match")
+            XCTAssertEqual(row.column("col20"), int64List, "expected value to match")
+            XCTAssertEqual(row.column("col21"), float32List, "expected value to match")
+            XCTAssertEqual(row.column("col22"), doubleList, "expected value to match")
+            XCTAssertEqual(row.column("col23"), textList, "expected value to match")
         }
     }
 

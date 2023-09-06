@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift Cassandra Client open source project
 //
-// Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+// Copyright (c) 2022-2023 Apple Inc. and the Swift Cassandra Client project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -71,6 +71,20 @@ extension CassandraClient {
                     }
                 case .bytesUnsafe(let buffer):
                     result = cass_statement_bind_bytes(self.rawPointer, index, buffer.baseAddress, buffer.count)
+                case .int8Array(let array):
+                    result = try self.bindArray(array, at: index)
+                case .int16Array(let array):
+                    result = try self.bindArray(array, at: index)
+                case .int32Array(let array):
+                    result = try self.bindArray(array, at: index)
+                case .int64Array(let array):
+                    result = try self.bindArray(array, at: index)
+                case .float32Array(let array):
+                    result = try self.bindArray(array, at: index)
+                case .doubleArray(let array):
+                    result = try self.bindArray(array, at: index)
+                case .stringArray(let array):
+                    result = try self.bindArray(array, at: index)
                 }
 
                 guard result == CASS_OK else {
@@ -85,6 +99,36 @@ extension CassandraClient {
             if let requestTimeout = options.requestTimeout {
                 try checkResult { cass_statement_set_request_timeout(self.rawPointer, requestTimeout) }
             }
+        }
+
+        private func bindArray<T>(_ array: [T], at index: Int) throws -> CassError {
+            let collection = cass_collection_new(CASS_COLLECTION_TYPE_LIST, array.count)
+            try array.forEach { element in
+                let appendResult: CassError
+                switch element {
+                case let value as Int8:
+                    appendResult = cass_collection_append_int8(collection, value)
+                case let value as Int16:
+                    appendResult = cass_collection_append_int16(collection, value)
+                case let value as Int32:
+                    appendResult = cass_collection_append_int32(collection, value)
+                case let value as Int64:
+                    appendResult = cass_collection_append_int64(collection, value)
+                case let value as Float32:
+                    appendResult = cass_collection_append_float(collection, value)
+                case let value as Double:
+                    appendResult = cass_collection_append_double(collection, value)
+                case let value as String:
+                    appendResult = cass_collection_append_string(collection, value)
+                default:
+                    throw CassandraClient.Error.badParams("Array of \(T.self) is not supported")
+                }
+
+                guard appendResult == CASS_OK else {
+                    throw CassandraClient.Error(appendResult)
+                }
+            }
+            return cass_statement_bind_collection(self.rawPointer, index, collection)
         }
 
         func setPagingSize(_ pagingSize: Int32) throws {
@@ -134,6 +178,14 @@ extension CassandraClient {
             case rawTimestamp(millisecondsSinceEpoch: Int64)
             case bytes([UInt8])
             case bytesUnsafe(UnsafeBufferPointer<UInt8>)
+
+            case int8Array([Int8])
+            case int16Array([Int16])
+            case int32Array([Int32])
+            case int64Array([Int64])
+            case float32Array([Float32])
+            case doubleArray([Double])
+            case stringArray([String])
         }
 
         public struct Options: CustomStringConvertible {

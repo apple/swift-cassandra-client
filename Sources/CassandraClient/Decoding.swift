@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift Cassandra Client open source project
 //
-// Copyright (c) 2022 Apple Inc. and the Swift Cassandra Client project authors
+// Copyright (c) 2022-2023 Apple Inc. and the Swift Cassandra Client project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -166,6 +166,41 @@ extension CassandraClient {
                 return value as! T
             } else if type == TimeBasedUUID.self {
                 guard let value: TimeBasedUUID = row.column(key.stringValue)?.timeuuid else {
+                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                }
+                return value as! T
+            } else if type == [Int8].self {
+                guard let value: [Int8] = row.column(key.stringValue) else {
+                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                }
+                return value as! T
+            } else if type == [Int16].self {
+                guard let value: [Int16] = row.column(key.stringValue) else {
+                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                }
+                return value as! T
+            } else if type == [Int32].self {
+                guard let value: [Int32] = row.column(key.stringValue) else {
+                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                }
+                return value as! T
+            } else if type == [Int64].self {
+                guard let value: [Int64] = row.column(key.stringValue) else {
+                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                }
+                return value as! T
+            } else if type == [Float32].self {
+                guard let value: [Float32] = row.column(key.stringValue) else {
+                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                }
+                return value as! T
+            } else if type == [Double].self {
+                guard let value: [Double] = row.column(key.stringValue) else {
+                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                }
+                return value as! T
+            } else if type == [String].self {
+                guard let value: [String] = row.column(key.stringValue) else {
                     throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
                 }
                 return value as! T
