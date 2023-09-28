@@ -16,7 +16,7 @@
 
 extension CassandraClient {
     /// Consistency levels
-    public enum Consistency {
+    public enum Consistency: Hashable {
         case any
         case one
         case two

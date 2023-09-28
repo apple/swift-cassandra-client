@@ -51,12 +51,12 @@ extension CassandraClient {
         /// Sets the cluster's consistency level. Default is `.localOne`.
         public var consistency: CassandraClient.Consistency?
 
-        public enum SpeculativeExecutionPolicy {
+        public enum SpeculativeExecutionPolicy: Hashable {
             case constant(delayInMillseconds: Int64, maxExecutions: Int32)
             case disabled
         }
 
-        public enum PrepareStrategy {
+        public enum PrepareStrategy: Hashable {
             case allHosts
             case upOrAddHost
         }
