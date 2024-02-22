@@ -137,7 +137,6 @@ let package = Package(
                 "./datastax-cpp-driver/src",
                 "./custom/src",
             ],
-            publicHeadersPath: "./datastax-cpp-driver/include",
             cxxSettings: [
                 .headerSearchPath("./custom/include"),
                 .headerSearchPath("./extras"),

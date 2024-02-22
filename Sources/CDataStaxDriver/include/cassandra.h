@@ -1,0 +1,1 @@
+../datastax-cpp-driver/include/cassandra.h
