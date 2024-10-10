@@ -139,6 +139,7 @@ let package = Package(
             ],
             publicHeadersPath: "./datastax-cpp-driver/include",
             cxxSettings: [
+                .define("HAVE_TIMERFD", .when(platforms: [.linux])), // this is available on all modern Linux systems, and is needed for efficient MicroTimer implementation. Otherwise busy waits are used.
                 .headerSearchPath("./custom/include"),
                 .headerSearchPath("./extras"),
                 .headerSearchPath("./datastax-cpp-driver/src"),
