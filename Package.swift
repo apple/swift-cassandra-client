@@ -99,7 +99,6 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMajor(from: "2.21.0")),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
-        .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -139,6 +138,7 @@ let package = Package(
             ],
             publicHeadersPath: "./datastax-cpp-driver/include",
             cxxSettings: [
+                .define("HAVE_TIMERFD", .when(platforms: [.linux])), // this is available on all modern Linux systems, and is needed for efficient MicroTimer implementation. Otherwise busy waits are used.
                 .headerSearchPath("./custom/include"),
                 .headerSearchPath("./extras"),
                 .headerSearchPath("./datastax-cpp-driver/src"),
