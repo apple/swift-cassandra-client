@@ -232,7 +232,7 @@ extension CassandraClient {
         }
 
         func shutdown() throws {
-            try self.stateStore.withLockedValue{ (state: inout State) in
+            try self.stateStore.withLockedValue { (state: inout State) in
                 defer {
                     state = .disconnected
                 }
