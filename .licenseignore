@@ -43,6 +43,7 @@ dev/update-benchmark-thresholds
 **/*.der
 .swiftformat
 .gitmodules
+.flake8
 Sources/CDataStaxDriver/datastax-cpp-driver
 Sources/Clibuv/libuv
 Sources/Clibuv/include/uv
