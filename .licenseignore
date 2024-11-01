@@ -45,3 +45,4 @@ dev/update-benchmark-thresholds
 .gitmodules
 Sources/CDataStaxDriver/datastax-cpp-driver
 Sources/Clibuv/libuv
+Sources/Clibuv/include/uv
