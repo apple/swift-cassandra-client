@@ -121,7 +121,6 @@ extension CassandraClient {
             return _map([])
         }
 
-        #if compiler(>=5.5) && canImport(_Concurrency)
         @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         internal init(session: Session, statement: Statement, logger: Logger?) {
             self.session = session
@@ -192,11 +191,9 @@ extension CassandraClient {
             }
             return try await _map([])
         }
-        #endif
     }
 }
 
-#if compiler(>=5.5) && canImport(_Concurrency)
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 extension CassandraClient.PaginatedRows: AsyncSequence {
     public typealias Element = CassandraClient.Row
@@ -258,4 +255,3 @@ extension CassandraClient.PaginatedRows: AsyncSequence {
         }
     }
 }
-#endif

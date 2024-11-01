@@ -98,7 +98,6 @@ extension CassandraClient {
             return clusterPromise.futureResult
         }
 
-        #if compiler(>=5.5) && canImport(_Concurrency)
         @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         internal func makeCluster() async throws -> Cluster {
             try await withCheckedThrowingContinuation { continuation in
@@ -117,7 +116,6 @@ extension CassandraClient {
                 }
             }
         }
-        #endif
 
         private func makeCluster(contactPoints: ContactPoints) throws -> Cluster {
             let cluster = Cluster()

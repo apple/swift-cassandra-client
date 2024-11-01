@@ -81,9 +81,6 @@ final class Tests: XCTestCase {
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testAsyncSession() throws {
-        #if !(compiler(>=5.5) && canImport(_Concurrency))
-        try XCTSkipIf(true)
-        #else
         runAsyncAndWaitFor {
             let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
             defer { XCTAssertNoThrow(try session.shutdown()) }
@@ -103,7 +100,6 @@ final class Tests: XCTestCase {
             let result = try await session.query("select * from \(tableName);")
             XCTAssertEqual(Array(result).count, count)
         }
-        #endif
     }
 
     func testWithSessionBlocking() {
@@ -124,9 +120,6 @@ final class Tests: XCTestCase {
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testWithAsyncSession() throws {
-        #if !(compiler(>=5.5) && canImport(_Concurrency))
-        try XCTSkipIf(true)
-        #else
         runAsyncAndWaitFor {
             var configuration = self.configuration!
             configuration.keyspace = "test_\(DispatchTime.now().uptimeNanoseconds)"
@@ -140,7 +133,6 @@ final class Tests: XCTestCase {
             }
             try await cassandraClient.run("create table test (data bigint primary key);")
         }
-        #endif
     }
 
     func testWithSessionChaining() {
@@ -325,9 +317,6 @@ final class Tests: XCTestCase {
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testQueryAsyncIterator() throws {
-        #if !(compiler(>=5.5) && canImport(_Concurrency))
-        try XCTSkipIf(true)
-        #else
         runAsyncAndWaitFor(
             {
                 let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
@@ -377,7 +366,6 @@ final class Tests: XCTestCase {
             },
             5.0
         )
-        #endif
     }
 
     func testQueryBuffered() {
@@ -415,9 +403,6 @@ final class Tests: XCTestCase {
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testQueryAsyncBuffered() throws {
-        #if !(compiler(>=5.5) && canImport(_Concurrency))
-        try XCTSkipIf(true)
-        #else
         runAsyncAndWaitFor(
             {
                 let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
@@ -449,7 +434,6 @@ final class Tests: XCTestCase {
             },
             5.0
         )
-        #endif
     }
 
     func testSelectIn() throws {
@@ -843,7 +827,6 @@ final class Tests: XCTestCase {
     }
 }
 
-#if compiler(>=5.5) && canImport(_Concurrency)
 extension XCTestCase {
     // TODO: remove once XCTest supports async functions
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -859,4 +842,3 @@ extension XCTestCase {
         wait(for: [finished], timeout: timeout)
     }
 }
-#endif
