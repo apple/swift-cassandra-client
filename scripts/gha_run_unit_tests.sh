@@ -15,7 +15,7 @@
 
 set -e
 
-if [ -z ${I_AM_RUNNING_IN_CI} ]
+if [ -z "${I_AM_RUNNING_IN_CI}" ]
 then
     echo "Not running in CI"
     exit 1
