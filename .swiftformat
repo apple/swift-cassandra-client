@@ -1,21 +1,13 @@
---swiftversion 5.2
-
 # file options
 
---exclude .build,**/CDataStaxDriver,**/Clibuv
+--swiftversion 5.1
+--exclude .build
 
 # format options
 
---ifdef no-indent
---indent 4
---extensionacl on-declarations
---patternlet inline
 --self insert
---stripunusedargs closure-only
---wraparguments before-first
+--patternlet inline
+--stripunusedargs unnamed-only
+--ifdef no-indent
 
 # rules
-
---disable blankLinesAroundMark
---disable wrapMultilineStatementBraces
-
