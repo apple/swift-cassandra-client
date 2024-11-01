@@ -162,10 +162,6 @@ extension CassandraClient {
     public struct OpaquePagingStateToken: PagingStateToken {
         let token: [UInt8]
 
-        internal init(token: [UInt8]) {
-            self.token = token
-        }
-
         public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
             try self.token.withUnsafeBytes(body)
         }
@@ -499,9 +495,13 @@ extension CassUuid {
         timeAndVersion.append(uuid.1)
         timeAndVersion.append(uuid.2)
         timeAndVersion.append(uuid.3)
-        time_and_version = cass_uint64_t(UInt64(bigEndian: timeAndVersion.withUnsafeBufferPointer {
-            ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
-        }.pointee))
+        time_and_version = cass_uint64_t(
+            UInt64(
+                bigEndian: timeAndVersion.withUnsafeBufferPointer {
+                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
+                }.pointee
+            )
+        )
 
         var clockSeqAndNode = [UInt8]()
         clockSeqAndNode.append(uuid.8)
@@ -512,9 +512,13 @@ extension CassUuid {
         clockSeqAndNode.append(uuid.13)
         clockSeqAndNode.append(uuid.14)
         clockSeqAndNode.append(uuid.15)
-        clock_seq_and_node = cass_uint64_t(UInt64(bigEndian: clockSeqAndNode.withUnsafeBufferPointer {
-            ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
-        }.pointee))
+        clock_seq_and_node = cass_uint64_t(
+            UInt64(
+                bigEndian: clockSeqAndNode.withUnsafeBufferPointer {
+                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
+                }.pointee
+            )
+        )
     }
 
     internal func uuid() -> Foundation.UUID {

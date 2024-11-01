@@ -37,27 +37,42 @@ public class CassandraClient: CassandraSession {
     ///   - eventLoopGroupProvider: The ``EventLoopGroupProvider`` to use, uses ``EventLoopGroupProvider/createNew`` strategy by default.
     ///   - configuration: The  client's ``Configuration``.
     ///   - logger: The client's default `Logger`.
-    public init(eventLoopGroupProvider: EventLoopGroupProvider = .createNew, configuration: Configuration, logger: Logger? = nil) {
+    public init(
+        eventLoopGroupProvider: EventLoopGroupProvider = .createNew,
+        configuration: Configuration,
+        logger: Logger? = nil
+    ) {
         self.configuration = configuration
         self.logger = logger ?? Logger(label: "com.apple.cassandra")
         switch eventLoopGroupProvider {
         case .createNew:
-            self.eventLoopGroupContainer = (value: MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount), managed: true)
+            self.eventLoopGroupContainer = (
+                value: MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount), managed: true
+            )
         case .shared(let eventLoopGroup):
             self.eventLoopGroupContainer = (value: eventLoopGroup, managed: false)
         }
-        self.defaultSession = Session(configuration: self.configuration, logger: self.logger, eventLoopGroupContainer: self.eventLoopGroupContainer)
+        self.defaultSession = Session(
+            configuration: self.configuration,
+            logger: self.logger,
+            eventLoopGroupContainer: self.eventLoopGroupContainer
+        )
     }
 
     deinit {
-        precondition(self.isShutdown.load(ordering: .relaxed), "Client not shut down before the deinit. Please call client.shutdown() when no longer needed.")
+        precondition(
+            self.isShutdown.load(ordering: .relaxed),
+            "Client not shut down before the deinit. Please call client.shutdown() when no longer needed."
+        )
     }
 
     /// Shutdown the client.
     ///
     /// - Note: It is required to call this method before terminating the program. `CassandraClient` will assert it was cleanly shut down as part of its deinitializer.
     public func shutdown() throws {
-        if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged {
+        if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
+            .exchanged
+        {
             return
         }
 
@@ -90,7 +105,13 @@ public class CassandraClient: CassandraSession {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The resulting ``Rows``.
-    public func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<Rows> {
+    public func execute(
+        statement: Statement,
+        on eventLoop: EventLoop?,
+        logger: Logger? = .none
+    )
+        -> EventLoopFuture<Rows>
+    {
         self.defaultSession.execute(statement: statement, on: eventLoop, logger: logger)
     }
 
@@ -105,8 +126,18 @@ public class CassandraClient: CassandraSession {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The ``PaginatedRows``.
-    public func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<PaginatedRows> {
-        self.defaultSession.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
+    public func execute(
+        statement: Statement,
+        pageSize: Int32,
+        on eventLoop: EventLoop?,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<PaginatedRows> {
+        self.defaultSession.execute(
+            statement: statement,
+            pageSize: pageSize,
+            on: eventLoop,
+            logger: logger
+        )
     }
 
     /// Create a new ``CassandraSession`` that can be used to perform queries on the given or configured keyspace.
@@ -120,7 +151,11 @@ public class CassandraClient: CassandraSession {
         var configuration = self.configuration
         configuration.keyspace = keyspace
         let logger = logger ?? self.logger
-        return Session(configuration: configuration, logger: logger, eventLoopGroupContainer: self.eventLoopGroupContainer)
+        return Session(
+            configuration: configuration,
+            logger: logger,
+            eventLoopGroupContainer: self.eventLoopGroupContainer
+        )
     }
 
     /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure.
@@ -129,7 +164,11 @@ public class CassandraClient: CassandraSession {
     ///   - keyspace: If `nil`, the client's default keyspace is used.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - handler: The closure to invoke, passing in the newly created session.
-    public func withSession(keyspace: String?, logger: Logger? = .none, handler: (CassandraSession) throws -> Void) rethrows {
+    public func withSession(
+        keyspace: String?,
+        logger: Logger? = .none,
+        handler: (CassandraSession) throws -> Void
+    ) rethrows {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         defer {
             do {
@@ -149,7 +188,11 @@ public class CassandraClient: CassandraSession {
     ///   - handler: The closure to invoke, passing in the newly created session.
     ///
     /// - Returns: The resulting `EventLoopFuture` of the closure.
-    public func withSession<T>(keyspace: String?, logger: Logger? = .none, handler: (CassandraSession) -> EventLoopFuture<T>) -> EventLoopFuture<T> {
+    public func withSession<T>(
+        keyspace: String?,
+        logger: Logger? = .none,
+        handler: (CassandraSession) -> EventLoopFuture<T>
+    ) -> EventLoopFuture<T> {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         return handler(session).always { _ in
             do {
@@ -201,8 +244,18 @@ extension CassandraClient {
     ///
     /// - Returns: The ``PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func execute(statement: Statement, pageSize: Int32, logger: Logger? = .none) async throws -> PaginatedRows {
-        try await self.defaultSession.execute(statement: statement, pageSize: pageSize, logger: logger)
+    public func execute(
+        statement: Statement,
+        pageSize: Int32,
+        logger: Logger? = .none
+    ) async throws
+        -> PaginatedRows
+    {
+        try await self.defaultSession.execute(
+            statement: statement,
+            pageSize: pageSize,
+            logger: logger
+        )
     }
 
     /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure.
@@ -212,7 +265,11 @@ extension CassandraClient {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - closure: The closure to invoke, passing in the newly created session.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func withSession(keyspace: String?, logger: Logger? = .none, closure: (CassandraSession) async throws -> Void) async throws {
+    public func withSession(
+        keyspace: String?,
+        logger: Logger? = .none,
+        closure: (CassandraSession) async throws -> Void
+    ) async throws {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         defer {
             do {
@@ -233,7 +290,11 @@ extension CassandraClient {
     ///
     /// - Returns: The result of the closure.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func withSession<T>(keyspace: String?, logger: Logger? = .none, handler: (CassandraSession) async throws -> T) async throws -> T {
+    public func withSession<T>(
+        keyspace: String?,
+        logger: Logger? = .none,
+        handler: (CassandraSession) async throws -> T
+    ) async throws -> T {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
         defer {
             do {

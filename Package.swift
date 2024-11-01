@@ -1,6 +1,8 @@
 // swift-tools-version:5.6
-import class Foundation.FileManager
+
 import PackageDescription
+
+import class Foundation.FileManager
 
 // Compute libuv sources to exclude
 var libuvExclude = [
@@ -58,7 +60,8 @@ var datastaxExclude = [
     "./datastax-cpp-driver/src/wktgen.sh",
     "./datastax-cpp-driver/src/gssapi",
     "./datastax-cpp-driver/src/ssl/ssl_no_impl.cpp",
-    "./datastax-cpp-driver/src/ssl/ssl_openssl_impl.cpp", // See ./custom/src/ssl/ssl_openssl_impl.cpp
+    // See ./custom/src/ssl/ssl_openssl_impl.cpp
+    "./datastax-cpp-driver/src/ssl/ssl_openssl_impl.cpp",
     "./datastax-cpp-driver/src/third_party/curl/CMakeLists.txt",
     "./datastax-cpp-driver/src/third_party/curl/COPYING",
     "./datastax-cpp-driver/src/third_party/hdr_histogram/CMakeLists.txt",
@@ -82,7 +85,9 @@ var datastaxExclude = [
 ]
 
 do {
-    if !(try FileManager.default.contentsOfDirectory(atPath: "./Sources/CDataStaxDriver/datastax-cpp-driver/src/third_party/sparsehash/CMakeFiles").isEmpty) {
+    if !(try FileManager.default.contentsOfDirectory(
+        atPath: "./Sources/CDataStaxDriver/datastax-cpp-driver/src/third_party/sparsehash/CMakeFiles"
+    ).isEmpty) {
         datastaxExclude.append("./datastax-cpp-driver/src/third_party/sparsehash/CMakeFiles/")
     }
 } catch {
@@ -92,7 +97,7 @@ do {
 let package = Package(
     name: "swift-cassandra-client",
     products: [
-        .library(name: "CassandraClient", targets: ["CassandraClient"]),
+        .library(name: "CassandraClient", targets: ["CassandraClient"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio", .upToNextMajor(from: "2.41.1")),
@@ -121,7 +126,7 @@ let package = Package(
             ],
             cSettings: [
                 .headerSearchPath("./libuv/src"),
-                .define("_GNU_SOURCE", to: "1"), // required to fix "undefined CPU_COUNT" error
+                .define("_GNU_SOURCE", to: "1"),  // required to fix "undefined CPU_COUNT" error
             ]
         ),
 
@@ -138,7 +143,9 @@ let package = Package(
             ],
             publicHeadersPath: "./datastax-cpp-driver/include",
             cxxSettings: [
-                .define("HAVE_TIMERFD", .when(platforms: [.linux])), // this is available on all modern Linux systems, and is needed for efficient MicroTimer implementation. Otherwise busy waits are used.
+                // This is available on all modern Linux systems, and is needed for efficient
+                // MicroTimer implementation. Otherwise busy waits are used.
+                .define("HAVE_TIMERFD", .when(platforms: [.linux])),
                 .headerSearchPath("./custom/include"),
                 .headerSearchPath("./extras"),
                 .headerSearchPath("./datastax-cpp-driver/src"),
@@ -147,13 +154,16 @@ let package = Package(
             ]
         ),
 
-        .target(name: "CassandraClient", dependencies: [
-            "CDataStaxDriver",
-            .product(name: "NIO", package: "swift-nio"),
-            .product(name: "NIOCore", package: "swift-nio"),
-            .product(name: "Atomics", package: "swift-atomics"),
-            .product(name: "Logging", package: "swift-log"),
-        ]),
+        .target(
+            name: "CassandraClient",
+            dependencies: [
+                "CDataStaxDriver",
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "Atomics", package: "swift-atomics"),
+                .product(name: "Logging", package: "swift-log"),
+            ]
+        ),
 
         .testTarget(name: "CassandraClientTests", dependencies: ["CassandraClient"]),
     ],

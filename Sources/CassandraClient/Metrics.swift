@@ -84,7 +84,9 @@ public struct CassandraMetrics: Codable {
         self.requestsFifteenMinuteRate = metrics.requests.fifteen_minute_rate
         self.statsTotalConnections = UInt(metrics.stats.total_connections)
         self.statsAvailableConnections = UInt(metrics.stats.available_connections)
-        self.statsExceededPendingRequestsWaterMark = UInt(metrics.stats.exceeded_pending_requests_water_mark)
+        self.statsExceededPendingRequestsWaterMark = UInt(
+            metrics.stats.exceeded_pending_requests_water_mark
+        )
         self.statsExceededWriteBytesWaterMark = UInt(metrics.stats.exceeded_write_bytes_water_mark)
         self.errorsConnectionTimeouts = UInt(metrics.errors.connection_timeouts)
         self.errorsPendingRequestTimeouts = UInt(metrics.errors.pending_request_timeouts)

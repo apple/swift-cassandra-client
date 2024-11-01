@@ -70,7 +70,8 @@ extension CassandraClient {
         }
 
         public init(
-            contactPointsProvider: @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void,
+            contactPointsProvider: @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) ->
+                Void,
             port: Int32,
             protocolVersion: ProtocolVersion
         ) {
@@ -121,7 +122,9 @@ extension CassandraClient {
         private func makeCluster(contactPoints: ContactPoints) throws -> Cluster {
             let cluster = Cluster()
 
-            try contactPoints.forEach { try cluster.addContactPoint($0) }
+            for contactPoint in contactPoints {
+                try cluster.addContactPoint(contactPoint)
+            }
 
             try cluster.setPort(self.port)
             try cluster.setProtocolVersion(self.protocolVersion.rawValue)
@@ -169,7 +172,10 @@ extension CassandraClient {
             }
             switch self.speculativeExecutionPolicy {
             case .constant(let delayInMillseconds, let maxExecutions):
-                try cluster.setConstantSpeculativeExecutionPolicy(delayInMillseconds: delayInMillseconds, maxExecutions: maxExecutions)
+                try cluster.setConstantSpeculativeExecutionPolicy(
+                    delayInMillseconds: delayInMillseconds,
+                    maxExecutions: maxExecutions
+                )
             case .disabled:
                 try cluster.setNoSpeculativeExecutionPolicy()
             case .none:
@@ -254,7 +260,9 @@ internal final class Cluster {
     }
 
     func setCoreConnectionsPerHost(_ numberOfConnection: UInt32) throws {
-        try self.checkResult { cass_cluster_set_core_connections_per_host(self.rawPointer, numberOfConnection) }
+        try self.checkResult {
+            cass_cluster_set_core_connections_per_host(self.rawPointer, numberOfConnection)
+        }
     }
 
     func setTcpNodelay(_ enabled: Bool) throws {
@@ -262,7 +270,11 @@ internal final class Cluster {
     }
 
     func setTcpKeepalive(_ enabled: Bool, delayInSeconds: UInt32) throws {
-        cass_cluster_set_tcp_keepalive(self.rawPointer, enabled ? cass_true : cass_false, delayInSeconds)
+        cass_cluster_set_tcp_keepalive(
+            self.rawPointer,
+            enabled ? cass_true : cass_false,
+            delayInSeconds
+        )
     }
 
     func setConnectionHeartbeatInterval(_ seconds: UInt32) throws {
@@ -278,15 +290,28 @@ internal final class Cluster {
     }
 
     func setUseHostnameResolution(_ enabled: Bool) throws {
-        try self.checkResult { cass_cluster_set_use_hostname_resolution(self.rawPointer, enabled ? cass_true : cass_false) }
+        try self.checkResult {
+            cass_cluster_set_use_hostname_resolution(self.rawPointer, enabled ? cass_true : cass_false)
+        }
     }
 
     func setUseRandomizedContactPoints(_ enabled: Bool) throws {
-        try self.checkResult { cass_cluster_set_use_randomized_contact_points(self.rawPointer, enabled ? cass_true : cass_false) }
+        try self.checkResult {
+            cass_cluster_set_use_randomized_contact_points(
+                self.rawPointer,
+                enabled ? cass_true : cass_false
+            )
+        }
     }
 
     func setConstantSpeculativeExecutionPolicy(delayInMillseconds: Int64, maxExecutions: Int32) throws {
-        try self.checkResult { cass_cluster_set_constant_speculative_execution_policy(self.rawPointer, cass_int64_t(delayInMillseconds), maxExecutions) }
+        try self.checkResult {
+            cass_cluster_set_constant_speculative_execution_policy(
+                self.rawPointer,
+                cass_int64_t(delayInMillseconds),
+                maxExecutions
+            )
+        }
     }
 
     func setNoSpeculativeExecutionPolicy() throws {
@@ -294,15 +319,21 @@ internal final class Cluster {
     }
 
     func setPrepareOnAllHosts(_ enabled: Bool) throws {
-        try self.checkResult { cass_cluster_set_prepare_on_all_hosts(self.rawPointer, enabled ? cass_true : cass_false) }
+        try self.checkResult {
+            cass_cluster_set_prepare_on_all_hosts(self.rawPointer, enabled ? cass_true : cass_false)
+        }
     }
 
     func setPrepareOnUpOrAddHost(_ enabled: Bool) throws {
-        try self.checkResult { cass_cluster_set_prepare_on_up_or_add_host(self.rawPointer, enabled ? cass_true : cass_false) }
+        try self.checkResult {
+            cass_cluster_set_prepare_on_up_or_add_host(self.rawPointer, enabled ? cass_true : cass_false)
+        }
     }
 
     func setNoCompact(_ enabled: Bool) throws {
-        try self.checkResult { cass_cluster_set_no_compact(self.rawPointer, enabled ? cass_true : cass_false) }
+        try self.checkResult {
+            cass_cluster_set_no_compact(self.rawPointer, enabled ? cass_true : cass_false)
+        }
     }
 
     func setConsistency(_ consistency: CassConsistency) throws {
@@ -368,7 +399,7 @@ extension CassandraClient.Configuration {
             case .peerIdentityDNS:
                 sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_IDENTITY_DNS)
             case .default:
-                () // use DataStax driver's default
+                ()  // use DataStax driver's default
             }
 
             if let cert = self.cert {

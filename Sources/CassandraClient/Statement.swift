@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 @_implementationOnly import CDataStaxDriver
-import Foundation // for date and uuid
+import Foundation  // for date and uuid
 
 extension CassandraClient {
     /// A prepared statement to run in a Cassandra database.
@@ -48,7 +48,11 @@ extension CassandraClient {
                 case .double(let value):
                     result = cass_statement_bind_double(self.rawPointer, index, value)
                 case .bool(let value):
-                    result = cass_statement_bind_bool(self.rawPointer, index, value ? cass_bool_t(1) : cass_bool_t(0))
+                    result = cass_statement_bind_bool(
+                        self.rawPointer,
+                        index,
+                        value ? cass_bool_t(1) : cass_bool_t(0)
+                    )
                 case .string(let value):
                     result = cass_statement_bind_string(self.rawPointer, index, value)
                 case .uuid(let value):
@@ -70,7 +74,12 @@ extension CassandraClient {
                         cass_statement_bind_bytes(this.rawPointer, index, buffer.baseAddress, buffer.count)
                     }
                 case .bytesUnsafe(let buffer):
-                    result = cass_statement_bind_bytes(self.rawPointer, index, buffer.baseAddress, buffer.count)
+                    result = cass_statement_bind_bytes(
+                        self.rawPointer,
+                        index,
+                        buffer.baseAddress,
+                        buffer.count
+                    )
                 case .int8Array(let array):
                     result = try self.bindArray(array, at: index)
                 case .int16Array(let array):
@@ -93,7 +102,9 @@ extension CassandraClient {
             }
 
             if let consistency = options.consistency {
-                try checkResult { cass_statement_set_consistency(self.rawPointer, consistency.cassConsistency) }
+                try checkResult {
+                    cass_statement_set_consistency(self.rawPointer, consistency.cassConsistency)
+                }
             }
 
             if let requestTimeout = options.requestTimeout {
@@ -103,7 +114,7 @@ extension CassandraClient {
 
         private func bindArray<T>(_ array: [T], at index: Int) throws -> CassError {
             let collection = cass_collection_new(CASS_COLLECTION_TYPE_LIST, array.count)
-            try array.forEach { element in
+            for element in array {
                 let appendResult: CassError
                 switch element {
                 case let value as Int8:
@@ -147,7 +158,11 @@ extension CassandraClient {
             try checkResult {
                 pagingStateToken.withUnsafeBytes {
                     let buffer = $0.bindMemory(to: CChar.self)
-                    return cass_statement_set_paging_state_token(self.rawPointer, buffer.baseAddress, buffer.count)
+                    return cass_statement_set_paging_state_token(
+                        self.rawPointer,
+                        buffer.baseAddress,
+                        buffer.count
+                    )
                 }
             }
         }

@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-import Foundation // for date and uuid
+import Foundation  // for date and uuid
 
 extension CassandraClient {
     internal struct RowDecoder: Decoder {
@@ -66,42 +66,54 @@ extension CassandraClient {
 
         public func decode(_: Bool.Type, forKey key: Key) throws -> Bool {
             guard let value: Bool = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
 
         public func decode(_: Int.Type, forKey key: Key) throws -> Int {
             guard let value: Int32 = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
-            return Int(value) // will always fit since storage is 32
+            return Int(value)  // will always fit since storage is 32
         }
 
         public func decode(_: Int8.Type, forKey key: Key) throws -> Int8 {
             guard let value: Int8 = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
 
         public func decode(_: Int16.Type, forKey key: Key) throws -> Int16 {
             guard let value: Int16 = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
 
         public func decode(_: Int32.Type, forKey key: Key) throws -> Int32 {
             guard let value: Int32 = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
 
         public func decode(_: Int64.Type, forKey key: Key) throws -> Int64 {
             guard let value: Int64 = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
@@ -128,21 +140,27 @@ extension CassandraClient {
 
         public func decode(_: Float.Type, forKey key: Key) throws -> Float {
             guard let value: Float32 = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
 
         public func decode(_: Double.Type, forKey key: Key) throws -> Double {
             guard let value: Double = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
 
         public func decode(_: String.Type, forKey key: Key) throws -> String {
             guard let value: String = row.column(key.stringValue) else {
-                throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                throw DecodingError.typeMismatch(
+                    "value for \(key.stringValue) not found or of incorrect data type."
+                )
             }
             return value
         }
@@ -151,57 +169,79 @@ extension CassandraClient {
         public func decode<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T {
             if type == [UInt8].self {
                 guard let value: [UInt8] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == Foundation.Date.self {
                 guard let value: Int64 = row.column(key.stringValue)?.timestamp else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return Foundation.Date(timeIntervalSince1970: Double(value) / 1000) as! T
             } else if type == Foundation.UUID.self {
                 guard let value: Foundation.UUID = row.column(key.stringValue)?.uuid else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == TimeBasedUUID.self {
                 guard let value: TimeBasedUUID = row.column(key.stringValue)?.timeuuid else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == [Int8].self {
                 guard let value: [Int8] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == [Int16].self {
                 guard let value: [Int16] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == [Int32].self {
                 guard let value: [Int32] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == [Int64].self {
                 guard let value: [Int64] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == [Float32].self {
                 guard let value: [Float32] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == [Double].self {
                 guard let value: [Double] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else if type == [String].self {
                 guard let value: [String] = row.column(key.stringValue) else {
-                    throw DecodingError.typeMismatch("value for \(key.stringValue) not found or of incorrect data type.")
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
                 }
                 return value as! T
             } else {
@@ -209,7 +249,12 @@ extension CassandraClient {
             }
         }
 
-        public func nestedContainer<NestedKey>(keyedBy _: NestedKey.Type, forKey _: Key) throws -> KeyedDecodingContainer<NestedKey> {
+        public func nestedContainer<NestedKey>(
+            keyedBy _: NestedKey.Type,
+            forKey _: Key
+        ) throws
+            -> KeyedDecodingContainer<NestedKey>
+        {
             throw DecodingError.notSupported()
         }
 

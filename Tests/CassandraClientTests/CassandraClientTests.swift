@@ -12,11 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-@testable import CassandraClient
 import Foundation
 import Logging
 import NIO
 import XCTest
+
+@testable import CassandraClient
 
 final class Tests: XCTestCase {
     var cassandraClient: CassandraClient!
@@ -28,7 +29,9 @@ final class Tests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         let keyspace = env["CASSANDRA_KEYSPACE"] ?? "test"
         self.configuration = CassandraClient.Configuration(
-            contactPointsProvider: { callback in callback(.success([env["CASSANDRA_HOST"] ?? "127.0.0.1"])) },
+            contactPointsProvider: { callback in
+                callback(.success([env["CASSANDRA_HOST"] ?? "127.0.0.1"]))
+            },
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
@@ -42,18 +45,22 @@ final class Tests: XCTestCase {
         // client for the tests
         self.cassandraClient = CassandraClient(configuration: self.configuration, logger: logger)
         // keyspace for the tests
-        XCTAssertNoThrow(try self.cassandraClient.withSession(keyspace: .none) { session in
-            try session
-                .run("create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }")
-                .wait()
-        })
+        XCTAssertNoThrow(
+            try self.cassandraClient.withSession(keyspace: .none) { session in
+                try session
+                    .run(
+                        "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+                    )
+                    .wait()
+            }
+        )
     }
 
     override func tearDown() {
         super.tearDown()
 
         XCTAssertNoThrow(try self.cassandraClient.shutdown())
-        self.cassandraClient = nil // FIXME: for tsan
+        self.cassandraClient = nil  // FIXME: for tsan
     }
 
     func testSession() {
@@ -63,8 +70,8 @@ final class Tests: XCTestCase {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(try session.run("create table \(tableName) (data bigint primary key);").wait())
 
-        let count = Int.random(in: 10 ... 100)
-        try! (0 ..< count).forEach { index in
+        let count = Int.random(in: 10...100)
+        for index in 0..<count {
             XCTAssertNoThrow(try session.run("insert into \(tableName) (data) values (\(index));").wait())
         }
 
@@ -84,10 +91,12 @@ final class Tests: XCTestCase {
             let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
             try await session.run("create table \(tableName) (data bigint primary key);")
 
-            let count = Int.random(in: 10 ... 100)
+            let count = Int.random(in: 10...100)
             await withThrowingTaskGroup(of: Void.self) { group in
-                (0 ..< count).forEach { index in
-                    group.addTask { try await session.run("insert into \(tableName) (data) values (\(index));") }
+                for index in 0..<count {
+                    group.addTask {
+                        try await session.run("insert into \(tableName) (data) values (\(index));")
+                    }
                 }
             }
 
@@ -103,9 +112,13 @@ final class Tests: XCTestCase {
         let cassandraClient = CassandraClient(configuration: configuration)
         defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
 
-        XCTAssertNoThrow(try cassandraClient.withSession(keyspace: .none) { session in
-            try session.run("create keyspace \(configuration.keyspace!) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }").wait()
-        })
+        XCTAssertNoThrow(
+            try cassandraClient.withSession(keyspace: .none) { session in
+                try session.run(
+                    "create keyspace \(configuration.keyspace!) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+                ).wait()
+            }
+        )
         XCTAssertNoThrow(try cassandraClient.run("create table test (data bigint primary key);").wait())
     }
 
@@ -121,7 +134,9 @@ final class Tests: XCTestCase {
             defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
 
             try await cassandraClient.withSession(keyspace: .none) { session in
-                try await session.run("create keyspace \(configuration.keyspace!) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }")
+                try await session.run(
+                    "create keyspace \(configuration.keyspace!) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+                )
             }
             try await cassandraClient.run("create table test (data bigint primary key);")
         }
@@ -133,17 +148,23 @@ final class Tests: XCTestCase {
         configuration.keyspace = "test_\(DispatchTime.now().uptimeNanoseconds)"
         let cassandraClient = CassandraClient(configuration: configuration)
         defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
-        XCTAssertNoThrow(try cassandraClient.withSession(keyspace: .none) { session in
-            session.run("create keyspace \(configuration.keyspace!) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }")
-        }.flatMap { _ in
-            cassandraClient.run("create table test (data bigint primary key);")
-        }.wait())
+        XCTAssertNoThrow(
+            try cassandraClient.withSession(keyspace: .none) { session in
+                session.run(
+                    "create keyspace \(configuration.keyspace!) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+                )
+            }.flatMap { _ in
+                cassandraClient.run("create table test (data bigint primary key);")
+            }.wait()
+        )
     }
 
     func testShutdownELGManaged() {
         let cassandraClient = CassandraClient(configuration: configuration)
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(try cassandraClient.run("create table \(tableName) (id int primary key);").wait())
+        XCTAssertNoThrow(
+            try cassandraClient.run("create table \(tableName) (id int primary key);").wait()
+        )
         XCTAssertNoThrow(try cassandraClient.shutdown())
         XCTAssertNoThrow(try cassandraClient.shutdown())
     }
@@ -152,9 +173,14 @@ final class Tests: XCTestCase {
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
 
-        let cassandraClient = CassandraClient(eventLoopGroupProvider: .shared(eventLoopGroup), configuration: configuration)
+        let cassandraClient = CassandraClient(
+            eventLoopGroupProvider: .shared(eventLoopGroup),
+            configuration: configuration
+        )
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(try cassandraClient.run("create table \(tableName) (id int primary key);").wait())
+        XCTAssertNoThrow(
+            try cassandraClient.run("create table \(tableName) (id int primary key);").wait()
+        )
         XCTAssertNoThrow(try cassandraClient.shutdown())
         XCTAssertThrowsError(try cassandraClient.query("select * from \(tableName);").wait()) { error in
             XCTAssertEqual(error as? CassandraClient.Error, CassandraClient.Error.disconnected)
@@ -164,41 +190,56 @@ final class Tests: XCTestCase {
 
     func testKeyspace() {
         let keyspace1 = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(try self.cassandraClient.withSession(keyspace: .none) { session in
-            try session
-                .run("create keyspace \(keyspace1) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }")
-                .wait()
-        })
-        XCTAssertNoThrow(try self.cassandraClient.withSession(keyspace: keyspace1) { session in
-            try session
-                .run("create table test (id int primary key);")
-                .wait()
-        })
+        XCTAssertNoThrow(
+            try self.cassandraClient.withSession(keyspace: .none) { session in
+                try session
+                    .run(
+                        "create keyspace \(keyspace1) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+                    )
+                    .wait()
+            }
+        )
+        XCTAssertNoThrow(
+            try self.cassandraClient.withSession(keyspace: keyspace1) { session in
+                try session
+                    .run("create table test (id int primary key);")
+                    .wait()
+            }
+        )
 
         let keyspace2 = "test_\(DispatchTime.now().uptimeNanoseconds)"
         var configuration = self.configuration!
         configuration.keyspace = keyspace2
         let cassandraClient = CassandraClient(configuration: configuration)
         defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
-        XCTAssertNoThrow(try cassandraClient.withSession(keyspace: .none) { session in
-            try session
-                .run("create keyspace \(keyspace2) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }")
+        XCTAssertNoThrow(
+            try cassandraClient.withSession(keyspace: .none) { session in
+                try session
+                    .run(
+                        "create keyspace \(keyspace2) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+                    )
+                    .wait()
+            }
+        )
+        XCTAssertNoThrow(
+            try cassandraClient
+                .run("create table testtest (id int primary key);")
                 .wait()
-        })
-        XCTAssertNoThrow(try cassandraClient
-            .run("create table testtest (id int primary key);")
-            .wait())
+        )
     }
 
     func testQueryIterator() {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait())
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
 
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
 
-        let count = Int.random(in: 5000 ... 6000)
+        let count = Int.random(in: 5000...6000)
         var futures = [EventLoopFuture<Void>]()
-        (0 ..< count).forEach { index in
+        for index in 0..<count {
             futures.append(
                 self.cassandraClient.run(
                     "insert into \(tableName) (id, data) values (?, ?);",
@@ -217,31 +258,35 @@ final class Tests: XCTestCase {
         XCTAssertEqual(rows.columnsCount, 2, "result column count should match")
         let ids = rows.compactMap { $0.column(0)?.int32 }
         XCTAssertEqual(ids.count, count, "result count should match")
-        ids.sorted().enumerated().forEach { index, id in
+        for (index, id) in ids.sorted().enumerated() {
             XCTAssertEqual(id, Int32(index))
         }
 
-        let paginatedIDs = try! self.cassandraClient.query("select id, data from \(tableName);", pageSize: Int32(1000))
-            .flatMap { paginatedRows in
-                paginatedRows.map { row in
-                    row.column(0)?.int32
-                }
-            }.wait().compactMap { $0 }
+        let paginatedIDs = try! self.cassandraClient.query(
+            "select id, data from \(tableName);",
+            pageSize: Int32(1000)
+        )
+        .flatMap { paginatedRows in
+            paginatedRows.map { row in
+                row.column(0)?.int32
+            }
+        }.wait().compactMap { $0 }
         XCTAssertEqual(paginatedIDs.count, count, "result count should match")
-        paginatedIDs.sorted().enumerated().forEach { index, id in
+        for (index, id) in paginatedIDs.sorted().enumerated() {
             XCTAssertEqual(id, Int32(index))
         }
     }
 
     func testPagingToken() throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait()
+        try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+            .wait()
 
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
 
-        let count = Int.random(in: 5000 ... 6000)
+        let count = Int.random(in: 5000...6000)
         var futures = [EventLoopFuture<Void>]()
-        (0 ..< count).forEach { index in
+        for index in 0..<count {
             futures.append(
                 self.cassandraClient.run(
                     "insert into \(tableName) (id, data) values (?, ?);",
@@ -251,9 +296,12 @@ final class Tests: XCTestCase {
             )
         }
 
-        let initialPages = try self.cassandraClient.query("select id, data from \(tableName);", pageSize: Int32(5)).wait()
+        let initialPages = try self.cassandraClient.query(
+            "select id, data from \(tableName);",
+            pageSize: Int32(5)
+        ).wait()
 
-        for _ in 0 ..< Int.random(in: 10 ... 20) {
+        for _ in 0..<Int.random(in: 10...20) {
             _ = try! initialPages.nextPage().wait()
         }
 
@@ -263,7 +311,11 @@ final class Tests: XCTestCase {
 
         let statement = try CassandraClient.Statement(query: "select id, data from \(tableName);")
         try! statement.setPagingStateToken(pageToken)
-        let offsetPages = try self.cassandraClient.execute(statement: statement, pageSize: Int32(5), on: nil).wait()
+        let offsetPages = try self.cassandraClient.execute(
+            statement: statement,
+            pageSize: Int32(5),
+            on: nil
+        ).wait()
         let pagedRow: CassandraClient.Row = try offsetPages.nextPage().wait().first!
 
         let id1: CassandraClient.Column = pagedRow.column(0)!
@@ -276,55 +328,68 @@ final class Tests: XCTestCase {
         #if !(compiler(>=5.5) && canImport(_Concurrency))
         try XCTSkipIf(true)
         #else
-        runAsyncAndWaitFor({
-            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        runAsyncAndWaitFor(
+            {
+                let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+                try await self.cassandraClient.run(
+                    "create table \(tableName) (id int primary key, data text);"
+                )
 
-            let count = Int.random(in: 1000 ... 2000)
-            await withThrowingTaskGroup(of: Void.self) { group in
-                let options = CassandraClient.Statement.Options(consistency: .localQuorum)
-                (0 ..< count).forEach { index in
-                    group.addTask {
-                        try await self.cassandraClient.run(
-                            "insert into \(tableName) (id, data) values (?, ?);",
-                            parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
-                            options: options
-                        )
+                let count = Int.random(in: 1000...2000)
+                await withThrowingTaskGroup(of: Void.self) { group in
+                    let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+                    for index in 0..<count {
+                        group.addTask {
+                            try await self.cassandraClient.run(
+                                "insert into \(tableName) (id, data) values (?, ?);",
+                                parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                                options: options
+                            )
+                        }
                     }
                 }
-            }
 
-            let rows = try await self.cassandraClient.query("select id, data from \(tableName);")
-            XCTAssertEqual(rows.count, count, "result count should match")
-            XCTAssertEqual(rows.columnsCount, 2, "result column count should match")
-            let ids = rows.compactMap { $0.column(0)?.int32 }
-            XCTAssertEqual(ids.count, count, "result count should match")
-            ids.sorted().enumerated().forEach { index, id in
-                XCTAssertEqual(id, Int32(index))
-            }
+                let rows = try await self.cassandraClient.query("select id, data from \(tableName);")
+                XCTAssertEqual(rows.count, count, "result count should match")
+                XCTAssertEqual(rows.columnsCount, 2, "result column count should match")
+                let ids = rows.compactMap { $0.column(0)?.int32 }
+                XCTAssertEqual(ids.count, count, "result count should match")
+                for (index, id) in ids.sorted().enumerated() {
+                    XCTAssertEqual(id, Int32(index))
+                }
 
-            let paginatedRows = try await self.cassandraClient.query("select id, data from \(tableName);", pageSize: Int32(300))
+                let paginatedRows = try await self.cassandraClient.query(
+                    "select id, data from \(tableName);",
+                    pageSize: Int32(300)
+                )
 
-            var paginatedIDs: [Int32] = []
-            for try await paginatedID in paginatedRows.map({ row in row.column(0)?.int32 }).compactMap({ $0 }) {
-                paginatedIDs.append(paginatedID)
-            }
+                var paginatedIDs: [Int32] = []
+                for try await paginatedID in paginatedRows.map({ row in row.column(0)?.int32 })
+                    .compactMap({ $0 })
+                {
+                    paginatedIDs.append(paginatedID)
+                }
 
-            XCTAssertEqual(paginatedIDs.count, count, "result count should match")
-            paginatedIDs.sorted().enumerated().forEach { index, id in
-                XCTAssertEqual(id, Int32(index))
-            }
-        }, 5.0)
+                XCTAssertEqual(paginatedIDs.count, count, "result count should match")
+                for (index, id) in paginatedIDs.sorted().enumerated() {
+                    XCTAssertEqual(id, Int32(index))
+                }
+            },
+            5.0
+        )
         #endif
     }
 
     func testQueryBuffered() {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait())
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
 
-        let count = Int.random(in: 5000 ... 6000)
+        let count = Int.random(in: 5000...6000)
         var futures = [EventLoopFuture<Void>]()
-        (0 ..< count).forEach { index in
+        for index in 0..<count {
             futures.append(
                 self.cassandraClient.run(
                     "insert into \(tableName) (id, data) values (?, ?);",
@@ -342,7 +407,7 @@ final class Tests: XCTestCase {
         }.wait()
         XCTAssertEqual(rows.count, count, "result count should match")
         if rows.count == count {
-            rows.sorted().enumerated().forEach { index, value in
+            for (index, value) in rows.sorted().enumerated() {
                 XCTAssertEqual(value, Int32(index))
             }
         }
@@ -353,42 +418,50 @@ final class Tests: XCTestCase {
         #if !(compiler(>=5.5) && canImport(_Concurrency))
         try XCTSkipIf(true)
         #else
-        runAsyncAndWaitFor({
-            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        runAsyncAndWaitFor(
+            {
+                let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+                try await self.cassandraClient.run(
+                    "create table \(tableName) (id int primary key, data text);"
+                )
 
-            let count = Int.random(in: 1000 ... 2000)
-            await withThrowingTaskGroup(of: Void.self) { group in
-                (0 ..< count).forEach { index in
-                    group.addTask {
-                        try await self.cassandraClient.run(
-                            "insert into \(tableName) (id, data) values (?, ?);",
-                            parameters: [.int32(Int32(index)), .string(UUID().uuidString)]
-                        )
+                let count = Int.random(in: 1000...2000)
+                await withThrowingTaskGroup(of: Void.self) { group in
+                    for index in 0..<count {
+                        group.addTask {
+                            try await self.cassandraClient.run(
+                                "insert into \(tableName) (id, data) values (?, ?);",
+                                parameters: [.int32(Int32(index)), .string(UUID().uuidString)]
+                            )
+                        }
                     }
                 }
-            }
 
-            let rows = try await self.cassandraClient.query("select id, data from \(tableName);") {
-                $0.column(0)?.int32
-            }
-            XCTAssertEqual(rows.count, count, "result count should match")
-            if rows.count == count {
-                rows.sorted().enumerated().forEach { index, value in
-                    XCTAssertEqual(value, Int32(index))
+                let rows = try await self.cassandraClient.query("select id, data from \(tableName);") {
+                    $0.column(0)?.int32
                 }
-            }
-        }, 5.0)
+                XCTAssertEqual(rows.count, count, "result count should match")
+                if rows.count == count {
+                    for (index, value) in rows.sorted().enumerated() {
+                        XCTAssertEqual(value, Int32(index))
+                    }
+                }
+            },
+            5.0
+        )
         #endif
     }
 
     func testSelectIn() throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);").wait())
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
 
-        let count = Int.random(in: 5 ... 100)
+        let count = Int.random(in: 5...100)
         var futures = [EventLoopFuture<Void>]()
-        (0 ..< count).forEach { index in
+        for index in 0..<count {
             futures.append(
                 self.cassandraClient.run(
                     "insert into \(tableName) (id, data) values (?, ?);",
@@ -401,12 +474,18 @@ final class Tests: XCTestCase {
         defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
         XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
 
-        let selectIDs: [Int32] = (0 ... Int.random(in: 1 ... 5)).map { _ in Int32.random(in: 0 ..< Int32(count)) }
+        let selectIDs: [Int32] = (0...Int.random(in: 1...5)).map { _ in
+            Int32.random(in: 0..<Int32(count))
+        }
         let rows = try self.cassandraClient.query(
             "select id, data from \(tableName) where id in ?;",
             parameters: [.int32Array(selectIDs)]
         ).wait()
-        XCTAssertEqual(Set(rows.compactMap { row in row.column(0)?.int32 }), Set(selectIDs), "result should match")
+        XCTAssertEqual(
+            Set(rows.compactMap { row in row.column(0)?.int32 }),
+            Set(selectIDs),
+            "result should match"
+        )
     }
 
     func testDecoding() {
@@ -434,84 +513,92 @@ final class Tests: XCTestCase {
             let doesNotExist: Bool?
         }
 
-        let data: [Model] = (Int8(0) ..< Int8(10)).map { index in
+        let data: [Model] = (Int8(0)..<Int8(10)).map { index in
             Model(
                 col1: index,
-                col2: Int16.random(in: Int16.min ... Int16.max),
-                col3: Int32.random(in: Int32.min ... Int32.max),
-                col4: Int64.random(in: Int64.min ... Int64.max),
-                col5: Float32.random(in: Float(Int32.min) ... Float(Int32.max)),
-                col6: Double.random(in: Double(Int64.min) ... Double(Int64.max)),
+                col2: Int16.random(in: Int16.min...Int16.max),
+                col3: Int32.random(in: Int32.min...Int32.max),
+                col4: Int64.random(in: Int64.min...Int64.max),
+                col5: Float32.random(in: Float(Int32.min)...Float(Int32.max)),
+                col6: Double.random(in: Double(Int64.min)...Double(Int64.max)),
                 col7: UUID().uuidString,
                 col8: Date(),
                 col9: UUID(),
                 col10: TimeBasedUUID(),
-                col11: randomBytes(size: Int.random(in: 10 ... 1024 * 1024)),
+                col11: randomBytes(size: Int.random(in: 10...1024 * 1024)),
                 col12: Bool.random(),
                 col13: nil,
-                col14: (0 ... Int.random(in: 1 ... 3)).map { _ in Int8.random(in: Int8.min ... Int8.max) },
-                col15: (0 ... Int.random(in: 1 ... 3)).map { _ in Int16.random(in: Int16.min ... Int16.max) },
-                col16: (0 ... Int.random(in: 1 ... 3)).map { _ in Int32.random(in: Int32.min ... Int32.max) },
-                col17: (0 ... Int.random(in: 1 ... 3)).map { _ in Int64.random(in: Int64.min ... Int64.max) },
-                col18: (0 ... Int.random(in: 1 ... 3)).map { _ in Float32.random(in: Float(Int32.min) ... Float(Int32.max)) },
-                col19: (0 ... Int.random(in: 1 ... 3)).map { _ in Double.random(in: Double(Int64.min) ... Double(Int64.max)) },
-                col20: (0 ... Int.random(in: 1 ... 3)).map { _ in UUID().uuidString },
+                col14: (0...Int.random(in: 1...3)).map { _ in Int8.random(in: Int8.min...Int8.max) },
+                col15: (0...Int.random(in: 1...3)).map { _ in Int16.random(in: Int16.min...Int16.max) },
+                col16: (0...Int.random(in: 1...3)).map { _ in Int32.random(in: Int32.min...Int32.max) },
+                col17: (0...Int.random(in: 1...3)).map { _ in Int64.random(in: Int64.min...Int64.max) },
+                col18: (0...Int.random(in: 1...3)).map { _ in
+                    Float32.random(in: Float(Int32.min)...Float(Int32.max))
+                },
+                col19: (0...Int.random(in: 1...3)).map { _ in
+                    Double.random(in: Double(Int64.min)...Double(Int64.max))
+                },
+                col20: (0...Int.random(in: 1...3)).map { _ in UUID().uuidString },
                 doesNotExist: nil
             )
         }
 
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         print(tableName)
-        XCTAssertNoThrow(try self.cassandraClient.run(
-            """
-            create table \(tableName)
-            (
-            col1 tinyint primary key,
-            col2 smallint,
-            col3 int,
-            col4 bigint,
-            col5 float,
-            col6 double,
-            col7 text,
-            col8 timestamp,
-            col9 uuid,
-            col10 timeuuid,
-            col11 blob,
-            col12 boolean,
-            col13 text,
-            col14 list<tinyint>,
-            col15 list<smallint>,
-            col16 list<int>,
-            col17 list<bigint>,
-            col18 list<float>,
-            col19 list<double>,
-            col20 list<text>
-            );
-            """
-        ).wait())
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                """
+                create table \(tableName)
+                (
+                col1 tinyint primary key,
+                col2 smallint,
+                col3 int,
+                col4 bigint,
+                col5 float,
+                col6 double,
+                col7 text,
+                col8 timestamp,
+                col9 uuid,
+                col10 timeuuid,
+                col11 blob,
+                col12 boolean,
+                col13 text,
+                col14 list<tinyint>,
+                col15 list<smallint>,
+                col16 list<int>,
+                col17 list<bigint>,
+                col18 list<float>,
+                col19 list<double>,
+                col20 list<text>
+                );
+                """
+            ).wait()
+        )
 
         var futures = [EventLoopFuture<Void>]()
-        data.forEach { model in
-            let parameters: [CassandraClient.Statement.Value] = [.int8(model.col1),
-                                                                 .int16(model.col2),
-                                                                 .int32(model.col3),
-                                                                 .int64(model.col4),
-                                                                 .float32(model.col5),
-                                                                 .double(model.col6),
-                                                                 .string(model.col7),
-                                                                 .date(model.col8),
-                                                                 .uuid(model.col9),
-                                                                 .timeuuid(model.col10),
-                                                                 .bytes(model.col11),
-                                                                 .bool(model.col12),
-                                                                 .null,
-                                                                 .int8Array(model.col14),
-                                                                 .int16Array(model.col15),
-                                                                 .int32Array(model.col16),
-                                                                 .int64Array(model.col17),
-                                                                 .float32Array(model.col18),
-                                                                 .doubleArray(model.col19),
-                                                                 .stringArray(model.col20)]
+        for model in data {
+            let parameters: [CassandraClient.Statement.Value] = [
+                .int8(model.col1),
+                .int16(model.col2),
+                .int32(model.col3),
+                .int64(model.col4),
+                .float32(model.col5),
+                .double(model.col6),
+                .string(model.col7),
+                .date(model.col8),
+                .uuid(model.col9),
+                .timeuuid(model.col10),
+                .bytes(model.col11),
+                .bool(model.col12),
+                .null,
+                .int8Array(model.col14),
+                .int16Array(model.col15),
+                .int32Array(model.col16),
+                .int64Array(model.col17),
+                .float32Array(model.col18),
+                .doubleArray(model.col19),
+                .stringArray(model.col20),
+            ]
             futures.append(
                 self.cassandraClient.run(
                     """
@@ -529,9 +616,10 @@ final class Tests: XCTestCase {
         defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
         XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
 
-        let result: [Model] = try! self.cassandraClient.query("select * from \(tableName);").wait().sorted { a, b in a.col1 < b.col1 }
+        let result: [Model] = try! self.cassandraClient.query("select * from \(tableName);").wait()
+            .sorted { a, b in a.col1 < b.col1 }
         XCTAssertEqual(result.count, data.count, "result count should match")
-        result.enumerated().forEach { index, item in
+        for (index, item) in result.enumerated() {
             XCTAssertEqual(item.col1, data[index].col1, "results should match")
             XCTAssertEqual(item.col2, data[index].col2, "results should match")
             XCTAssertEqual(item.col3, data[index].col3, "results should match")
@@ -539,7 +627,12 @@ final class Tests: XCTestCase {
             XCTAssertEqual(item.col5, data[index].col5, "results should match")
             XCTAssertEqual(item.col6, data[index].col6, "results should match")
             XCTAssertEqual(item.col7, data[index].col7, "results should match")
-            XCTAssertEqual(item.col8.timeIntervalSince1970, data[index].col8.timeIntervalSince1970, accuracy: 1, "results should match")
+            XCTAssertEqual(
+                item.col8.timeIntervalSince1970,
+                data[index].col8.timeIntervalSince1970,
+                accuracy: 1,
+                "results should match"
+            )
             XCTAssertEqual(item.col9, data[index].col9, "results should match")
             XCTAssertEqual(item.col10, data[index].col10, "results should match")
             XCTAssertEqual(item.col11, data[index].col11, "results should match")
@@ -583,91 +676,107 @@ final class Tests: XCTestCase {
     // IP: address string in IPv4 or IPv6 format
     func testDataTypes() {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(try self.cassandraClient.run("""
-        create table \(tableName) (
-        col1 tinyint primary key,
-        col2 smallint,
-        col3 int,
-        col4 bigint,
-        col5 varint,
-        col6 decimal,
-        col7 float,
-        col8 double,
-        col9 text,
-        col10 date,
-        col11 timestamp,
-        col12 uuid,
-        col13 timeuuid,
-        col14 blob,
-        col15 boolean,
-        col16 text,
-        col17 list<tinyint>,
-        col18 list<smallint>,
-        col19 list<int>,
-        col20 list<bigint>,
-        col21 list<float>,
-        col22 list<double>,
-        col23 list<text>,
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                """
+                create table \(tableName) (
+                col1 tinyint primary key,
+                col2 smallint,
+                col3 int,
+                col4 bigint,
+                col5 varint,
+                col6 decimal,
+                col7 float,
+                col8 double,
+                col9 text,
+                col10 date,
+                col11 timestamp,
+                col12 uuid,
+                col13 timeuuid,
+                col14 blob,
+                col15 boolean,
+                col16 text,
+                col17 list<tinyint>,
+                col18 list<smallint>,
+                col19 list<int>,
+                col20 list<bigint>,
+                col21 list<float>,
+                col22 list<double>,
+                col23 list<text>,
+                )
+                """
+            ).wait()
         )
-        """).wait())
 
-        for index in Int8(0) ..< Int8(10) {
-            let int16 = Int16.random(in: Int16.min ... Int16.max)
-            let int32 = Int32.random(in: Int32.min ... Int32.max)
-            let int64 = Int64.random(in: Int64.min ... Int64.max)
+        for index in Int8(0)..<Int8(10) {
+            let int16 = Int16.random(in: Int16.min...Int16.max)
+            let int32 = Int32.random(in: Int32.min...Int32.max)
+            let int64 = Int64.random(in: Int64.min...Int64.max)
             // let varint = // FIXME: implement varint
             // let decimal = // FIXME: implement decimal
-            let float32 = Float32.random(in: Float(Int32.min) ... Float(Int32.max))
-            let double = Double.random(in: Double(Int64.min) ... Double(Int64.max))
+            let float32 = Float32.random(in: Float(Int32.min)...Float(Int32.max))
+            let double = Double.random(in: Double(Int64.min)...Double(Int64.max))
             let text = UUID().uuidString
-            let now = Date().timeIntervalSince1970 // seconds
-            let date = UInt32(now / 86400) // days
-            let timestamp = Int64(now * 1000) // millisconds
+            let now = Date().timeIntervalSince1970  // seconds
+            let date = UInt32(now / 86400)  // days
+            let timestamp = Int64(now * 1000)  // millisconds
             let uuid = UUID()
             let timeuuid = TimeBasedUUID()
-            let blob = self.randomBytes(size: Int.random(in: 10 ... 1024 * 1024))
+            let blob = self.randomBytes(size: Int.random(in: 10...1024 * 1024))
             let bool = Bool.random()
             let null: String? = nil
-            let int8List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int8.random(in: Int8.min ... Int8.max) }
-            let int16List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int16.random(in: Int16.min ... Int16.max) }
-            let int32List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int32.random(in: Int32.min ... Int32.max) }
-            let int64List = (0 ... Int.random(in: 1 ... 3)).map { _ in Int64.random(in: Int64.min ... Int64.max) }
-            let float32List = (0 ... Int.random(in: 1 ... 3)).map { _ in Float32.random(in: Float(Int32.min) ... Float(Int32.max)) }
-            let doubleList = (0 ... Int.random(in: 1 ... 3)).map { _ in Double.random(in: Double(Int64.min) ... Double(Int64.max)) }
-            let textList = (0 ... Int.random(in: 1 ... 3)).map { _ in UUID().uuidString }
+            let int8List = (0...Int.random(in: 1...3)).map { _ in Int8.random(in: Int8.min...Int8.max) }
+            let int16List = (0...Int.random(in: 1...3)).map { _ in Int16.random(in: Int16.min...Int16.max)
+            }
+            let int32List = (0...Int.random(in: 1...3)).map { _ in Int32.random(in: Int32.min...Int32.max)
+            }
+            let int64List = (0...Int.random(in: 1...3)).map { _ in Int64.random(in: Int64.min...Int64.max)
+            }
+            let float32List = (0...Int.random(in: 1...3)).map { _ in
+                Float32.random(in: Float(Int32.min)...Float(Int32.max))
+            }
+            let doubleList = (0...Int.random(in: 1...3)).map { _ in
+                Double.random(in: Double(Int64.min)...Double(Int64.max))
+            }
+            let textList = (0...Int.random(in: 1...3)).map { _ in UUID().uuidString }
 
             let parameters: [CassandraClient.Statement.Value] = [
-                .int8(index), // tinyint
-                .int16(int16), // smallint
-                .int32(int32), // int
-                .int64(int64), // bigint
-                .null, // varint
-                .null, // decimal
-                .float32(float32), // float
-                .double(double), // double
-                .string(text), // text
-                .rawDate(daysSinceEpoch: date), // date
-                .rawTimestamp(millisecondsSinceEpoch: timestamp), // timestamp
-                .uuid(uuid), // uuid
-                .timeuuid(timeuuid), // timeuuid
-                .bytes(blob), // bytes
+                .int8(index),  // tinyint
+                .int16(int16),  // smallint
+                .int32(int32),  // int
+                .int64(int64),  // bigint
+                .null,  // varint
+                .null,  // decimal
+                .float32(float32),  // float
+                .double(double),  // double
+                .string(text),  // text
+                .rawDate(daysSinceEpoch: date),  // date
+                .rawTimestamp(millisecondsSinceEpoch: timestamp),  // timestamp
+                .uuid(uuid),  // uuid
+                .timeuuid(timeuuid),  // timeuuid
+                .bytes(blob),  // bytes
                 .bool(bool),
                 .null,
-                .int8Array(int8List), // list<tinyint>
-                .int16Array(int16List), // list<smallint>
-                .int32Array(int32List), // list<int>
-                .int64Array(int64List), // list<bigint>
-                .float32Array(float32List), // list<float>
-                .doubleArray(doubleList), // list<double>
-                .stringArray(textList), // list<text>
+                .int8Array(int8List),  // list<tinyint>
+                .int16Array(int16List),  // list<smallint>
+                .int32Array(int32List),  // list<int>
+                .int64Array(int64List),  // list<bigint>
+                .float32Array(float32List),  // list<float>
+                .doubleArray(doubleList),  // list<double>
+                .stringArray(textList),  // list<text>
             ]
 
-            XCTAssertNoThrow(try self.cassandraClient.run("""
-            insert into \(tableName)
-            (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23)
-            values
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, parameters: parameters).wait())
+            XCTAssertNoThrow(
+                try self.cassandraClient.run(
+                    """
+                    insert into \(tableName)
+                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23)
+                    values
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    parameters: parameters
+                ).wait()
+            )
 
             let result = try! self.cassandraClient.query("select * from \(tableName);").wait()
             XCTAssertEqual(Int8(result.count), index + 1, "expected exactly one result")
@@ -681,8 +790,18 @@ final class Tests: XCTestCase {
             XCTAssertEqual(row.column("col7"), float32, "expected value to match")
             XCTAssertEqual(row.column("col8"), double, "expected value to match")
             XCTAssertEqual(row.column("col9"), text, "expected value to match")
-            XCTAssertEqual(row.column("col10")?.date.map { Double($0 * 86400) } ?? 0.0, now, accuracy: 100_000, "expected value to match")
-            XCTAssertEqual(row.column("col11")?.timestamp.map { Double($0 / 1000) } ?? 0.0, now, accuracy: 1, "expected value to match")
+            XCTAssertEqual(
+                row.column("col10")?.date.map { Double($0 * 86400) } ?? 0.0,
+                now,
+                accuracy: 100_000,
+                "expected value to match"
+            )
+            XCTAssertEqual(
+                row.column("col11")?.timestamp.map { Double($0 / 1000) } ?? 0.0,
+                now,
+                accuracy: 1,
+                "expected value to match"
+            )
             XCTAssertEqual(row.column("col12"), uuid, "expected value to match")
             XCTAssertEqual(row.column("col13"), timeuuid, "expected value to match")
             XCTAssertEqual(row.column("col14"), blob, "expected value to match")
@@ -700,7 +819,10 @@ final class Tests: XCTestCase {
 
     func testErrorMapping() {
         XCTAssertThrowsError(try self.cassandraClient.run("boom!").wait()) { error in
-            XCTAssertEqual(error as? CassandraClient.Error, .syntaxError("line 1:0 no viable alternative at input \'boom\' ([boom]...)"))
+            XCTAssertEqual(
+                error as? CassandraClient.Error,
+                .syntaxError("line 1:0 no viable alternative at input \'boom\' ([boom]...)")
+            )
         }
     }
 
@@ -709,7 +831,7 @@ final class Tests: XCTestCase {
         var buffer = [UInt8]()
         var generator = SystemRandomNumberGenerator()
         for index in stride(from: 0, to: size, by: 8) {
-            let int64 = Int64.random(in: Int64.min ... Int64.max, using: &generator)
+            let int64 = Int64.random(in: Int64.min...Int64.max, using: &generator)
             let bytes = withUnsafeBytes(of: int64.bigEndian) { Array($0) }
             if index + bytes.count > size {
                 buffer += bytes.dropLast(index + bytes.count - size)
@@ -725,7 +847,10 @@ final class Tests: XCTestCase {
 extension XCTestCase {
     // TODO: remove once XCTest supports async functions
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func runAsyncAndWaitFor(_ closure: @escaping @Sendable () async throws -> Void, _ timeout: TimeInterval = 3.0) {
+    func runAsyncAndWaitFor(
+        _ closure: @escaping @Sendable () async throws -> Void,
+        _ timeout: TimeInterval = 3.0
+    ) {
         let finished = expectation(description: "finished")
         Task.detached {
             try await closure()

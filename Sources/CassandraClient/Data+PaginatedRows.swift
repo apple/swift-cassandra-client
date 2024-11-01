@@ -44,7 +44,11 @@ extension CassandraClient {
                 return eventLoop.makeFailedFuture(CassandraClient.Error.rowsExhausted)
             }
 
-            let future = self.session.execute(statement: self.statement, on: eventLoop, logger: self.logger)
+            let future = self.session.execute(
+                statement: self.statement,
+                on: eventLoop,
+                logger: self.logger
+            )
             future.whenComplete { result in
                 switch result {
                 case .success(let rows):
@@ -62,7 +66,10 @@ extension CassandraClient {
         /// Iterates through all rows in all pages and invokes the given closure on each.
         @available(*, deprecated, message: "Use Swift Concurrency and AsyncSequence APIs instead.")
         public func forEach(_ body: @escaping (Row) throws -> Void) -> EventLoopFuture<Void> {
-            precondition(self.hasMorePages, "Only one of 'forEach' or 'map' can be called once per PaginatedRows")
+            precondition(
+                self.hasMorePages,
+                "Only one of 'forEach' or 'map' can be called once per PaginatedRows"
+            )
 
             guard let eventLoop = self.eventLoop else {
                 preconditionFailure("EventLoop must not be nil")
@@ -88,7 +95,10 @@ extension CassandraClient {
         /// Iterates through all rows in all pages and applies `transform` on each.
         @available(*, deprecated, message: "Use Swift Concurrency and AsyncSequence APIs instead.")
         public func map<T>(_ transform: @escaping (Row) throws -> T) -> EventLoopFuture<[T]> {
-            precondition(self.hasMorePages, "Only one of 'forEach' or 'map' can be called once per PaginatedRows")
+            precondition(
+                self.hasMorePages,
+                "Only one of 'forEach' or 'map' can be called once per PaginatedRows"
+            )
 
             guard let eventLoop = self.eventLoop else {
                 preconditionFailure("EventLoop must not be nil in EventLoop based APIs")
@@ -144,7 +154,10 @@ extension CassandraClient {
         @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func forEach(_ body: @escaping (Row) throws -> Void) async throws {
-            precondition(self.hasMorePages, "Only one of 'forEach' or 'map' can be called once per PaginatedRows")
+            precondition(
+                self.hasMorePages,
+                "Only one of 'forEach' or 'map' can be called once per PaginatedRows"
+            )
 
             func _forEach() async throws {
                 let rows = try await nextPage()
@@ -162,7 +175,10 @@ extension CassandraClient {
         @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func map<T>(_ transform: @escaping (Row) throws -> T) async throws -> [T] {
-            precondition(self.hasMorePages, "Only one of 'forEach' or 'map' can be called once per PaginatedRows")
+            precondition(
+                self.hasMorePages,
+                "Only one of 'forEach' or 'map' can be called once per PaginatedRows"
+            )
 
             func _map(_ accumulated: [T]) async throws -> [T] {
                 let rows = try await nextPage()

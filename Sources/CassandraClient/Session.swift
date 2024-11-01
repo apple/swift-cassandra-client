@@ -17,7 +17,7 @@ import Dispatch
 import Logging
 import NIO
 import NIOConcurrencyHelpers
-import NIOCore // for async-await bridge
+import NIOCore  // for async-await bridge
 
 /// API for executing statements against Cassandra.
 public protocol CassandraSession {
@@ -33,7 +33,12 @@ public protocol CassandraSession {
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
-    func execute(statement: CassandraClient.Statement, on eventLoop: EventLoop?, logger: Logger?) -> EventLoopFuture<CassandraClient.Rows>
+    func execute(
+        statement: CassandraClient.Statement,
+        on eventLoop: EventLoop?,
+        logger: Logger?
+    )
+        -> EventLoopFuture<CassandraClient.Rows>
 
     /// Execute a prepared statement.
     ///
@@ -46,7 +51,12 @@ public protocol CassandraSession {
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
-    func execute(statement: CassandraClient.Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger?) -> EventLoopFuture<CassandraClient.PaginatedRows>
+    func execute(
+        statement: CassandraClient.Statement,
+        pageSize: Int32,
+        on eventLoop: EventLoop?,
+        logger: Logger?
+    ) -> EventLoopFuture<CassandraClient.PaginatedRows>
 
     #if compiler(>=5.5) && canImport(_Concurrency)
     /// Execute a prepared statement.
@@ -59,7 +69,11 @@ public protocol CassandraSession {
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: CassandraClient.Statement, logger: Logger?) async throws -> CassandraClient.Rows
+    func execute(
+        statement: CassandraClient.Statement,
+        logger: Logger?
+    ) async throws
+        -> CassandraClient.Rows
 
     /// Execute a prepared statement.
     ///
@@ -72,7 +86,12 @@ public protocol CassandraSession {
     ///
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: CassandraClient.Statement, pageSize: Int32, logger: Logger?) async throws -> CassandraClient.PaginatedRows
+    func execute(
+        statement: CassandraClient.Statement,
+        pageSize: Int32,
+        logger: Logger?
+    )
+        async throws -> CassandraClient.PaginatedRows
     #endif
 
     /// Terminate the session and free resources.
@@ -92,7 +111,12 @@ extension CassandraSession {
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
-    internal func execute(statement: CassandraClient.Statement, logger: Logger? = .none) -> EventLoopFuture<CassandraClient.Rows> {
+    internal func execute(
+        statement: CassandraClient.Statement,
+        logger: Logger? = .none
+    )
+        -> EventLoopFuture<CassandraClient.Rows>
+    {
         self.execute(statement: statement, on: nil, logger: logger)
     }
 }
@@ -122,7 +146,8 @@ extension CassandraSession {
         logger: Logger? = .none,
         transform: @escaping (CassandraClient.Row) -> T?
     ) -> EventLoopFuture<[T]> {
-        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map { rows in
+        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map {
+            rows in
             rows.compactMap(transform)
         }
     }
@@ -137,11 +162,12 @@ extension CassandraSession {
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
     ) -> EventLoopFuture<[T]> {
-        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).flatMapThrowing { rows in
-            try rows.map { row in
-                try T(from: CassandraClient.RowDecoder(row: row))
+        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger)
+            .flatMapThrowing { rows in
+                try rows.map { row in
+                    try T(from: CassandraClient.RowDecoder(row: row))
+                }
             }
-        }
     }
 
     /// Query large data-sets where using an interator helps control memory usage.
@@ -159,7 +185,11 @@ extension CassandraSession {
         logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.Rows> {
         do {
-            let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+            let statement = try CassandraClient.Statement(
+                query: query,
+                parameters: parameters,
+                options: options
+            )
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
             let eventLoop = eventLoop ?? eventLoopGroup.next()
@@ -179,7 +209,11 @@ extension CassandraSession {
         logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
         do {
-            let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+            let statement = try CassandraClient.Statement(
+                query: query,
+                parameters: parameters,
+                options: options
+            )
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
         } catch {
             let eventLoop = eventLoop ?? eventLoopGroup.next()
@@ -212,7 +246,11 @@ extension CassandraClient {
             case disconnected
         }
 
-        internal init(configuration: Configuration, logger: Logger, eventLoopGroupContainer: EventLoopGroupConainer) {
+        internal init(
+            configuration: Configuration,
+            logger: Logger,
+            eventLoopGroupContainer: EventLoopGroupConainer
+        ) {
             self.configuration = configuration
             self.logger = logger
             self.eventLoopGroupContainer = eventLoopGroupContainer
@@ -221,7 +259,9 @@ extension CassandraClient {
 
         deinit {
             guard case .disconnected = (self.lock.withLock { self.state }) else {
-                preconditionFailure("Session not shut down before the deinit. Please call session.shutdown() when no longer needed.")
+                preconditionFailure(
+                    "Session not shut down before the deinit. Please call session.shutdown() when no longer needed."
+                )
             }
             cass_session_free(self.rawPointer)
         }
@@ -240,7 +280,13 @@ extension CassandraClient {
             }
         }
 
-        func execute(statement: Statement, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<Rows> {
+        func execute(
+            statement: Statement,
+            on eventLoop: EventLoop?,
+            logger: Logger? = .none
+        )
+            -> EventLoopFuture<Rows>
+        {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
             let logger = logger ?? self.logger
 
@@ -293,7 +339,12 @@ extension CassandraClient {
             }
         }
 
-        func execute(statement: Statement, pageSize: Int32, on eventLoop: EventLoop?, logger: Logger? = .none) -> EventLoopFuture<CassandraClient.PaginatedRows> {
+        func execute(
+            statement: Statement,
+            pageSize: Int32,
+            on eventLoop: EventLoop?,
+            logger: Logger? = .none
+        ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
 
             do {
@@ -302,7 +353,9 @@ extension CassandraClient {
                 return eventLoop.makeFailedFuture(error)
             }
 
-            return eventLoop.makeSucceededFuture(PaginatedRows(session: self, statement: statement, on: eventLoop, logger: logger))
+            return eventLoop.makeSucceededFuture(
+                PaginatedRows(session: self, statement: statement, on: eventLoop, logger: logger)
+            )
         }
 
         private func connect(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Void> {
@@ -391,7 +444,12 @@ extension CassandraSession {
         logger: Logger? = .none,
         transform: @escaping (CassandraClient.Row) -> T?
     ) async throws -> [T] {
-        let rows = try await self.query(query, parameters: parameters, options: options, logger: logger)
+        let rows = try await self.query(
+            query,
+            parameters: parameters,
+            options: options,
+            logger: logger
+        )
         return rows.compactMap(transform)
     }
 
@@ -403,7 +461,12 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> [T] {
-        let rows = try await self.query(query, parameters: parameters, options: options, logger: logger)
+        let rows = try await self.query(
+            query,
+            parameters: parameters,
+            options: options,
+            logger: logger
+        )
         return try rows.map { row in
             try T(from: CassandraClient.RowDecoder(row: row))
         }
@@ -421,7 +484,11 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.Rows {
-        let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+        let statement = try CassandraClient.Statement(
+            query: query,
+            parameters: parameters,
+            options: options
+        )
         return try await self.execute(statement: statement, logger: logger)
     }
 
@@ -434,14 +501,23 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
-        let statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+        let statement = try CassandraClient.Statement(
+            query: query,
+            parameters: parameters,
+            options: options
+        )
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
 }
 
 extension CassandraClient.Session {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: CassandraClient.Statement, logger: Logger? = .none) async throws -> CassandraClient.Rows {
+    func execute(
+        statement: CassandraClient.Statement,
+        logger: Logger? = .none
+    ) async throws
+        -> CassandraClient.Rows
+    {
         let logger = logger ?? self.logger
 
         lock.lock()
@@ -485,7 +561,13 @@ extension CassandraClient.Session {
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(statement: CassandraClient.Statement, pageSize: Int32, logger: Logger? = .none) async throws -> CassandraClient.PaginatedRows {
+    func execute(
+        statement: CassandraClient.Statement,
+        pageSize: Int32,
+        logger: Logger? = .none
+    )
+        async throws -> CassandraClient.PaginatedRows
+    {
         try statement.setPagingSize(pageSize)
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
     }
@@ -529,13 +611,15 @@ private func callAndReleaseUnmanagedClosure(_ opaque: UnsafeRawPointer) {
     closure.value()
 }
 
-private func futureSetCallback(_ future: OpaquePointer, completion: @escaping (Result<Void, Error>) -> Void) {
+private func futureSetCallback(
+    _ future: OpaquePointer,
+    completion: @escaping (Result<Void, Error>) -> Void
+) {
     let closure = unmanagedRetainedClosure {
         DispatchQueue.global().async {
             let resultCode = cass_future_error_code(future)
-            let result: Result<Void, Error> = resultCode == CASS_OK ?
-                .success(()) :
-                .failure(CassandraClient.Error(future))
+            let result: Result<Void, Error> =
+                resultCode == CASS_OK ? .success(()) : .failure(CassandraClient.Error(future))
             cass_future_free(future)
             completion(result)
         }
@@ -543,13 +627,16 @@ private func futureSetCallback(_ future: OpaquePointer, completion: @escaping (R
     cass_future_set_callback(future, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
 }
 
-private func futureSetResultCallback(_ future: OpaquePointer, completion: @escaping (Result<CassandraClient.Rows, Error>) -> Void) {
+private func futureSetResultCallback(
+    _ future: OpaquePointer,
+    completion: @escaping (Result<CassandraClient.Rows, Error>) -> Void
+) {
     let closure = unmanagedRetainedClosure {
         DispatchQueue.global().async {
             let resultCode = cass_future_error_code(future)
-            let result: Result<CassandraClient.Rows, Error> = resultCode == CASS_OK ?
-                .success(CassandraClient.Rows(future)) :
-                .failure(CassandraClient.Error(future))
+            let result: Result<CassandraClient.Rows, Error> =
+                resultCode == CASS_OK
+                ? .success(CassandraClient.Rows(future)) : .failure(CassandraClient.Error(future))
             cass_future_free(future)
             completion(result)
         }
