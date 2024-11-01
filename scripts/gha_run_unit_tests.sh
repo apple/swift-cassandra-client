@@ -22,7 +22,7 @@ then
 fi
 
 printf '#!/bin/sh\nexit 0' > /usr/sbin/policy-rc.d
-echo \"deb [signed-by=/etc/apt/keyrings/apache-cassandra.asc] https://debian.cassandra.apache.org 41x main\" | tee -a /etc/apt/sources.list.d/cassandra.sources.list
+echo "deb [signed-by=/etc/apt/keyrings/apache-cassandra.asc] https://debian.cassandra.apache.org 41x main" | tee -a /etc/apt/sources.list.d/cassandra.sources.list
 curl -o /etc/apt/keyrings/apache-cassandra.asc https://downloads.apache.org/cassandra/KEYS
 apt-get update
 apt install -y -q default-jre
