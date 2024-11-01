@@ -1,0 +1,14 @@
+name: Scheduled
+
+on:
+    schedule:
+        - cron: "0 8,20 * * *"
+
+jobs:
+    unit-tests:
+        name: Unit Tests
+        # Workaround https://github.com/nektos/act/issues/1875
+        uses: apple/swift-nio/.github/workflows/swift_matrix.yml@main
+        with:
+            name: "Unit tests"
+            matrix_linux_command: "I_AM_RUNNING_IN_CI=true ./scripts/gha_run_unit_tests.sh"
