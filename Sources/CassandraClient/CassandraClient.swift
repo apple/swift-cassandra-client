@@ -217,7 +217,6 @@ public class CassandraClient: CassandraSession {
     }
 }
 
-#if compiler(>=5.5) && canImport(_Concurrency)
 extension CassandraClient {
     /// Execute a ``Statement`` using the default ``CassandraSession``.
     ///
@@ -306,6 +305,5 @@ extension CassandraClient {
         return try await handler(session)
     }
 }
-#endif
 
 internal typealias EventLoopGroupConainer = (value: EventLoopGroup, managed: Bool)

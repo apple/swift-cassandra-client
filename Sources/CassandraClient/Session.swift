@@ -58,7 +58,6 @@ public protocol CassandraSession {
         logger: Logger?
     ) -> EventLoopFuture<CassandraClient.PaginatedRows>
 
-    #if compiler(>=5.5) && canImport(_Concurrency)
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -92,7 +91,6 @@ public protocol CassandraSession {
         logger: Logger?
     )
         async throws -> CassandraClient.PaginatedRows
-    #endif
 
     /// Terminate the session and free resources.
     func shutdown() throws
@@ -239,9 +237,7 @@ extension CassandraClient {
         private enum State {
             case idle
             case connectingFuture(EventLoopFuture<Void>)
-            #if compiler(>=5.5) && canImport(_Concurrency)
             case connecting(ConnectionTask)
-            #endif
             case connected
             case disconnected
         }
@@ -307,7 +303,6 @@ extension CassandraClient {
                 return future.flatMap { _ in
                     self.execute(statement: statement, on: eventLoop, logger: logger)
                 }
-            #if compiler(>=5.5) && canImport(_Concurrency)
             case .connecting(let task):
                 self.lock.unlock()
                 let promise = eventLoop.makePromise(of: Rows.self)
@@ -318,7 +313,6 @@ extension CassandraClient {
                     }
                 }
                 return promise.futureResult
-            #endif
             case .connected:
                 self.lock.unlock()
                 logger.debug("executing: \(statement.query)")
@@ -402,7 +396,6 @@ extension CassandraClient {
             return CassandraMetrics(metrics: metrics)
         }
 
-        #if compiler(>=5.5) && canImport(_Concurrency)
         private struct ConnectionTask {
             private let _task: Any
 
@@ -416,13 +409,11 @@ extension CassandraClient {
                 self._task = task
             }
         }
-        #endif
     }
 }
 
 // MARK: - Cassandra session with async-await support
 
-#if compiler(>=5.5) && canImport(_Concurrency)
 extension CassandraSession {
     /// Run  insert / update / delete or DDL commands where no result is expected
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -594,7 +585,6 @@ extension CassandraClient.Session {
         }
     }
 }
-#endif
 
 // MARK: - Helpers
 
