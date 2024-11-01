@@ -47,5 +47,6 @@ dev/update-benchmark-thresholds
 Sources/CDataStaxDriver/datastax-cpp-driver
 Sources/Clibuv/libuv
 Sources/Clibuv/include/uv
+Sources/Clibuv/include/uv.h
 Sources/CDataStaxDriver/custom/src/ssl/ssl_openssl_impl.cpp
 Sources/CDataStaxDriver/extras/driver_config.hpp
