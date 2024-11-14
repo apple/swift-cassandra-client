@@ -38,6 +38,8 @@ final class Tests: XCTestCase {
         self.configuration.username = env["CASSANDRA_USER"]
         self.configuration.password = env["CASSANDRA_PASSWORD"]
         self.configuration.keyspace = keyspace
+        self.configuration.requestTimeoutMillis = UInt32(24_000)  // Default: 12_000 ms
+        self.configuration.connectTimeoutMillis = UInt32(10_000)  // Default: 5_000 ms
 
         var logger = Logger(label: "test")
         logger.logLevel = .debug
