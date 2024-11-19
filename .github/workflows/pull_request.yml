@@ -12,7 +12,7 @@ jobs:
       license_header_check_project_name: "Swift Cassandra Client"
       api_breakage_check_enabled: false
 
-  new-unit-tests:
+  unit-tests:
     name: Unit tests
     uses: ./.github/workflows/unit_tests.yml
     with:
