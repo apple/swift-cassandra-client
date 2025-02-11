@@ -101,7 +101,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio", .upToNextMajor(from: "2.41.1")),
-        .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMajor(from: "2.21.0")),
+        .package(url: "https://github.com/apple/swift-nio-ssl", .upToNextMajor(from: "2.29.3")),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
     ],
@@ -167,7 +167,7 @@ let package = Package(
 
         .testTarget(name: "CassandraClientTests", dependencies: ["CassandraClient"]),
     ],
-    cxxLanguageStandard: .cxx14
+    cxxLanguageStandard: .cxx17
 )
 
 // ---    STANDARD CROSS-REPO SETTINGS DO NOT EDIT   --- //
