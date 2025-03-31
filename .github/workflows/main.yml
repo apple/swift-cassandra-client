@@ -26,3 +26,7 @@ jobs:
     uses: apple/swift-nio/.github/workflows/macos_tests.yml@main
     with:
       build_scheme: swift-cassandra-client
+      swift_test_enabled: false  # requires running Cassandra server
+      watchos_xcode_build_enabled: false  # posix API availability
+      tvos_xcode_build_enabled: false  # posix API availability
+
