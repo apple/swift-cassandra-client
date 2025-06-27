@@ -29,3 +29,7 @@ jobs:
       swift_test_enabled: false  # requires running Cassandra server
       watchos_xcode_build_enabled: false  # posix API availability
       tvos_xcode_build_enabled: false  # posix API availability
+
+  static-sdk:
+    name: Static SDK
+    uses: apple/swift-nio/.github/workflows/static_sdk.yml@main
