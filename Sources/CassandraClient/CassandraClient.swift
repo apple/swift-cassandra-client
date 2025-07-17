@@ -21,7 +21,7 @@ import NIOConcurrencyHelpers
 /// `CassandraClient` is a wrapper around the [Datastax Cassandra C++ Driver](https://github.com/datastax/cpp-driver)
 ///  and can be used to run queries against a Cassandra database.
 public class CassandraClient: CassandraSession {
-    private let eventLoopGroupContainer: EventLoopGroupConainer
+    private let eventLoopGroupContainer: EventLoopGroupContainer
     public var eventLoopGroup: EventLoopGroup {
         self.eventLoopGroupContainer.value
     }
@@ -306,4 +306,4 @@ extension CassandraClient {
     }
 }
 
-internal typealias EventLoopGroupConainer = (value: EventLoopGroup, managed: Bool)
+internal typealias EventLoopGroupContainer = (value: EventLoopGroup, managed: Bool)
