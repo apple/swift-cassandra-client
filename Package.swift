@@ -101,7 +101,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio", .upToNextMajor(from: "2.41.1")),
-        .package(url: "https://github.com/apple/swift-nio-ssl", exact: "2.32.0"),
+        .package(url: "https://github.com/apple/swift-nio-ssl", exact: "2.33.0"),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
     ],
