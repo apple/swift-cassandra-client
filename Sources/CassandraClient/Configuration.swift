@@ -51,6 +51,48 @@ extension CassandraClient {
         /// Sets the cluster's consistency level. Default is `.localOne`.
         public var consistency: CassandraClient.Consistency?
 
+        /// The load balancing strategy to use. Default is `nil` which uses ``LoadBalancingStrategy/dataCenterAware(_:)``.
+        public var loadBalancingStrategy: LoadBalancingStrategy?
+
+        /// A struct representing the load balancing strategy.
+        public struct LoadBalancingStrategy: Hashable {
+            enum Backing: Hashable {
+                case roundRobin(RoundRobin)
+                case dataCenterAware(DataCenterAware)
+            }
+            public struct RoundRobin: Hashable {
+                public init() {}
+            }
+            public struct DataCenterAware: Hashable {
+                /// Sets the local data center name for DC-aware routing policy.
+                /// When set, a DC-aware load balancing policy will be used that prioritizes hosts from this data center.
+                public var localDataCenter: String?
+
+                /// Creates a new data center aware load balancing strategy.
+                ///
+                /// - Parameters:
+                ///   - localDataCenter: Sets the local data center name for DC-aware routing policy.
+                public init(
+                    localDataCenter: String? = nil
+                ) {
+                    self.localDataCenter = localDataCenter
+                }
+            }
+
+            var backing: Backing
+
+            /// Returns a new round robin load balancing strategy.
+            public static func roundRobin(_ roundRobin: RoundRobin = .init()) -> Self {
+                .init(backing: .roundRobin(roundRobin))
+            }
+
+            /// Returns a new data center aware load balancing strategy.
+            public static func dataCenterAware(_ dataCenterAware: DataCenterAware = .init()) -> Self {
+                .init(backing: .dataCenterAware(dataCenterAware))
+            }
+
+        }
+
         public enum SpeculativeExecutionPolicy: Hashable {
             case constant(delayInMillseconds: Int64, maxExecutions: Int32)
             case disabled
@@ -70,7 +112,8 @@ extension CassandraClient {
         }
 
         public init(
-            contactPointsProvider: @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) ->
+            contactPointsProvider:
+                @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) ->
                 Void,
             port: Int32,
             protocolVersion: ProtocolVersion
@@ -164,6 +207,9 @@ extension CassandraClient {
             }
             if let value = self.hostnameResolution {
                 try cluster.setUseHostnameResolution(value)
+            }
+            if let loadBalancingStrategy = self.loadBalancingStrategy {
+                try cluster.setLoadBalancingStrategy(loadBalancingStrategy)
             }
             if let value = self.randomizedContactPoints {
                 try cluster.setUseRandomizedContactPoints(value)
@@ -331,6 +377,20 @@ internal final class Cluster {
     func setNoCompact(_ enabled: Bool) throws {
         try self.checkResult {
             cass_cluster_set_no_compact(self.rawPointer, enabled ? cass_true : cass_false)
+        }
+    }
+
+    func setLoadBalancingStrategy(_ strategy: CassandraClient.Configuration.LoadBalancingStrategy) throws {
+        switch strategy.backing {
+        case .roundRobin(let roundRobin):
+            cass_cluster_set_load_balance_round_robin(self.rawPointer)
+        case .dataCenterAware(let dataCenterAware):
+            cass_cluster_set_load_balance_dc_aware(
+                self.rawPointer,
+                dataCenterAware.localDataCenter,
+                0,  // This is deprecated so we are using 0
+                cass_false  // This is deprecated so we are using false
+            )
         }
     }
 
