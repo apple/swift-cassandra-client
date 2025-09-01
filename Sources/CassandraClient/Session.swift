@@ -222,7 +222,7 @@ extension CassandraSession {
 
 extension CassandraClient {
     internal final class Session: CassandraSession {
-        private let eventLoopGroupContainer: EventLoopGroupConainer
+        private let eventLoopGroupContainer: EventLoopGroupContainer
         public var eventLoopGroup: EventLoopGroup {
             self.eventLoopGroupContainer.value
         }
@@ -245,7 +245,7 @@ extension CassandraClient {
         internal init(
             configuration: Configuration,
             logger: Logger,
-            eventLoopGroupContainer: EventLoopGroupConainer
+            eventLoopGroupContainer: EventLoopGroupContainer
         ) {
             self.configuration = configuration
             self.logger = logger
