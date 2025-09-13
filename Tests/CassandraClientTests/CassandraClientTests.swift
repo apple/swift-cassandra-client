@@ -812,6 +812,104 @@ final class Tests: XCTestCase {
         }
     }
 
+    func testSerialConsistency() {
+        let env = ProcessInfo.processInfo.environment
+        let keyspace = env["CASSANDRA_KEYSPACE"] ?? "test"
+
+        var serialConfig = CassandraClient.Configuration(
+            contactPointsProvider: { callback in
+                callback(.success([env["CASSANDRA_HOST"] ?? "127.0.0.1"]))
+            },
+            port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
+            protocolVersion: .v3
+        )
+        serialConfig.username = env["CASSANDRA_USER"]
+        serialConfig.password = env["CASSANDRA_PASSWORD"]
+        serialConfig.keyspace = keyspace
+        serialConfig.requestTimeoutMillis = UInt32(24_000)
+        serialConfig.connectTimeoutMillis = UInt32(10_000)
+        serialConfig.serialConsistency = .serial
+
+        var logger = Logger(label: "test")
+        logger.logLevel = .debug
+
+        let serialClient = CassandraClient(configuration: serialConfig, logger: logger)
+        defer { XCTAssertNoThrow(try serialClient.shutdown()) }
+
+        XCTAssertNoThrow(
+            try serialClient.withSession(keyspace: .none) { session in
+                try session.run(
+                    "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+                ).wait()
+            }
+        )
+
+        let serialSession = serialClient.makeSession(keyspace: keyspace)
+        defer { XCTAssertNoThrow(try serialSession.shutdown()) }
+
+        let tableName = "test_serial_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(try serialSession.run("create table \(tableName) (id int primary key, value int);").wait())
+        XCTAssertNoThrow(try serialSession.run("insert into \(tableName) (id, value) values (1, 100);").wait())
+
+        let lwtQuery = "update \(tableName) set value = 200 where id = 1 if value = 100;"
+        var serialResult: CassandraClient.Rows?
+        XCTAssertNoThrow(serialResult = try serialSession.query(lwtQuery).wait())
+        XCTAssertNotNil(serialResult, "Serial consistency LWT should succeed")
+
+        let serialRows = Array(serialResult!)
+        XCTAssertFalse(serialRows.isEmpty, "Serial LWT query should return at least one row")
+        if let firstRow = serialRows.first {
+            XCTAssertNotNil(firstRow.column("[applied]")?.bool, "Serial LWT result should contain [applied] column")
+        }
+
+        var localSerialConfig = serialConfig
+        localSerialConfig.serialConsistency = .localSerial
+
+        let localSerialClient = CassandraClient(configuration: localSerialConfig, logger: logger)
+        defer { XCTAssertNoThrow(try localSerialClient.shutdown()) }
+
+        let localSerialSession = localSerialClient.makeSession(keyspace: keyspace)
+        defer { XCTAssertNoThrow(try localSerialSession.shutdown()) }
+
+        let tableName2 = "test_local_serial_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try localSerialSession.run("create table \(tableName2) (id int primary key, value int);").wait()
+        )
+        XCTAssertNoThrow(try localSerialSession.run("insert into \(tableName2) (id, value) values (1, 300);").wait())
+
+        let localLwtQuery = "update \(tableName2) set value = 400 where id = 1 if value = 300;"
+        var localSerialResult: CassandraClient.Rows?
+        XCTAssertNoThrow(localSerialResult = try localSerialSession.query(localLwtQuery).wait())
+        XCTAssertNotNil(localSerialResult, "Local serial consistency LWT should succeed")
+
+        let localSerialRows = Array(localSerialResult!)
+        XCTAssertFalse(localSerialRows.isEmpty, "Local serial LWT query should return at least one row")
+        if let firstRow = localSerialRows.first {
+            XCTAssertNotNil(
+                firstRow.column("[applied]")?.bool,
+                "Local serial LWT result should contain [applied] column"
+            )
+        }
+
+        var nilSerialConfig = serialConfig
+        nilSerialConfig.serialConsistency = nil
+
+        let nilSerialClient = CassandraClient(configuration: nilSerialConfig, logger: logger)
+        defer { XCTAssertNoThrow(try nilSerialClient.shutdown()) }
+
+        let nilSerialSession = nilSerialClient.makeSession(keyspace: keyspace)
+        defer { XCTAssertNoThrow(try nilSerialSession.shutdown()) }
+
+        let tableName3 = "test_nil_serial_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(try nilSerialSession.run("create table \(tableName3) (id int primary key, value int);").wait())
+        XCTAssertNoThrow(try nilSerialSession.run("insert into \(tableName3) (id, value) values (1, 500);").wait())
+
+        let nilLwtQuery = "update \(tableName3) set value = 600 where id = 1 if value = 500;"
+        var nilSerialResult: CassandraClient.Rows?
+        XCTAssertNoThrow(nilSerialResult = try nilSerialSession.query(nilLwtQuery).wait())
+        XCTAssertNotNil(nilSerialResult, "Default serial consistency LWT should succeed")
+    }
+
     // meh, but nothing cross platform available
     func randomBytes(size: Int) -> [UInt8] {
         var buffer = [UInt8]()

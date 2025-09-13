@@ -202,7 +202,7 @@ extension CassandraClient.PaginatedRows: AsyncSequence {
     ///
     /// - Warning:
     ///   This can be called only once for each ``PaginatedRows``,
-    ///   otherwise it will throw ``CassandraClient.Error.rowsExhausted``.
+    ///   Otherwise it will throw ``CassandraClient/Error/rowsExhausted`` error.
     public func makeAsyncIterator() -> AsyncIterator {
         AsyncIterator(self)
     }

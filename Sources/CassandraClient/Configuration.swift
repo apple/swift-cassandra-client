@@ -51,6 +51,10 @@ extension CassandraClient {
         /// Sets the cluster's consistency level. Default is `.localOne`.
         public var consistency: CassandraClient.Consistency?
 
+        /// Sets the cluster's serial consistency level for LWT operations.
+        /// Default is `.serial`.
+        public var serialConsistency: CassandraClient.SerialConsistency?
+
         /// The load balancing strategy to use. Default is `nil` which uses ``LoadBalancingStrategy/dataCenterAware(_:)``.
         public var loadBalancingStrategy: LoadBalancingStrategy?
 
@@ -239,6 +243,9 @@ extension CassandraClient {
             if let value = self.consistency {
                 try cluster.setConsistency(value.cassConsistency)
             }
+            if let value = self.serialConsistency {
+                try cluster.setSerialConsistency(value.cassConsistency)
+            }
 
             return cluster
         }
@@ -396,6 +403,10 @@ internal final class Cluster {
 
     func setConsistency(_ consistency: CassConsistency) throws {
         try self.checkResult { cass_cluster_set_consistency(self.rawPointer, consistency) }
+    }
+
+    func setSerialConsistency(_ consistency: CassConsistency) throws {
+        try self.checkResult { cass_cluster_set_serial_consistency(self.rawPointer, consistency) }
     }
 
     func setSSL(_ ssl: SSLContext) throws {
