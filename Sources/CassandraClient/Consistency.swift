@@ -56,4 +56,19 @@ extension CassandraClient {
             }
         }
     }
+
+    /// Serial consistency levels
+    public enum SerialConsistency: Hashable {
+        case serial
+        case localSerial
+
+        var cassConsistency: CassConsistency {
+            switch self {
+            case .serial:
+                return CASS_CONSISTENCY_SERIAL
+            case .localSerial:
+                return CASS_CONSISTENCY_LOCAL_SERIAL
+            }
+        }
+    }
 }
