@@ -44,6 +44,34 @@ extension CassandraClient {
             cass_result_column_count(self.rawPointer)
         }
 
+        /// Get column name by index
+        /// - Parameter index: The column index (0-based)
+        /// - Returns: The column name, or nil if index is out of bounds
+        public func columnName(at index: Int) -> String? {
+            guard index >= 0 && index < self.columnsCount else {
+                return nil
+            }
+
+            var namePtr: UnsafePointer<CChar>?
+            var nameLength: Int = 0
+
+            let result = cass_result_column_name(self.rawPointer, index, &namePtr, &nameLength)
+            guard result == CASS_OK, let name = namePtr else {
+                return nil
+            }
+
+            let nameBuffer = UnsafeBufferPointer(start: name, count: nameLength)
+            return nameBuffer.withMemoryRebound(to: UInt8.self) {
+                String(decoding: $0, as: UTF8.self)
+            }
+        }
+
+        /// Get all column names
+        /// - Returns: Array of column names
+        public func columnNames() -> [String] {
+            (0..<self.columnsCount).compactMap { columnName(at: $0) }
+        }
+
         public func makeIterator() -> Iterator {
             Iterator(rows: self)
         }
