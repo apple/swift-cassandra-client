@@ -1118,6 +1118,92 @@ final class Tests: XCTestCase {
         }
     }
 
+    func testColumnName() {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                "create table \(tableName) (id int primary key, name text, age int, email text);"
+            ).wait()
+        )
+
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                "insert into \(tableName) (id, name, age, email) values (1, 'Alice', 30, 'alice@example.com');"
+            ).wait()
+        )
+
+        let rows = try! self.cassandraClient.query("select id, name, age, email from \(tableName);").wait()
+        XCTAssertEqual(rows.count, 1, "expected exactly one row")
+
+        // Test valid column indices
+        XCTAssertEqual(rows.columnName(at: 0), "id", "first column should be 'id'")
+        XCTAssertEqual(rows.columnName(at: 1), "name", "second column should be 'name'")
+        XCTAssertEqual(rows.columnName(at: 2), "age", "third column should be 'age'")
+        XCTAssertEqual(rows.columnName(at: 3), "email", "fourth column should be 'email'")
+
+        // Test invalid indices
+        XCTAssertNil(rows.columnName(at: -1), "negative index should return nil")
+        XCTAssertNil(rows.columnName(at: 4), "out of bounds index should return nil")
+        XCTAssertNil(rows.columnName(at: 100), "large out of bounds index should return nil")
+
+        // Test with select *
+        let rowsStar = try! self.cassandraClient.query("select * from \(tableName);").wait()
+        XCTAssertNotNil(rowsStar.columnName(at: 0), "select * should return valid column names")
+        XCTAssertEqual(rowsStar.columnsCount, 4, "select * should return all 4 columns")
+    }
+
+    func testColumnNames() {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                "create table \(tableName) (id int primary key, username text, score bigint, active boolean);"
+            ).wait()
+        )
+
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                "insert into \(tableName) (id, username, score, active) values (1, 'Bob', 9500, true);"
+            ).wait()
+        )
+
+        // Test columnNames with explicit column selection
+        let rows = try! self.cassandraClient.query("select id, username, score, active from \(tableName);").wait()
+        let columnNames = rows.columnNames()
+
+        XCTAssertEqual(columnNames.count, 4, "should return 4 column names")
+        XCTAssertEqual(columnNames[0], "id", "first column name should be 'id'")
+        XCTAssertEqual(columnNames[1], "username", "second column name should be 'username'")
+        XCTAssertEqual(columnNames[2], "score", "third column name should be 'score'")
+        XCTAssertEqual(columnNames[3], "active", "fourth column name should be 'active'")
+
+        // Test columnNames with select *
+        let rowsStar = try! self.cassandraClient.query("select * from \(tableName);").wait()
+        let columnNamesStar = rowsStar.columnNames()
+        XCTAssertEqual(columnNamesStar.count, 4, "select * should return all 4 column names")
+
+        // Verify column names array matches individual columnName calls
+        for (index, name) in columnNames.enumerated() {
+            XCTAssertEqual(
+                rows.columnName(at: index),
+                name,
+                "columnNames array should match columnName at index \(index)"
+            )
+        }
+
+        // Test columnNames with partial column selection
+        let rowsPartial = try! self.cassandraClient.query("select username, active from \(tableName);").wait()
+        let columnNamesPartial = rowsPartial.columnNames()
+        XCTAssertEqual(columnNamesPartial.count, 2, "partial select should return 2 column names")
+        XCTAssertEqual(columnNamesPartial[0], "username", "first column should be 'username'")
+        XCTAssertEqual(columnNamesPartial[1], "active", "second column should be 'active'")
+
+        // Test columnNames with single column
+        let rowsSingle = try! self.cassandraClient.query("select id from \(tableName);").wait()
+        let columnNamesSingle = rowsSingle.columnNames()
+        XCTAssertEqual(columnNamesSingle.count, 1, "single column select should return 1 column name")
+        XCTAssertEqual(columnNamesSingle[0], "id", "single column should be 'id'")
+    }
+
     func testErrorMapping() {
         XCTAssertThrowsError(try self.cassandraClient.run("boom!").wait()) { error in
             XCTAssertEqual(
