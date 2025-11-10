@@ -46,10 +46,11 @@ extension CassandraClient {
 
         /// Get column name by index
         /// - Parameter index: The column index (0-based)
-        /// - Returns: The column name, or nil if index is out of bounds
-        public func columnName(at index: Int) -> String? {
+        /// - Returns: The column name
+        /// - Throws: CassandraClient.Error if index is out of bounds or column name cannot be retrieved
+        public func columnName(at index: Int) throws -> String {
             guard index >= 0 && index < self.columnsCount else {
-                return nil
+                throw CassandraClient.Error(CASS_ERROR_LIB_INDEX_OUT_OF_BOUNDS)
             }
 
             var namePtr: UnsafePointer<CChar>?
@@ -57,19 +58,17 @@ extension CassandraClient {
 
             let result = cass_result_column_name(self.rawPointer, index, &namePtr, &nameLength)
             guard result == CASS_OK, let name = namePtr else {
-                return nil
+                throw CassandraClient.Error(result)
             }
 
-            let nameBuffer = UnsafeBufferPointer(start: name, count: nameLength)
-            return nameBuffer.withMemoryRebound(to: UInt8.self) {
-                String(decoding: $0, as: UTF8.self)
-            }
+            return String(cString: name)
         }
 
         /// Get all column names
         /// - Returns: Array of column names
-        public func columnNames() -> [String] {
-            (0..<self.columnsCount).compactMap { columnName(at: $0) }
+        /// - Throws: CassandraClient.Error if any column name cannot be retrieved
+        public func columnNames() throws -> [String] {
+            try (0..<self.columnsCount).map { try columnName(at: $0) }
         }
 
         public func makeIterator() -> Iterator {
