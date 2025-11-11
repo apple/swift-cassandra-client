@@ -61,7 +61,10 @@ extension CassandraClient {
                 throw CassandraClient.Error(result)
             }
 
-            return String(cString: name)
+            let nameBuffer = UnsafeBufferPointer(start: name, count: nameLength)
+            return nameBuffer.withMemoryRebound(to: UInt8.self) {
+                String(decoding: $0, as: UTF8.self)
+            }
         }
 
         /// Get all column names
