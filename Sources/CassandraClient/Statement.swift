@@ -116,6 +116,8 @@ extension CassandraClient {
 
         private func bindArray<T>(_ array: [T], at index: Int) throws -> CassError {
             let collection = cass_collection_new(CASS_COLLECTION_TYPE_LIST, array.count)
+            defer { cass_collection_free(collection) }
+
             for element in array {
                 let appendResult: CassError
                 switch element {
