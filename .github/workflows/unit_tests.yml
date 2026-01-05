@@ -52,6 +52,9 @@ on:
         description: "The arguments passed to swift test in the Linux nightly main Swift version matrix job."
         default: ""
 
+permissions:
+  contents: read
+
 jobs:
   unit-tests:
     name: Unit tests (${{ matrix.swift.swift_version }})

@@ -94,6 +94,8 @@ extension CassandraClient {
                     result = try self.bindArray(array, at: index)
                 case .stringArray(let array):
                     result = try self.bindArray(array, at: index)
+                default:
+                    result = try self.bindMapCases(parameter, index)
                 }
 
                 guard result == CASS_OK else {
@@ -114,6 +116,8 @@ extension CassandraClient {
 
         private func bindArray<T>(_ array: [T], at index: Int) throws -> CassError {
             let collection = cass_collection_new(CASS_COLLECTION_TYPE_LIST, array.count)
+            defer { cass_collection_free(collection) }
+
             for element in array {
                 let appendResult: CassError
                 switch element {
@@ -201,6 +205,76 @@ extension CassandraClient {
             case float32Array([Float32])
             case doubleArray([Double])
             case stringArray([String])
+
+            case int8Int8Map([Int8: Int8])
+            case int8Int16Map([Int8: Int16])
+            case int8Int32Map([Int8: Int32])
+            case int8Int64Map([Int8: Int64])
+            case int8Float32Map([Int8: Float32])
+            case int8DoubleMap([Int8: Double])
+            case int8BoolMap([Int8: Bool])
+            case int8StringMap([Int8: String])
+            case int8UUIDMap([Int8: Foundation.UUID])
+
+            case int16Int8Map([Int16: Int8])
+            case int16Int16Map([Int16: Int16])
+            case int16Int32Map([Int16: Int32])
+            case int16Int64Map([Int16: Int64])
+            case int16Float32Map([Int16: Float32])
+            case int16DoubleMap([Int16: Double])
+            case int16BoolMap([Int16: Bool])
+            case int16StringMap([Int16: String])
+            case int16UUIDMap([Int16: Foundation.UUID])
+
+            case int32Int8Map([Int32: Int8])
+            case int32Int16Map([Int32: Int16])
+            case int32Int32Map([Int32: Int32])
+            case int32Int64Map([Int32: Int64])
+            case int32Float32Map([Int32: Float32])
+            case int32DoubleMap([Int32: Double])
+            case int32BoolMap([Int32: Bool])
+            case int32StringMap([Int32: String])
+            case int32UUIDMap([Int32: Foundation.UUID])
+
+            case int64Int8Map([Int64: Int8])
+            case int64Int16Map([Int64: Int16])
+            case int64Int32Map([Int64: Int32])
+            case int64Int64Map([Int64: Int64])
+            case int64Float32Map([Int64: Float32])
+            case int64DoubleMap([Int64: Double])
+            case int64BoolMap([Int64: Bool])
+            case int64StringMap([Int64: String])
+            case int64UUIDMap([Int64: Foundation.UUID])
+
+            case stringInt8Map([String: Int8])
+            case stringInt16Map([String: Int16])
+            case stringInt32Map([String: Int32])
+            case stringInt64Map([String: Int64])
+            case stringFloat32Map([String: Float32])
+            case stringDoubleMap([String: Double])
+            case stringBoolMap([String: Bool])
+            case stringStringMap([String: String])
+            case stringUUIDMap([String: Foundation.UUID])
+
+            case uuidInt8Map([Foundation.UUID: Int8])
+            case uuidInt16Map([Foundation.UUID: Int16])
+            case uuidInt32Map([Foundation.UUID: Int32])
+            case uuidInt64Map([Foundation.UUID: Int64])
+            case uuidFloat32Map([Foundation.UUID: Float32])
+            case uuidDoubleMap([Foundation.UUID: Double])
+            case uuidBoolMap([Foundation.UUID: Bool])
+            case uuidStringMap([Foundation.UUID: String])
+            case uuidUUIDMap([Foundation.UUID: Foundation.UUID])
+
+            case timeuuidInt8Map([TimeBasedUUID: Int8])
+            case timeuuidInt16Map([TimeBasedUUID: Int16])
+            case timeuuidInt32Map([TimeBasedUUID: Int32])
+            case timeuuidInt64Map([TimeBasedUUID: Int64])
+            case timeuuidFloat32Map([TimeBasedUUID: Float32])
+            case timeuuidDoubleMap([TimeBasedUUID: Double])
+            case timeuuidBoolMap([TimeBasedUUID: Bool])
+            case timeuuidStringMap([TimeBasedUUID: String])
+            case timeuuidUUIDMap([TimeBasedUUID: Foundation.UUID])
         }
 
         public struct Options: CustomStringConvertible {
