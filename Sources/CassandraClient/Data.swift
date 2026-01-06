@@ -677,9 +677,17 @@ extension CassandraClient.Column {
     }
 
     private func toArray<T>(type: T.Type) -> [T]? {
+        guard cass_value_is_null(self.rawPointer) == cass_false else {
+            return nil
+        }
+
         var array: [T] = []
 
-        let iterator = cass_iterator_from_collection(self.rawPointer)
+        guard let iterator = cass_iterator_from_collection(self.rawPointer) else {
+            return nil
+        }
+        defer { cass_iterator_free(iterator) }
+
         while cass_iterator_next(iterator) == cass_true {
             let valuePointer = cass_iterator_get_value(iterator)
             let value: T?
