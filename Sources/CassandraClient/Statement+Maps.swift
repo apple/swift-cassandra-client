@@ -157,7 +157,9 @@ extension CassandraClient.Statement {
     }
 
     private func bindMap<K, V>(_ map: [K: V], at index: Int) throws -> CassError {
-        let collection = cass_collection_new(CASS_COLLECTION_TYPE_MAP, map.count * 2)
+        guard let collection = cass_collection_new(CASS_COLLECTION_TYPE_MAP, map.count * 2) else {
+            throw CassandraClient.Error.badParams("Failed to create collection")
+        }
         defer { cass_collection_free(collection) }
 
         for (key, value) in map {

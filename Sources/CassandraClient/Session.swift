@@ -270,7 +270,7 @@ extension CassandraClient {
             }
             switch self.state {
             case .connected:
-                try self.disconect()
+                try self.disconnect()
             default:
                 break
             }
@@ -374,7 +374,7 @@ extension CassandraClient {
                 }
         }
 
-        private func disconect() throws {
+        private func disconnect() throws {
             var error: Swift.Error?
             let semaphore = DispatchSemaphore(value: 0)
             let future = cass_session_close(rawPointer)
