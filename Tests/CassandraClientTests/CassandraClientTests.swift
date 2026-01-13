@@ -1303,6 +1303,35 @@ final class Tests: XCTestCase {
         XCTAssertNotNil(nilSerialResult, "Default serial consistency LWT should succeed")
     }
 
+    func testArrayWithNullIteratorHandling() {
+        let tableName = "test_null_array_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                """
+                create table \(tableName) (
+                    id int primary key,
+                    nullable_array list<text>,
+                    empty_array list<text>
+                )
+                """
+            ).wait()
+        )
+
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                "insert into \(tableName) (id, nullable_array, empty_array) values (1, null, []);"
+            ).wait()
+        )
+
+        let result = try! self.cassandraClient.query("select * from \(tableName);").wait()
+        XCTAssertEqual(result.count, 1)
+        let row = result.first!
+
+        XCTAssertNil(row.column("nullable_array")?.stringArray)
+        // Note: Cassandra stores empty collections as NULL, so reading back [] returns nil
+        XCTAssertNil(row.column("empty_array")?.stringArray)
+    }
+
     // meh, but nothing cross platform available
     func randomBytes(size: Int) -> [UInt8] {
         var buffer = [UInt8]()
