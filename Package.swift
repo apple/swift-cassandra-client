@@ -164,7 +164,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: [
-                .swiftLanguageMode(.v5),
+                .swiftLanguageMode(.v5)
             ]
         ),
 
@@ -172,7 +172,7 @@ let package = Package(
             name: "CassandraClientTests",
             dependencies: ["CassandraClient"],
             swiftSettings: [
-                .swiftLanguageMode(.v5),
+                .swiftLanguageMode(.v5)
             ]
         ),
     ],
