@@ -162,10 +162,21 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Logging", package: "swift-log"),
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .enableUpcomingFeature("ExistentialAny"),
             ]
         ),
 
-        .testTarget(name: "CassandraClientTests", dependencies: ["CassandraClient"]),
+        .testTarget(
+            name: "CassandraClientTests",
+            dependencies: ["CassandraClient"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .enableUpcomingFeature("ExistentialAny"),
+            ]
+        ),
     ],
     cxxLanguageStandard: .cxx17
 )
