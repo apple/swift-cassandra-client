@@ -165,7 +165,6 @@ let package = Package(
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
-                .enableUpcomingFeature("ExistentialAny"),
             ]
         ),
 
@@ -174,7 +173,6 @@ let package = Package(
             dependencies: ["CassandraClient"],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
-                .enableUpcomingFeature("ExistentialAny"),
             ]
         ),
     ],
