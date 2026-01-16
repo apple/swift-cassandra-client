@@ -1,4 +1,4 @@
-// swift-tools-version:5.10
+// swift-tools-version:6.0
 
 import PackageDescription
 
@@ -162,10 +162,19 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Logging", package: "swift-log"),
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
             ]
         ),
 
-        .testTarget(name: "CassandraClientTests", dependencies: ["CassandraClient"]),
+        .testTarget(
+            name: "CassandraClientTests",
+            dependencies: ["CassandraClient"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
     ],
     cxxLanguageStandard: .cxx17
 )
