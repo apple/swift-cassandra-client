@@ -269,6 +269,10 @@ extension CassandraClient.Column {
     }
 
     private func toMap<K: Hashable, V>(keyType _: K.Type, valueType _: V.Type) -> [K: V]? {
+        guard cass_value_is_null(self.rawPointer) == cass_false else {
+            return nil
+        }
+
         var map: [K: V] = [:]
 
         let iterator = cass_iterator_from_map(self.rawPointer)

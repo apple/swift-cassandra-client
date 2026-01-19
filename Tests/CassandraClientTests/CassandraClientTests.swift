@@ -1332,6 +1332,43 @@ final class Tests: XCTestCase {
         XCTAssertNil(row.column("empty_array")?.stringArray)
     }
 
+    func testMapWithNullIteratorHandling() {
+        let tableName = "test_null_map_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                """
+                create table \(tableName) (
+                    id int primary key,
+                    nullable_map map<int, text>,
+                    empty_map map<int, text>,
+                    valid_map map<int, text>
+                )
+                """
+            ).wait()
+        )
+
+        let validMap = [Int32(1): "value1", Int32(2): "value2"]
+        XCTAssertNoThrow(
+            try self.cassandraClient.run(
+                "insert into \(tableName) (id, nullable_map, empty_map, valid_map) values (?, ?, ?, ?);",
+                parameters: [
+                    .int32(1),
+                    .null,
+                    .int32StringMap([:]),
+                    .int32StringMap(validMap)
+                ]
+            ).wait()
+        )
+
+        let result = try! self.cassandraClient.query("select * from \(tableName);").wait()
+        XCTAssertEqual(result.count, 1)
+        let row = result.first!
+
+        XCTAssertNil(row.column("nullable_map")?.int32StringMap)
+        XCTAssertNil(row.column("empty_map")?.int32StringMap)
+        XCTAssertEqual(row.column("valid_map"), validMap)
+    }
+
     // meh, but nothing cross platform available
     func randomBytes(size: Int) -> [UInt8] {
         var buffer = [UInt8]()
