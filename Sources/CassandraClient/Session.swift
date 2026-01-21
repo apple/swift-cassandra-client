@@ -342,7 +342,7 @@ extension CassandraClient {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
 
             do {
-                try statement.setPagingSize(pageSize)
+                try statement.setPagingSize(Int(pageSize))
             } catch {
                 return eventLoop.makeFailedFuture(error)
             }
@@ -559,7 +559,7 @@ extension CassandraClient.Session {
     )
         async throws -> CassandraClient.PaginatedRows
     {
-        try statement.setPagingSize(pageSize)
+        try statement.setPagingSize(Int(pageSize))
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
     }
 
