@@ -4,6 +4,9 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
 
+permissions:
+  contents: read
+
 jobs:
   soundness:
     name: Soundness
@@ -16,7 +19,6 @@ jobs:
     name: Unit tests
     uses: ./.github/workflows/unit_tests.yml
     with:
-      linux_5_10_arguments_override: "--explicit-target-dependency-import-check error -Xswiftc -strict-concurrency=complete"
       linux_6_0_arguments_override: "--explicit-target-dependency-import-check error"
       linux_6_1_arguments_override: "--explicit-target-dependency-import-check error"
       linux_6_2_arguments_override: "--explicit-target-dependency-import-check error"

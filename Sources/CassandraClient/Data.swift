@@ -44,6 +44,36 @@ extension CassandraClient {
             cass_result_column_count(self.rawPointer)
         }
 
+        /// Get column name by index
+        /// - Parameter index: The column index (0-based)
+        /// - Returns: The column name
+        /// - Throws: CassandraClient.Error if index is out of bounds or column name cannot be retrieved
+        public func columnName(at index: Int) throws -> String {
+            guard index >= 0 && index < self.columnsCount else {
+                throw CassandraClient.Error(CASS_ERROR_LIB_INDEX_OUT_OF_BOUNDS)
+            }
+
+            var namePtr: UnsafePointer<CChar>?
+            var nameLength: Int = 0
+
+            let result = cass_result_column_name(self.rawPointer, index, &namePtr, &nameLength)
+            guard result == CASS_OK, let name = namePtr else {
+                throw CassandraClient.Error(result)
+            }
+
+            let nameBuffer = UnsafeBufferPointer(start: name, count: nameLength)
+            return nameBuffer.withMemoryRebound(to: UInt8.self) {
+                String(decoding: $0, as: UTF8.self)
+            }
+        }
+
+        /// Get all column names
+        /// - Returns: Array of column names
+        /// - Throws: CassandraClient.Error if any column name cannot be retrieved
+        public func columnNames() throws -> [String] {
+            try (0..<self.columnsCount).map { try columnName(at: $0) }
+        }
+
         public func makeIterator() -> Iterator {
             Iterator(rows: self)
         }
@@ -647,9 +677,17 @@ extension CassandraClient.Column {
     }
 
     private func toArray<T>(type: T.Type) -> [T]? {
+        guard cass_value_is_null(self.rawPointer) == cass_false else {
+            return nil
+        }
+
         var array: [T] = []
 
-        let iterator = cass_iterator_from_collection(self.rawPointer)
+        guard let iterator = cass_iterator_from_collection(self.rawPointer) else {
+            return nil
+        }
+        defer { cass_iterator_free(iterator) }
+
         while cass_iterator_next(iterator) == cass_true {
             let valuePointer = cass_iterator_get_value(iterator)
             let value: T?
