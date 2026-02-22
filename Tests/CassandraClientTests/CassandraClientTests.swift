@@ -1365,6 +1365,7 @@ final class Tests: XCTestCase {
         let row = result.first!
 
         XCTAssertNil(row.column("nullable_map")?.int32StringMap)
+        // Note: Cassandra stores empty collections as NULL, so reading back [:] returns nil
         XCTAssertNil(row.column("empty_map")?.int32StringMap)
         XCTAssertEqual(row.column("valid_map"), validMap)
     }
