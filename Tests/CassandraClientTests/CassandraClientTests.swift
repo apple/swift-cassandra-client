@@ -1355,7 +1355,7 @@ final class Tests: XCTestCase {
                     .int32(1),
                     .null,
                     .int32StringMap([:]),
-                    .int32StringMap(validMap)
+                    .int32StringMap(validMap),
                 ]
             ).wait()
         )
