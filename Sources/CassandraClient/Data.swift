@@ -528,8 +528,8 @@ extension CassUuid {
         time_and_version = cass_uint64_t(
             UInt64(
                 bigEndian: timeAndVersion.withUnsafeBufferPointer {
-                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
-                }.pointee
+                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0.pointee })
+                }
             )
         )
 
@@ -545,8 +545,8 @@ extension CassUuid {
         clock_seq_and_node = cass_uint64_t(
             UInt64(
                 bigEndian: clockSeqAndNode.withUnsafeBufferPointer {
-                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
-                }.pointee
+                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0.pointee })
+                }
             )
         )
     }
