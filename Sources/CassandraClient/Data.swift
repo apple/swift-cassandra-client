@@ -516,39 +516,21 @@ extension CassUuid {
     internal init(_ uuid: uuid_t) {
         self.init()
 
-        var timeAndVersion = [UInt8]()
-        timeAndVersion.append(uuid.6)
-        timeAndVersion.append(uuid.7)
-        timeAndVersion.append(uuid.4)
-        timeAndVersion.append(uuid.5)
-        timeAndVersion.append(uuid.0)
-        timeAndVersion.append(uuid.1)
-        timeAndVersion.append(uuid.2)
-        timeAndVersion.append(uuid.3)
-        time_and_version = cass_uint64_t(
-            UInt64(
-                bigEndian: timeAndVersion.withUnsafeBufferPointer {
-                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
-                }.pointee
-            )
-        )
+        let timeHi: UInt64 =
+            (UInt64(uuid.6) << 56) | (UInt64(uuid.7) << 48)
+            | (UInt64(uuid.4) << 40) | (UInt64(uuid.5) << 32)
+        let timeLo: UInt64 =
+            (UInt64(uuid.0) << 24) | (UInt64(uuid.1) << 16)
+            | (UInt64(uuid.2) << 8) | UInt64(uuid.3)
+        time_and_version = cass_uint64_t(timeHi | timeLo)
 
-        var clockSeqAndNode = [UInt8]()
-        clockSeqAndNode.append(uuid.8)
-        clockSeqAndNode.append(uuid.9)
-        clockSeqAndNode.append(uuid.10)
-        clockSeqAndNode.append(uuid.11)
-        clockSeqAndNode.append(uuid.12)
-        clockSeqAndNode.append(uuid.13)
-        clockSeqAndNode.append(uuid.14)
-        clockSeqAndNode.append(uuid.15)
-        clock_seq_and_node = cass_uint64_t(
-            UInt64(
-                bigEndian: clockSeqAndNode.withUnsafeBufferPointer {
-                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0 })
-                }.pointee
-            )
-        )
+        let clockHi: UInt64 =
+            (UInt64(uuid.8) << 56) | (UInt64(uuid.9) << 48)
+            | (UInt64(uuid.10) << 40) | (UInt64(uuid.11) << 32)
+        let clockLo: UInt64 =
+            (UInt64(uuid.12) << 24) | (UInt64(uuid.13) << 16)
+            | (UInt64(uuid.14) << 8) | UInt64(uuid.15)
+        clock_seq_and_node = cass_uint64_t(clockHi | clockLo)
     }
 
     internal func uuid() -> Foundation.UUID {
