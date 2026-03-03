@@ -516,39 +516,17 @@ extension CassUuid {
     internal init(_ uuid: uuid_t) {
         self.init()
 
-        var timeAndVersion = [UInt8]()
-        timeAndVersion.append(uuid.6)
-        timeAndVersion.append(uuid.7)
-        timeAndVersion.append(uuid.4)
-        timeAndVersion.append(uuid.5)
-        timeAndVersion.append(uuid.0)
-        timeAndVersion.append(uuid.1)
-        timeAndVersion.append(uuid.2)
-        timeAndVersion.append(uuid.3)
-        time_and_version = cass_uint64_t(
-            UInt64(
-                bigEndian: timeAndVersion.withUnsafeBufferPointer {
-                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0.pointee })
-                }
-            )
-        )
+        var timeAndVersion: UInt64 = 0
+        for byte in [uuid.6, uuid.7, uuid.4, uuid.5, uuid.0, uuid.1, uuid.2, uuid.3] {
+            timeAndVersion = (timeAndVersion << 8) | UInt64(byte)
+        }
+        time_and_version = cass_uint64_t(timeAndVersion)
 
-        var clockSeqAndNode = [UInt8]()
-        clockSeqAndNode.append(uuid.8)
-        clockSeqAndNode.append(uuid.9)
-        clockSeqAndNode.append(uuid.10)
-        clockSeqAndNode.append(uuid.11)
-        clockSeqAndNode.append(uuid.12)
-        clockSeqAndNode.append(uuid.13)
-        clockSeqAndNode.append(uuid.14)
-        clockSeqAndNode.append(uuid.15)
-        clock_seq_and_node = cass_uint64_t(
-            UInt64(
-                bigEndian: clockSeqAndNode.withUnsafeBufferPointer {
-                    ($0.baseAddress!.withMemoryRebound(to: UInt64.self, capacity: 1) { $0.pointee })
-                }
-            )
-        )
+        var clockSeqAndNode: UInt64 = 0
+        for byte in [uuid.8, uuid.9, uuid.10, uuid.11, uuid.12, uuid.13, uuid.14, uuid.15] {
+            clockSeqAndNode = (clockSeqAndNode << 8) | UInt64(byte)
+        }
+        clock_seq_and_node = cass_uint64_t(clockSeqAndNode)
     }
 
     internal func uuid() -> Foundation.UUID {
