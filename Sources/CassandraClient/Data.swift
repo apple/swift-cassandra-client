@@ -516,15 +516,19 @@ extension CassUuid {
     internal init(_ uuid: uuid_t) {
         self.init()
 
-        let timeHi: UInt64 = (UInt64(uuid.6) << 56) | (UInt64(uuid.7) << 48)
+        let timeHi: UInt64 =
+            (UInt64(uuid.6) << 56) | (UInt64(uuid.7) << 48)
             | (UInt64(uuid.4) << 40) | (UInt64(uuid.5) << 32)
-        let timeLo: UInt64 = (UInt64(uuid.0) << 24) | (UInt64(uuid.1) << 16)
+        let timeLo: UInt64 =
+            (UInt64(uuid.0) << 24) | (UInt64(uuid.1) << 16)
             | (UInt64(uuid.2) << 8) | UInt64(uuid.3)
         time_and_version = cass_uint64_t(timeHi | timeLo)
 
-        let clockHi: UInt64 = (UInt64(uuid.8) << 56) | (UInt64(uuid.9) << 48)
+        let clockHi: UInt64 =
+            (UInt64(uuid.8) << 56) | (UInt64(uuid.9) << 48)
             | (UInt64(uuid.10) << 40) | (UInt64(uuid.11) << 32)
-        let clockLo: UInt64 = (UInt64(uuid.12) << 24) | (UInt64(uuid.13) << 16)
+        let clockLo: UInt64 =
+            (UInt64(uuid.12) << 24) | (UInt64(uuid.13) << 16)
             | (UInt64(uuid.14) << 8) | UInt64(uuid.15)
         clock_seq_and_node = cass_uint64_t(clockHi | clockLo)
     }
