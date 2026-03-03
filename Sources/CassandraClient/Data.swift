@@ -516,17 +516,17 @@ extension CassUuid {
     internal init(_ uuid: uuid_t) {
         self.init()
 
-        var timeAndVersion: UInt64 = 0
-        for byte in [uuid.6, uuid.7, uuid.4, uuid.5, uuid.0, uuid.1, uuid.2, uuid.3] {
-            timeAndVersion = (timeAndVersion << 8) | UInt64(byte)
-        }
-        time_and_version = cass_uint64_t(timeAndVersion)
+        let timeHi: UInt64 = (UInt64(uuid.6) << 56) | (UInt64(uuid.7) << 48)
+            | (UInt64(uuid.4) << 40) | (UInt64(uuid.5) << 32)
+        let timeLo: UInt64 = (UInt64(uuid.0) << 24) | (UInt64(uuid.1) << 16)
+            | (UInt64(uuid.2) << 8) | UInt64(uuid.3)
+        time_and_version = cass_uint64_t(timeHi | timeLo)
 
-        var clockSeqAndNode: UInt64 = 0
-        for byte in [uuid.8, uuid.9, uuid.10, uuid.11, uuid.12, uuid.13, uuid.14, uuid.15] {
-            clockSeqAndNode = (clockSeqAndNode << 8) | UInt64(byte)
-        }
-        clock_seq_and_node = cass_uint64_t(clockSeqAndNode)
+        let clockHi: UInt64 = (UInt64(uuid.8) << 56) | (UInt64(uuid.9) << 48)
+            | (UInt64(uuid.10) << 40) | (UInt64(uuid.11) << 32)
+        let clockLo: UInt64 = (UInt64(uuid.12) << 24) | (UInt64(uuid.13) << 16)
+            | (UInt64(uuid.14) << 8) | UInt64(uuid.15)
+        clock_seq_and_node = cass_uint64_t(clockHi | clockLo)
     }
 
     internal func uuid() -> Foundation.UUID {
