@@ -26,6 +26,11 @@ public class CassandraClient: CassandraSession {
         self.eventLoopGroupContainer.value
     }
 
+    @available(macOS 11.0, *)
+    public var encryptor: CassandraClient.Encryptor? {
+        self.configuration.encryptor
+    }
+
     private let configuration: Configuration
     private let logger: Logger
     private let defaultSession: Session

@@ -23,6 +23,10 @@ import NIOCore  // for async-await bridge
 public protocol CassandraSession {
     var eventLoopGroup: EventLoopGroup { get }
 
+    /// Encryptor for transparent column encryption.
+    @available(macOS 11.0, *)
+    var encryptor: CassandraClient.Encryptor? { get }
+
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -120,6 +124,37 @@ extension CassandraSession {
 }
 
 extension CassandraSession {
+    private func makeDecoder(
+        row: CassandraClient.Row,
+        options: CassandraClient.Statement.Options
+    ) throws -> CassandraClient.RowDecoder {
+        if let builder = options.encryptionContextBuilder,
+           #available(macOS 11.0, *),
+           let encryptor = self.encryptor
+        {
+            let ctx = try builder(row)
+            return CassandraClient.RowDecoder(
+                row: row, encryptor: encryptor, rowContext: ctx
+            )
+        }
+        return CassandraClient.RowDecoder(row: row)
+    }
+
+    /// Creates a Statement with the session's encryptor injected from Configuration.
+    @available(macOS 11.0, *)
+    private func makeStatement(
+        query: String,
+        parameters: [CassandraClient.Statement.Value],
+        options: CassandraClient.Statement.Options
+    ) throws -> CassandraClient.Statement {
+        try CassandraClient.Statement(
+            query: query,
+            parameters: parameters,
+            options: options,
+            _encryptor: self.encryptor
+        )
+    }
+
     /// Run insert / update / delete or DDL command where no result is expected.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
@@ -163,7 +198,7 @@ extension CassandraSession {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger)
             .flatMapThrowing { rows in
                 try rows.map { row in
-                    try T(from: CassandraClient.RowDecoder(row: row))
+                    try T(from: self.makeDecoder(row: row, options: options))
                 }
             }
     }
@@ -183,11 +218,12 @@ extension CassandraSession {
         logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.Rows> {
         do {
-            let statement = try CassandraClient.Statement(
-                query: query,
-                parameters: parameters,
-                options: options
-            )
+            let statement: CassandraClient.Statement
+            if #available(macOS 11.0, *) {
+                statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+            } else {
+                statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+            }
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
             let eventLoop = eventLoop ?? eventLoopGroup.next()
@@ -207,11 +243,12 @@ extension CassandraSession {
         logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
         do {
-            let statement = try CassandraClient.Statement(
-                query: query,
-                parameters: parameters,
-                options: options
-            )
+            let statement: CassandraClient.Statement
+            if #available(macOS 11.0, *) {
+                statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+            } else {
+                statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+            }
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
         } catch {
             let eventLoop = eventLoop ?? eventLoopGroup.next()
@@ -225,6 +262,11 @@ extension CassandraClient {
         private let eventLoopGroupContainer: EventLoopGroupContainer
         public var eventLoopGroup: EventLoopGroup {
             self.eventLoopGroupContainer.value
+        }
+
+        @available(macOS 11.0, *)
+        public var encryptor: CassandraClient.Encryptor? {
+            self.configuration.encryptor
         }
 
         private let configuration: Configuration
@@ -459,7 +501,7 @@ extension CassandraSession {
             logger: logger
         )
         return try rows.map { row in
-            try T(from: CassandraClient.RowDecoder(row: row))
+            try T(from: self.makeDecoder(row: row, options: options))
         }
     }
 
@@ -475,7 +517,7 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.Rows {
-        let statement = try CassandraClient.Statement(
+        let statement = try self.makeStatement(
             query: query,
             parameters: parameters,
             options: options
@@ -492,7 +534,7 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
-        let statement = try CassandraClient.Statement(
+        let statement = try self.makeStatement(
             query: query,
             parameters: parameters,
             options: options

@@ -26,8 +26,16 @@ extension CassandraClient {
             self.row = row
         }
 
+        /// Create a decoder with encryption support for decoding `Encrypted<T>` fields.
+        @available(macOS 11.0, *)
+        init(row: Row, encryptor: Encryptor, rowContext: RowEncryptionContext) {
+            self.row = row
+            self.userInfo[.cassandraEncryptor] = encryptor
+            self.userInfo[.cassandraRowContext] = rowContext
+        }
+
         public func container<Key>(keyedBy _: Key.Type) throws -> KeyedDecodingContainer<Key> {
-            KeyedDecodingContainer(RowDecodingContainer<Key>(row: self.row))
+            KeyedDecodingContainer(RowDecodingContainer<Key>(row: self.row, userInfo: self.userInfo))
         }
 
         public func unkeyedContainer() throws -> UnkeyedDecodingContainer {
@@ -41,11 +49,13 @@ extension CassandraClient {
 
     private struct RowDecodingContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
         private let row: Row
+        private let userInfo: [CodingUserInfoKey: Any]
 
         public var codingPath = [CodingKey]()
 
-        init(row: Row) {
+        init(row: Row, userInfo: [CodingUserInfoKey: Any] = [:]) {
             self.row = row
+            self.userInfo = userInfo
         }
 
         public var allKeys: [Key] {
@@ -167,7 +177,46 @@ extension CassandraClient {
 
         // FIXME: is there a nicer way?
         public func decode<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T {
-            if type == [UInt8].self {
+            // Encrypted types — decrypt column and deserialize
+            if type == Encrypted<String>.self {
+                let data = try decryptColumnData(key: key)
+                guard let string = String(data: data, encoding: .utf8) else {
+                    throw DecodingError.typeMismatch("Decrypted data for \(key.stringValue) is not valid UTF-8")
+                }
+                return Encrypted<String>(string) as! T
+            } else if type == Encrypted<Int32>.self {
+                let data = try decryptColumnData(key: key)
+                guard data.count == 4 else {
+                    throw DecodingError.typeMismatch("Expected 4 bytes for Int32, got \(data.count)")
+                }
+                let value = data.withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
+                return Encrypted<Int32>(value) as! T
+            } else if type == Encrypted<Int64>.self {
+                let data = try decryptColumnData(key: key)
+                guard data.count == 8 else {
+                    throw DecodingError.typeMismatch("Expected 8 bytes for Int64, got \(data.count)")
+                }
+                let value = data.withUnsafeBytes { $0.load(as: Int64.self).bigEndian }
+                return Encrypted<Int64>(value) as! T
+            } else if type == Encrypted<Double>.self {
+                let data = try decryptColumnData(key: key)
+                guard data.count == 8 else {
+                    throw DecodingError.typeMismatch("Expected 8 bytes for Double, got \(data.count)")
+                }
+                let bits = data.withUnsafeBytes { $0.load(as: UInt64.self).bigEndian }
+                return Encrypted<Double>(Double(bitPattern: bits)) as! T
+            } else if type == Encrypted<Foundation.UUID>.self {
+                let data = try decryptColumnData(key: key)
+                guard data.count == 16 else {
+                    throw DecodingError.typeMismatch("Expected 16 bytes for UUID, got \(data.count)")
+                }
+                let u: uuid_t = (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                                  data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15])
+                return Encrypted<Foundation.UUID>(Foundation.UUID(uuid: u)) as! T
+            } else if type == Encrypted<[UInt8]>.self {
+                let data = try decryptColumnData(key: key)
+                return Encrypted<[UInt8]>(Array(data)) as! T
+            } else if type == [UInt8].self {
                 guard let value: [UInt8] = row.column(key.stringValue) else {
                     throw DecodingError.typeMismatch(
                         "value for \(key.stringValue) not found or of incorrect data type."
@@ -272,6 +321,29 @@ extension CassandraClient {
 
         public func superDecoder(forKey _: Key) throws -> Decoder {
             throw DecodingError.notSupported()
+        }
+
+        /// Decrypt column data using encryptor and context from userInfo.
+        private func decryptColumnData(key: Key) throws -> Data {
+            guard #available(macOS 11.0, *) else {
+                throw DecodingError.notSupported("Encryption requires macOS 11.0+")
+            }
+            guard let encryptor = userInfo[.cassandraEncryptor] as? CassandraClient.Encryptor else {
+                throw DecodingError.notSupported(
+                    "Encryptor not provided in decoder userInfo. Use RowDecoder(row:encryptor:rowContext:)"
+                )
+            }
+            guard let rowContext = userInfo[.cassandraRowContext] as? CassandraClient.RowEncryptionContext else {
+                throw DecodingError.notSupported("RowEncryptionContext missing from decoder userInfo")
+            }
+            let context = rowContext.forColumn(key.stringValue)
+            guard let column: Column = row.column(key.stringValue) else {
+                throw DecodingError.typeMismatch("value for \(key.stringValue) not found.")
+            }
+            guard let data = try column.decryptedData(encryptor: encryptor, context: context) else {
+                throw DecodingError.typeMismatch("value for \(key.stringValue) is null.")
+            }
+            return data
         }
     }
 }
