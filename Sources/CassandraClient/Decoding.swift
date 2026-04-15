@@ -27,7 +27,7 @@ extension CassandraClient {
         }
 
         /// Create a decoder with encryption support for decoding `Encrypted<T>` fields.
-        @available(macOS 11.0, *)
+        @available(macOS 15.0, iOS 18.0, *)
         init(row: Row, encryptor: Encryptor, rowContext: RowEncryptionContext) {
             self.row = row
             self.userInfo[.cassandraEncryptor] = encryptor
@@ -325,8 +325,8 @@ extension CassandraClient {
 
         /// Decrypt column data using encryptor and context from userInfo.
         private func decryptColumnData(key: Key) throws -> Data {
-            guard #available(macOS 11.0, *) else {
-                throw DecodingError.notSupported("Encryption requires macOS 11.0+")
+            guard #available(macOS 15.0, iOS 18.0, *) else {
+                throw DecodingError.notSupported("Encryption requires macOS 15.0+")
             }
             guard let encryptor = userInfo[.cassandraEncryptor] as? CassandraClient.Encryptor else {
                 throw DecodingError.notSupported(

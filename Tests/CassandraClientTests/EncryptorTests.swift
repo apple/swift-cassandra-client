@@ -26,7 +26,7 @@ func randomKey() -> Data {
     return Data(bytes)
 }
 
-@available(macOS 11.0, *)
+@available(macOS 15.0, iOS 18.0, *)
 final class EncryptorTests: XCTestCase {
 
     // Helper: create a simple context for testing
@@ -329,13 +329,15 @@ final class EncryptorTests: XCTestCase {
         var errors = [Error]()
         let errorLock = NSLock()
 
-        for i in 0 ..< iterations {
+        for i in 0..<iterations {
             group.enter()
             DispatchQueue.global().async {
                 defer { group.leave() }
                 do {
                     let context = CassandraClient.EncryptionContext(
-                        keyspace: "test", table: "users", column: "col_\(i % 5)",
+                        keyspace: "test",
+                        table: "users",
+                        column: "col_\(i % 5)",
                         primaryKey: Data("row-\(i)".utf8)
                     )
                     let encrypted = try encryptor.encrypt(plaintext, context: context)

@@ -14,6 +14,7 @@
 
 import Crypto
 import Foundation
+import Synchronization
 
 // MARK: - EncryptionContext
 
@@ -100,28 +101,28 @@ extension CassandraClient.Encrypted: Sendable where T: Sendable {}
 // MARK: - KeysHolder
 
 extension CassandraClient {
-    /// Internal cache for derived column keys and storage for master key material.
+    /// Internal cache for derived column keys and storage for root key material.
     /// Not thread-safe on its own — the `Encryptor` that owns it must hold a lock.
-    @available(macOS 11.0, *)
+    @available(macOS 15.0, iOS 18.0, *)
     struct KeysHolder {
-        private var masterKeys: [String: Data]
+        private var rootKeys: [String: Data]
         private var kekCache: [String: SymmetricKey] = [:]
         private let salt = Data("swift-cassandra-client-v1".utf8)
 
-        init(masterKeys: [String: Data]) {
-            self.masterKeys = masterKeys
+        init(rootKeys: [String: Data]) {
+            self.rootKeys = rootKeys
         }
 
         func hasKey(_ name: String) -> Bool {
-            self.masterKeys[name] != nil
+            self.rootKeys[name] != nil
         }
 
         var allKeys: [String: Data] {
-            self.masterKeys
+            self.rootKeys
         }
 
         mutating func addKey(name: String, secret: Data) {
-            self.masterKeys[name] = secret
+            self.rootKeys[name] = secret
         }
 
         /// Returns cached column key (KEK) or derives and caches a new one.
@@ -131,12 +132,12 @@ extension CassandraClient {
             if let cached = self.kekCache[cacheKey] {
                 return cached
             }
-            guard let masterKeyData = self.masterKeys[keyName] else {
+            guard let rootKeyData = self.rootKeys[keyName] else {
                 throw CassandraClient.Error.keyNotFound("Key '\(keyName)' not found in keyMap")
             }
-            let masterKey = SymmetricKey(data: masterKeyData)
+            let rootKey = SymmetricKey(data: rootKeyData)
             let kek = HKDF<SHA256>.deriveKey(
-                inputKeyMaterial: masterKey,
+                inputKeyMaterial: rootKey,
                 salt: self.salt,
                 info: Data(context.utf8),
                 outputByteCount: 32
@@ -163,7 +164,7 @@ extension CassandraClient {
 
 extension CassandraClient {
     /// Handles column-level encryption and decryption using AES-GCM with HKDF-derived keys.
-    @available(macOS 11.0, *)
+    @available(macOS 15.0, iOS 18.0, *)
     public final class Encryptor {
         static let envelopeVersion: UInt8 = 0x02
         /// AES-GCM with a per-row DEK derived deterministically via HKDF from the column KEK and primary key.
@@ -173,9 +174,12 @@ extension CassandraClient {
         static let keySize = 32
         static let maxKeyNameLength = 255
 
-        private let lock = NSLock()
-        private var currentKeyName: String
-        private var keysHolder: KeysHolder
+        private struct State {
+            var currentKeyName: String
+            var keysHolder: KeysHolder
+        }
+
+        private let state: Mutex<State>
 
         /// Create an encryptor with the given key map and current key name.
         ///
@@ -198,26 +202,26 @@ extension CassandraClient {
                     "currentKeyName '\(currentKeyName)' not found in keyMap"
                 )
             }
-            self.currentKeyName = currentKeyName
-            self.keysHolder = KeysHolder(masterKeys: keyMap)
+            self.state = Mutex(State(
+                currentKeyName: currentKeyName,
+                keysHolder: KeysHolder(rootKeys: keyMap)
+            ))
         }
 
         public func addKey(name: String, secret: Data) throws {
             try Self.validateKey(name: name, secret: secret)
-            self.lock.lock()
-            defer { self.lock.unlock() }
-            self.keysHolder.addKey(name: name, secret: secret)
+            self.state.withLock { $0.keysHolder.addKey(name: name, secret: secret) }
         }
 
         /// Set the key name used for new encryptions. The key must already exist in the key map.
         public func setCurrentKeyName(_ name: String) throws {
             try Self.validateKeyName(name)
-            self.lock.lock()
-            defer { self.lock.unlock() }
-            guard self.keysHolder.hasKey(name) else {
-                throw CassandraClient.Error.keyNotFound("Key '\(name)' not found in keyMap")
+            try self.state.withLock {
+                guard $0.keysHolder.hasKey(name) else {
+                    throw CassandraClient.Error.keyNotFound("Key '\(name)' not found in keyMap")
+                }
+                $0.currentKeyName = name
             }
-            self.currentKeyName = name
         }
 
         /// Replace the entire key map. Existing keys cannot be removed or changed.
@@ -226,26 +230,26 @@ extension CassandraClient {
             for (name, key) in newKeyMap {
                 try Self.validateKey(name: name, secret: key)
             }
-            self.lock.lock()
-            defer { self.lock.unlock() }
-            for (existingName, existingKey) in self.keysHolder.allKeys {
-                guard let newKey = newKeyMap[existingName] else {
+            try self.state.withLock {
+                for (existingName, existingKey) in $0.keysHolder.allKeys {
+                    guard let newKey = newKeyMap[existingName] else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Cannot remove existing key '\(existingName)'"
+                        )
+                    }
+                    guard newKey == existingKey else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Cannot change existing key '\(existingName)'"
+                        )
+                    }
+                }
+                guard newKeyMap[$0.currentKeyName] != nil else {
                     throw CassandraClient.Error.encryptionConfigError(
-                        "Cannot remove existing key '\(existingName)'"
+                        "currentKeyName '\($0.currentKeyName)' not found in new keyMap"
                     )
                 }
-                guard newKey == existingKey else {
-                    throw CassandraClient.Error.encryptionConfigError(
-                        "Cannot change existing key '\(existingName)'"
-                    )
-                }
+                $0.keysHolder = KeysHolder(rootKeys: newKeyMap)
             }
-            guard newKeyMap[self.currentKeyName] != nil else {
-                throw CassandraClient.Error.encryptionConfigError(
-                    "currentKeyName '\(self.currentKeyName)' not found in new keyMap"
-                )
-            }
-            self.keysHolder = KeysHolder(masterKeys: newKeyMap)
         }
 
         /// Encrypt plaintext data for the given context.
@@ -255,17 +259,15 @@ extension CassandraClient {
         /// The envelope is self-describing — it contains the key name and algorithm used,
         /// so `decrypt` can process data encrypted with any key in the key map.
         internal func encrypt(_ data: Data, context: EncryptionContext) throws -> Data {
-            let (keyName, dek) = try {
-                self.lock.lock()
-                defer { self.lock.unlock() }
-                let name = self.currentKeyName
-                let key = try self.keysHolder.deriveDEK(
+            let (keyName, dek) = try self.state.withLock {
+                let name = $0.currentKeyName
+                let key = try $0.keysHolder.deriveDEK(
                     keyName: name,
                     context: context.contextString,
                     primaryKey: context.primaryKey
                 )
                 return (name, key)
-            }()
+            }
 
             let keyNameBytes = Data(keyName.utf8)
             let nonce = AES.GCM.Nonce()
@@ -339,15 +341,13 @@ extension CassandraClient {
 
             let ciphertextAndTag = envelope[offset...]
 
-            let dek = try {
-                self.lock.lock()
-                defer { self.lock.unlock() }
-                return try self.keysHolder.deriveDEK(
+            let dek = try self.state.withLock {
+                return try $0.keysHolder.deriveDEK(
                     keyName: keyName,
                     context: context.contextString,
                     primaryKey: context.primaryKey
                 )
-            }()
+            }
 
             let nonce: AES.GCM.Nonce
             do {
@@ -401,8 +401,8 @@ extension CassandraClient {
     }
 }
 
-@available(macOS 11.0, *)
-extension CassandraClient.Encryptor: @unchecked Sendable {}
+@available(macOS 15.0, iOS 18.0, *)
+extension CassandraClient.Encryptor: Sendable {}
 
 // MARK: - CodingUserInfoKey extensions for encryption
 

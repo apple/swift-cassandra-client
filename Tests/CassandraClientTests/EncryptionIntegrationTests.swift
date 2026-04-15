@@ -19,7 +19,7 @@ import XCTest
 
 @testable import CassandraClient
 
-@available(macOS 11.0, *)
+@available(macOS 15.0, iOS 18.0, *)
 final class EncryptionIntegrationTests: XCTestCase {
     var cassandraClient: CassandraClient!
     var configuration: CassandraClient.Configuration!

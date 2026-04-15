@@ -24,7 +24,7 @@ extension CassandraClient {
         internal let rawPointer: OpaquePointer
         private let _encryptor: AnyObject?
 
-        @available(macOS 11.0, *)
+        @available(macOS 15.0, iOS 18.0, *)
         private var encryptor: Encryptor? { self._encryptor as? Encryptor }
 
         /// Create a new `Statement`.
@@ -160,8 +160,8 @@ extension CassandraClient {
             context: EncryptionContext,
             at index: Int
         ) throws -> CassError {
-            guard #available(macOS 11.0, *) else {
-                throw CassandraClient.Error.encryptionError("Encryption requires macOS 11.0+")
+            guard #available(macOS 15.0, iOS 18.0, *) else {
+                throw CassandraClient.Error.encryptionError("Encryption requires macOS 15.0+")
             }
             guard let encryptor = self.encryptor else {
                 throw CassandraClient.Error.encryptionConfigError(
