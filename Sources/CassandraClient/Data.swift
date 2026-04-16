@@ -591,7 +591,7 @@ extension CassandraClient.Column {
         return error == CASS_OK ? Array(UnsafeBufferPointer(start: value, count: size)) : nil
     }
 
-    @available(macOS 15.0, iOS 18.0, *)
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     func decryptedData(
         encryptor: CassandraClient.Encryptor,
         context: CassandraClient.EncryptionContext
@@ -798,7 +798,7 @@ extension CassandraClient.Row {
 
 // MARK: - Encrypted
 
-@available(macOS 15.0, iOS 18.0, *)
+@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Column {
     /// Decrypt column and return as `String`.
     public func decryptedString(
@@ -867,13 +867,15 @@ extension CassandraClient.Column {
         guard data.count == 16 else {
             throw CassandraClient.Error.decryptionError("Expected 16 bytes for UUID, got \(data.count)")
         }
-        let u: uuid_t = (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                          data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15])
+        let u: uuid_t = (
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]
+        )
         return Foundation.UUID(uuid: u)
     }
 }
 
-@available(macOS 15.0, iOS 18.0, *)
+@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Row {
     /// Decrypt column by name and return as `String`.
     public func decryptedString(

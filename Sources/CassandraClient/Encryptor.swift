@@ -30,7 +30,7 @@ extension CassandraClient {
         /// Full primary key bytes (partition key + clustering columns).
         public let primaryKey: Data
 
-        public init(keyspace: String, table: String, column: String, primaryKey: Data) {
+        internal init(keyspace: String, table: String, column: String, primaryKey: Data) {
             self.keyspace = keyspace
             self.table = table
             self.column = column
@@ -39,35 +39,80 @@ extension CassandraClient {
 
         internal var contextString: String { "\(self.keyspace).\(self.table).\(self.column)" }
 
-        public func withColumn(_ column: String) -> EncryptionContext {
-            EncryptionContext(keyspace: self.keyspace, table: self.table, column: column, primaryKey: self.primaryKey)
+        /// Encode typed key components into a single `Data` value.
+        ///
+        /// Each component is serialized as `[4-byte big-endian length][value bytes]`.
+        /// This length-prefixing ensures composite keys are unambiguous — for example,
+        /// `encodeKeyComponents(.string("ab"), .string("c"))` produces different bytes
+        /// from `encodeKeyComponents(.string("a"), .string("bc"))`.
+        public static func encodeKeyComponents(_ components: CassandraClient.KeyComponent...) -> Data {
+            var result = Data()
+            for component in components {
+                let bytes: Data
+                switch component {
+                case .string(let s):
+                    bytes = Data(s.utf8)
+                case .uuid(let u):
+                    let t = u.uuid
+                    bytes = Data([
+                        t.0, t.1, t.2, t.3, t.4, t.5, t.6, t.7,
+                        t.8, t.9, t.10, t.11, t.12, t.13, t.14, t.15,
+                    ])
+                case .int32(let v):
+                    var be = v.bigEndian
+                    bytes = Data(bytes: &be, count: 4)
+                case .int64(let v):
+                    var be = v.bigEndian
+                    bytes = Data(bytes: &be, count: 8)
+                case .data(let d):
+                    bytes = d
+                }
+                var length = UInt32(bytes.count).bigEndian
+                result.append(Data(bytes: &length, count: 4))
+                result.append(bytes)
+            }
+            return result
         }
 
-        public func withPrimaryKey(_ primaryKey: Data) -> EncryptionContext {
-            EncryptionContext(keyspace: self.keyspace, table: self.table, column: self.column, primaryKey: primaryKey)
+        /// Base context without a column name. Use ``forColumn(_:)`` to produce a full ``EncryptionContext``.
+        public struct Base {
+            public let keyspace: String
+            public let table: String
+            public let primaryKey: Data
+
+            public init(keyspace: String, table: String, primaryKey: Data) {
+                self.keyspace = keyspace
+                self.table = table
+                self.primaryKey = primaryKey
+            }
+
+            public func forColumn(_ column: String) -> EncryptionContext {
+                EncryptionContext(
+                    keyspace: self.keyspace,
+                    table: self.table,
+                    column: column,
+                    primaryKey: self.primaryKey
+                )
+            }
         }
     }
 
-    /// Partial encryption context supplied per-row during Codable decoding.
-    /// The `column` field is derived automatically from the struct's property name.
-    public struct RowEncryptionContext {
-        public let keyspace: String
-        public let table: String
-        public let primaryKey: Data
-
-        public init(keyspace: String, table: String, primaryKey: Data) {
-            self.keyspace = keyspace
-            self.table = table
-            self.primaryKey = primaryKey
-        }
-
-        internal func forColumn(_ column: String) -> EncryptionContext {
-            EncryptionContext(keyspace: self.keyspace, table: self.table, column: column, primaryKey: self.primaryKey)
-        }
-    }
 }
 
 extension CassandraClient.EncryptionContext: Sendable {}
+
+// MARK: - KeyComponent
+
+extension CassandraClient {
+    /// A typed key component for use with ``EncryptionContext/encodeKeyComponents(_:)``.
+    public enum KeyComponent {
+        case string(String)
+        case uuid(Foundation.UUID)
+        case int32(Int32)
+        case int64(Int64)
+        case data(Data)
+    }
+}
 
 // MARK: - Encrypted wrapper
 
@@ -103,11 +148,10 @@ extension CassandraClient.Encrypted: Sendable where T: Sendable {}
 extension CassandraClient {
     /// Internal cache for derived column keys and storage for root key material.
     /// Not thread-safe on its own — the `Encryptor` that owns it must hold a lock.
-    @available(macOS 15.0, iOS 18.0, *)
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     struct KeysHolder {
         private var rootKeys: [String: Data]
         private var kekCache: [String: SymmetricKey] = [:]
-        private let salt = Data("swift-cassandra-client-v1".utf8)
 
         init(rootKeys: [String: Data]) {
             self.rootKeys = rootKeys
@@ -138,7 +182,7 @@ extension CassandraClient {
             let rootKey = SymmetricKey(data: rootKeyData)
             let kek = HKDF<SHA256>.deriveKey(
                 inputKeyMaterial: rootKey,
-                salt: self.salt,
+                salt: Data(),
                 info: Data(context.utf8),
                 outputByteCount: 32
             )
@@ -164,7 +208,7 @@ extension CassandraClient {
 
 extension CassandraClient {
     /// Handles column-level encryption and decryption using AES-GCM with HKDF-derived keys.
-    @available(macOS 15.0, iOS 18.0, *)
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     public final class Encryptor {
         static let envelopeVersion: UInt8 = 0x02
         /// AES-GCM with a per-row DEK derived deterministically via HKDF from the column KEK and primary key.
@@ -202,10 +246,12 @@ extension CassandraClient {
                     "currentKeyName '\(currentKeyName)' not found in keyMap"
                 )
             }
-            self.state = Mutex(State(
-                currentKeyName: currentKeyName,
-                keysHolder: KeysHolder(rootKeys: keyMap)
-            ))
+            self.state = Mutex(
+                State(
+                    currentKeyName: currentKeyName,
+                    keysHolder: KeysHolder(rootKeys: keyMap)
+                )
+            )
         }
 
         public func addKey(name: String, secret: Data) throws {
@@ -326,7 +372,7 @@ extension CassandraClient {
                 throw CassandraClient.Error.decryptionError("Invalid key name length: \(keyNameLen)")
             }
 
-            let keyNameBytes = envelope[offset ..< offset + keyNameLen]
+            let keyNameBytes = envelope[offset..<offset + keyNameLen]
             offset += keyNameLen
             guard let keyName = String(data: Data(keyNameBytes), encoding: .utf8) else {
                 throw CassandraClient.Error.decryptionError("Invalid key name encoding")
@@ -336,13 +382,13 @@ extension CassandraClient {
                 throw CassandraClient.Error.decryptionError("Envelope too small for nonce + ciphertext + tag")
             }
 
-            let nonceData = envelope[offset ..< offset + Self.nonceSize]
+            let nonceData = envelope[offset..<offset + Self.nonceSize]
             offset += Self.nonceSize
 
             let ciphertextAndTag = envelope[offset...]
 
             let dek = try self.state.withLock {
-                return try $0.keysHolder.deriveDEK(
+                try $0.keysHolder.deriveDEK(
                     keyName: keyName,
                     context: context.contextString,
                     primaryKey: context.primaryKey
@@ -401,7 +447,7 @@ extension CassandraClient {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, *)
+@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Encryptor: Sendable {}
 
 // MARK: - CodingUserInfoKey extensions for encryption

@@ -24,7 +24,7 @@ extension CassandraClient {
         internal let rawPointer: OpaquePointer
         private let _encryptor: AnyObject?
 
-        @available(macOS 15.0, iOS 18.0, *)
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         private var encryptor: Encryptor? { self._encryptor as? Encryptor }
 
         /// Create a new `Statement`.
@@ -92,33 +92,47 @@ extension CassandraClient {
                     )
                 case .encryptedString(let wrapped, let context):
                     result = try self.bindEncrypted(
-                        Data(wrapped.value.utf8), context: context, at: index
+                        Data(wrapped.value.utf8),
+                        context: context,
+                        at: index
                     )
                 case .encryptedBytes(let wrapped, let context):
                     result = try self.bindEncrypted(
-                        Data(wrapped.value), context: context, at: index
+                        Data(wrapped.value),
+                        context: context,
+                        at: index
                     )
                 case .encryptedInt32(let wrapped, let context):
                     var bigEndian = wrapped.value.bigEndian
                     result = try self.bindEncrypted(
-                        Data(bytes: &bigEndian, count: 4), context: context, at: index
+                        Data(bytes: &bigEndian, count: 4),
+                        context: context,
+                        at: index
                     )
                 case .encryptedInt64(let wrapped, let context):
                     var bigEndian = wrapped.value.bigEndian
                     result = try self.bindEncrypted(
-                        Data(bytes: &bigEndian, count: 8), context: context, at: index
+                        Data(bytes: &bigEndian, count: 8),
+                        context: context,
+                        at: index
                     )
                 case .encryptedDouble(let wrapped, let context):
                     var bits = wrapped.value.bitPattern.bigEndian
                     result = try self.bindEncrypted(
-                        Data(bytes: &bits, count: 8), context: context, at: index
+                        Data(bytes: &bits, count: 8),
+                        context: context,
+                        at: index
                     )
                 case .encryptedUUID(let wrapped, let context):
                     let u = wrapped.value.uuid
-                    let plaintext = Data([u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
-                                          u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15])
+                    let plaintext = Data([
+                        u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
+                        u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15,
+                    ])
                     result = try self.bindEncrypted(
-                        plaintext, context: context, at: index
+                        plaintext,
+                        context: context,
+                        at: index
                     )
                 case .int8Array(let array):
                     result = try self.bindArray(array, at: index)
@@ -160,7 +174,7 @@ extension CassandraClient {
             context: EncryptionContext,
             at index: Int
         ) throws -> CassError {
-            guard #available(macOS 15.0, iOS 18.0, *) else {
+            guard #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) else {
                 throw CassandraClient.Error.encryptionError("Encryption requires macOS 15.0+")
             }
             guard let encryptor = self.encryptor else {
@@ -355,7 +369,10 @@ extension CassandraClient {
             public var requestTimeout: UInt64?
 
             /// Closure that extracts encryption context from each row during Codable decoding.
-            public var encryptionContextBuilder: ((CassandraClient.Row) throws -> CassandraClient.RowEncryptionContext)?
+            public var encryptionContextBuilder:
+                (
+                    (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
+                )?
 
             public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: UInt64? = nil) {
                 self.consistency = consistency

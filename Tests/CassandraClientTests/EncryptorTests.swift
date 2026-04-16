@@ -20,13 +20,13 @@ import XCTest
 /// Generate a random 32-byte key for testing.
 func randomKey() -> Data {
     var bytes = [UInt8](repeating: 0, count: 32)
-    for i in 0 ..< bytes.count {
-        bytes[i] = UInt8.random(in: 0 ... 255)
+    for i in 0..<bytes.count {
+        bytes[i] = UInt8.random(in: 0...255)
     }
     return Data(bytes)
 }
 
-@available(macOS 15.0, iOS 18.0, *)
+@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 final class EncryptorTests: XCTestCase {
 
     // Helper: create a simple context for testing
@@ -40,7 +40,8 @@ final class EncryptorTests: XCTestCase {
     }
 
     // Helper: create an encryptor with one key
-    private func makeEncryptor(keyName: String = "key-1", key: Data? = nil) throws -> (CassandraClient.Encryptor, Data) {
+    private func makeEncryptor(keyName: String = "key-1", key: Data? = nil) throws -> (CassandraClient.Encryptor, Data)
+    {
         let keyData = key ?? randomKey()
         let encryptor = try CassandraClient.Encryptor(
             keyMap: [keyName: keyData],
@@ -80,8 +81,13 @@ final class EncryptorTests: XCTestCase {
         let (encryptor, _) = try makeEncryptor()
         let plaintext = Data("secret-value".utf8)
 
-        let ssnContext = testContext(column: "ssn")
-        let ccContext = ssnContext.withColumn("credit_card")
+        let rowContext = CassandraClient.EncryptionContext.Base(
+            keyspace: "test_keyspace",
+            table: "users",
+            primaryKey: Data("row-1".utf8)
+        )
+        let ssnContext = rowContext.forColumn("ssn")
+        let ccContext = rowContext.forColumn("credit_card")
 
         let encryptedSSN = try encryptor.encrypt(plaintext, context: ssnContext)
         let encryptedCC = try encryptor.encrypt(plaintext, context: ccContext)
@@ -95,7 +101,12 @@ final class EncryptorTests: XCTestCase {
         let plaintext = Data("secret-value".utf8)
 
         let context1 = testContext(primaryKey: Data("row-1".utf8))
-        let context2 = context1.withPrimaryKey(Data("row-2".utf8))
+        let context2 = CassandraClient.EncryptionContext(
+            keyspace: "test_keyspace",
+            table: "users",
+            column: "ssn",
+            primaryKey: Data("row-2".utf8)
+        )
 
         let encrypted1 = try encryptor.encrypt(plaintext, context: context1)
         let encrypted2 = try encryptor.encrypt(plaintext, context: context2)
@@ -162,15 +173,19 @@ final class EncryptorTests: XCTestCase {
         let context = testContext(column: "uid")
         let value = Foundation.UUID()
         let u = value.uuid
-        let data = Data([u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
-                          u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15])
+        let data = Data([
+            u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
+            u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15,
+        ])
         let encrypted = try encryptor.encrypt(data, context: context)
         let decrypted = try encryptor.decrypt(encrypted, context: context)
         XCTAssertEqual(decrypted.count, 16)
-        let t: uuid_t = (decrypted[0], decrypted[1], decrypted[2], decrypted[3],
-                          decrypted[4], decrypted[5], decrypted[6], decrypted[7],
-                          decrypted[8], decrypted[9], decrypted[10], decrypted[11],
-                          decrypted[12], decrypted[13], decrypted[14], decrypted[15])
+        let t: uuid_t = (
+            decrypted[0], decrypted[1], decrypted[2], decrypted[3],
+            decrypted[4], decrypted[5], decrypted[6], decrypted[7],
+            decrypted[8], decrypted[9], decrypted[10], decrypted[11],
+            decrypted[12], decrypted[13], decrypted[14], decrypted[15]
+        )
         XCTAssertEqual(Foundation.UUID(uuid: t), value)
     }
 
@@ -218,26 +233,32 @@ final class EncryptorTests: XCTestCase {
 
     /// Empty key name should be rejected.
     func testEmptyKeyName() {
-        XCTAssertThrowsError(try CassandraClient.Encryptor(
-            keyMap: ["": randomKey()],
-            currentKeyName: ""
-        ))
+        XCTAssertThrowsError(
+            try CassandraClient.Encryptor(
+                keyMap: ["": randomKey()],
+                currentKeyName: ""
+            )
+        )
     }
 
     /// Key name with invalid characters should be rejected.
     func testInvalidKeyNameCharacters() {
-        XCTAssertThrowsError(try CassandraClient.Encryptor(
-            keyMap: ["key with spaces": randomKey()],
-            currentKeyName: "key with spaces"
-        ))
+        XCTAssertThrowsError(
+            try CassandraClient.Encryptor(
+                keyMap: ["key with spaces": randomKey()],
+                currentKeyName: "key with spaces"
+            )
+        )
     }
 
     /// Key that is not 32 bytes should be rejected.
     func testWrongKeySize() {
-        XCTAssertThrowsError(try CassandraClient.Encryptor(
-            keyMap: ["key-1": Data([0x01, 0x02, 0x03])],
-            currentKeyName: "key-1"
-        ))
+        XCTAssertThrowsError(
+            try CassandraClient.Encryptor(
+                keyMap: ["key-1": Data([0x01, 0x02, 0x03])],
+                currentKeyName: "key-1"
+            )
+        )
     }
 
     /// Cannot remove an existing key from the map.
@@ -249,7 +270,7 @@ final class EncryptorTests: XCTestCase {
             currentKeyName: "key-1"
         )
         // New map missing "key-2" — should throw
-        XCTAssertThrowsError(try encryptor.loadKeys(from:["key-1": key1]))
+        XCTAssertThrowsError(try encryptor.loadKeys(from: ["key-1": key1]))
     }
 
     /// Cannot change an existing key's bytes.
@@ -260,7 +281,7 @@ final class EncryptorTests: XCTestCase {
             currentKeyName: "key-1"
         )
         // Same name, different bytes — should throw
-        XCTAssertThrowsError(try encryptor.loadKeys(from:["key-1": randomKey()]))
+        XCTAssertThrowsError(try encryptor.loadKeys(from: ["key-1": randomKey()]))
     }
 
     /// Can add a new key via loadKeys while keeping existing ones.
@@ -271,7 +292,7 @@ final class EncryptorTests: XCTestCase {
             currentKeyName: "key-1"
         )
         let key2 = randomKey()
-        XCTAssertNoThrow(try encryptor.loadKeys(from:["key-1": key1, "key-2": key2]))
+        XCTAssertNoThrow(try encryptor.loadKeys(from: ["key-1": key1, "key-2": key2]))
     }
 
     // MARK: - Envelope validation
@@ -315,6 +336,36 @@ final class EncryptorTests: XCTestCase {
         encrypted[tamperIndex] ^= 0xFF
 
         XCTAssertThrowsError(try encryptor.decrypt(encrypted, context: context))
+    }
+
+    // MARK: - encodeKeyComponents
+
+    /// Single string component produces 4-byte length prefix followed by UTF-8 bytes.
+    func testEncodeKeyComponentsSingleString() {
+        let encoded = CassandraClient.EncryptionContext.encodeKeyComponents(.string("hello"))
+        let utf8 = Data("hello".utf8)
+        var expectedLength = UInt32(utf8.count).bigEndian
+        var expected = Data(bytes: &expectedLength, count: 4)
+        expected.append(utf8)
+        XCTAssertEqual(encoded, expected)
+    }
+
+    /// Composite key (string + UUID) is deterministic and produces correct bytes.
+    func testEncodeKeyComponentsComposite() {
+        let uuid = Foundation.UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+        let encoded1 = CassandraClient.EncryptionContext.encodeKeyComponents(.string("user"), .uuid(uuid))
+        let encoded2 = CassandraClient.EncryptionContext.encodeKeyComponents(.string("user"), .uuid(uuid))
+        XCTAssertEqual(encoded1, encoded2, "Same inputs should produce identical output")
+        // String "user" = 4 bytes → length(4) + value(4) = 8
+        // UUID = 16 bytes → length(4) + value(16) = 20
+        XCTAssertEqual(encoded1.count, 8 + 20)
+    }
+
+    /// Length-prefixing prevents ambiguity: ("ab", "c") != ("a", "bc").
+    func testEncodeKeyComponentsAmbiguity() {
+        let abC = CassandraClient.EncryptionContext.encodeKeyComponents(.string("ab"), .string("c"))
+        let aBc = CassandraClient.EncryptionContext.encodeKeyComponents(.string("a"), .string("bc"))
+        XCTAssertNotEqual(abC, aBc, "Length-prefixing should prevent ambiguity from naive concatenation")
     }
 
     // MARK: - Concurrent access

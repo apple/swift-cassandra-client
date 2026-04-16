@@ -27,8 +27,8 @@ extension CassandraClient {
         }
 
         /// Create a decoder with encryption support for decoding `Encrypted<T>` fields.
-        @available(macOS 15.0, iOS 18.0, *)
-        init(row: Row, encryptor: Encryptor, rowContext: RowEncryptionContext) {
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        init(row: Row, encryptor: Encryptor, rowContext: EncryptionContext.Base) {
             self.row = row
             self.userInfo[.cassandraEncryptor] = encryptor
             self.userInfo[.cassandraRowContext] = rowContext
@@ -210,8 +210,10 @@ extension CassandraClient {
                 guard data.count == 16 else {
                     throw DecodingError.typeMismatch("Expected 16 bytes for UUID, got \(data.count)")
                 }
-                let u: uuid_t = (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                                  data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15])
+                let u: uuid_t = (
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]
+                )
                 return Encrypted<Foundation.UUID>(Foundation.UUID(uuid: u)) as! T
             } else if type == Encrypted<[UInt8]>.self {
                 let data = try decryptColumnData(key: key)
@@ -325,7 +327,7 @@ extension CassandraClient {
 
         /// Decrypt column data using encryptor and context from userInfo.
         private func decryptColumnData(key: Key) throws -> Data {
-            guard #available(macOS 15.0, iOS 18.0, *) else {
+            guard #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) else {
                 throw DecodingError.notSupported("Encryption requires macOS 15.0+")
             }
             guard let encryptor = userInfo[.cassandraEncryptor] as? CassandraClient.Encryptor else {
@@ -333,8 +335,8 @@ extension CassandraClient {
                     "Encryptor not provided in decoder userInfo. Use RowDecoder(row:encryptor:rowContext:)"
                 )
             }
-            guard let rowContext = userInfo[.cassandraRowContext] as? CassandraClient.RowEncryptionContext else {
-                throw DecodingError.notSupported("RowEncryptionContext missing from decoder userInfo")
+            guard let rowContext = userInfo[.cassandraRowContext] as? CassandraClient.EncryptionContext.Base else {
+                throw DecodingError.notSupported("EncryptionContext.Base missing from decoder userInfo")
             }
             let context = rowContext.forColumn(key.stringValue)
             guard let column: Column = row.column(key.stringValue) else {

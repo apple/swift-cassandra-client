@@ -19,7 +19,7 @@ import XCTest
 
 @testable import CassandraClient
 
-@available(macOS 15.0, iOS 18.0, *)
+@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 final class EncryptionIntegrationTests: XCTestCase {
     var cassandraClient: CassandraClient!
     var configuration: CassandraClient.Configuration!
@@ -109,7 +109,8 @@ final class EncryptionIntegrationTests: XCTestCase {
         ).wait()
 
         // Read back using manual decryption
-        let rows = try session.query("select * from \(tableName) where user_id = ?", parameters: [.string(userId)]).wait()
+        let rows = try session.query("select * from \(tableName) where user_id = ?", parameters: [.string(userId)])
+            .wait()
         let rowArray = Array(rows)
         XCTAssertEqual(rowArray.count, 1)
 
@@ -148,8 +149,10 @@ final class EncryptionIntegrationTests: XCTestCase {
         let data: [UInt8] = [0xDE, 0xAD, 0xBE, 0xEF]
         let keyspace = self.configuration.keyspace!
 
-        let baseContext = CassandraClient.EncryptionContext(
-            keyspace: keyspace, table: tableName, column: "enc_name", primaryKey: Data(userId.utf8)
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: Data(userId.utf8)
         )
 
         let options = CassandraClient.Statement.Options()
@@ -158,12 +161,12 @@ final class EncryptionIntegrationTests: XCTestCase {
             "insert into \(tableName) (user_id, enc_name, enc_age, enc_count, enc_score, enc_id, enc_data) values (?, ?, ?, ?, ?, ?, ?)",
             parameters: [
                 .string(userId),
-                .encryptedString(CassandraClient.Encrypted(name), context: baseContext),
-                .encryptedInt32(CassandraClient.Encrypted(age), context: baseContext.withColumn("enc_age")),
-                .encryptedInt64(CassandraClient.Encrypted(count), context: baseContext.withColumn("enc_count")),
-                .encryptedDouble(CassandraClient.Encrypted(score), context: baseContext.withColumn("enc_score")),
-                .encryptedUUID(CassandraClient.Encrypted(id), context: baseContext.withColumn("enc_id")),
-                .encryptedBytes(CassandraClient.Encrypted(data), context: baseContext.withColumn("enc_data")),
+                .encryptedString(CassandraClient.Encrypted(name), context: baseContext.forColumn("enc_name")),
+                .encryptedInt32(CassandraClient.Encrypted(age), context: baseContext.forColumn("enc_age")),
+                .encryptedInt64(CassandraClient.Encrypted(count), context: baseContext.forColumn("enc_count")),
+                .encryptedDouble(CassandraClient.Encrypted(score), context: baseContext.forColumn("enc_score")),
+                .encryptedUUID(CassandraClient.Encrypted(id), context: baseContext.forColumn("enc_id")),
+                .encryptedBytes(CassandraClient.Encrypted(data), context: baseContext.forColumn("enc_data")),
             ],
             options: options
         ).wait()
@@ -175,12 +178,48 @@ final class EncryptionIntegrationTests: XCTestCase {
         ).wait()
         let row = Array(rows)[0]
 
-        XCTAssertEqual(try row.column("enc_name")?.decryptedString(encryptor: self.encryptor, context: baseContext), name)
-        XCTAssertEqual(try row.column("enc_age")?.decryptedInt32(encryptor: self.encryptor, context: baseContext.withColumn("enc_age")), age)
-        XCTAssertEqual(try row.column("enc_count")?.decryptedInt64(encryptor: self.encryptor, context: baseContext.withColumn("enc_count")), count)
-        XCTAssertEqual(try row.column("enc_score")?.decryptedDouble(encryptor: self.encryptor, context: baseContext.withColumn("enc_score")), score)
-        XCTAssertEqual(try row.column("enc_id")?.decryptedUUID(encryptor: self.encryptor, context: baseContext.withColumn("enc_id")), id)
-        XCTAssertEqual(try row.column("enc_data")?.decryptedBytes(encryptor: self.encryptor, context: baseContext.withColumn("enc_data")), data)
+        XCTAssertEqual(
+            try row.column("enc_name")?.decryptedString(
+                encryptor: self.encryptor,
+                context: baseContext.forColumn("enc_name")
+            ),
+            name
+        )
+        XCTAssertEqual(
+            try row.column("enc_age")?.decryptedInt32(
+                encryptor: self.encryptor,
+                context: baseContext.forColumn("enc_age")
+            ),
+            age
+        )
+        XCTAssertEqual(
+            try row.column("enc_count")?.decryptedInt64(
+                encryptor: self.encryptor,
+                context: baseContext.forColumn("enc_count")
+            ),
+            count
+        )
+        XCTAssertEqual(
+            try row.column("enc_score")?.decryptedDouble(
+                encryptor: self.encryptor,
+                context: baseContext.forColumn("enc_score")
+            ),
+            score
+        )
+        XCTAssertEqual(
+            try row.column("enc_id")?.decryptedUUID(
+                encryptor: self.encryptor,
+                context: baseContext.forColumn("enc_id")
+            ),
+            id
+        )
+        XCTAssertEqual(
+            try row.column("enc_data")?.decryptedBytes(
+                encryptor: self.encryptor,
+                context: baseContext.forColumn("enc_data")
+            ),
+            data
+        )
     }
 
     // MARK: - Key rotation + re-encryption
@@ -199,7 +238,10 @@ final class EncryptionIntegrationTests: XCTestCase {
         let userId = "user-rotate"
         let secretValue = "rotate-me"
         let context = CassandraClient.EncryptionContext(
-            keyspace: keyspace, table: tableName, column: "secret", primaryKey: Data(userId.utf8)
+            keyspace: keyspace,
+            table: tableName,
+            column: "secret",
+            primaryKey: Data(userId.utf8)
         )
 
         // Step 1: Write with key-1 (the encryptor from setUp uses "test-key")
@@ -225,7 +267,8 @@ final class EncryptionIntegrationTests: XCTestCase {
         ).wait()
         let row = Array(rows)[0]
         let decrypted = try row.column("secret")?.decryptedString(
-            encryptor: self.encryptor, context: context
+            encryptor: self.encryptor,
+            context: context
         )
         XCTAssertEqual(decrypted, secretValue)
 
@@ -246,7 +289,8 @@ final class EncryptionIntegrationTests: XCTestCase {
         ).wait()
         let row2 = Array(rows2)[0]
         let decrypted2 = try row2.column("secret")?.decryptedString(
-            encryptor: self.encryptor, context: context
+            encryptor: self.encryptor,
+            context: context
         )
         XCTAssertEqual(decrypted2, secretValue)
 
@@ -255,7 +299,7 @@ final class EncryptionIntegrationTests: XCTestCase {
         let envelope = Data(rawBytes!)
         // Envelope format: [version:1][algorithm:1][key-name-len:1][key-name:N]...
         let keyNameLen = Int(envelope[2])
-        let keyName = String(data: envelope[3 ..< 3 + keyNameLen], encoding: .utf8)
+        let keyName = String(data: envelope[3..<3 + keyNameLen], encoding: .utf8)
         XCTAssertEqual(keyName, "key-2")
     }
 
@@ -283,11 +327,15 @@ final class EncryptionIntegrationTests: XCTestCase {
         let row = Array(rows)[0]
 
         let context = CassandraClient.EncryptionContext(
-            keyspace: keyspace, table: tableName, column: "secret", primaryKey: Data("user-null".utf8)
+            keyspace: keyspace,
+            table: tableName,
+            column: "secret",
+            primaryKey: Data("user-null".utf8)
         )
 
         let decrypted = try row.column("secret")?.decryptedString(
-            encryptor: self.encryptor, context: context
+            encryptor: self.encryptor,
+            context: context
         )
         XCTAssertNil(decrypted)
     }
@@ -330,7 +378,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             guard let uid: String = row.column("user_id") else {
                 throw CassandraClient.Error.badParams("user_id not found in row")
             }
-            return CassandraClient.RowEncryptionContext(
+            return CassandraClient.EncryptionContext.Base(
                 keyspace: self.configuration.keyspace!,
                 table: tableName,
                 primaryKey: Data(uid.utf8)
@@ -372,12 +420,19 @@ final class EncryptionIntegrationTests: XCTestCase {
             guard let uid: String = row.column("user_id") else {
                 throw CassandraClient.Error.badParams("user_id not found in row")
             }
-            return CassandraClient.RowEncryptionContext(keyspace: keyspace, table: tableName, primaryKey: Data(uid.utf8))
+            return CassandraClient.EncryptionContext.Base(
+                keyspace: keyspace,
+                table: tableName,
+                primaryKey: Data(uid.utf8)
+            )
         }
 
         for (userId, secretValue) in users {
             let context = CassandraClient.EncryptionContext(
-                keyspace: keyspace, table: tableName, column: "secret", primaryKey: Data(userId.utf8)
+                keyspace: keyspace,
+                table: tableName,
+                column: "secret",
+                primaryKey: Data(userId.utf8)
             )
             try session.run(
                 "insert into \(tableName) (user_id, secret) values (?, ?)",
@@ -424,8 +479,10 @@ final class EncryptionIntegrationTests: XCTestCase {
         let age: Int32 = 30
         let primaryKeyData = Data(userId.utf8)
 
-        let baseContext = CassandraClient.EncryptionContext(
-            keyspace: keyspace, table: tableName, column: "secret_name", primaryKey: primaryKeyData
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: primaryKeyData
         )
 
         var options = CassandraClient.Statement.Options()
@@ -434,15 +491,19 @@ final class EncryptionIntegrationTests: XCTestCase {
             guard let uid: String = row.column("user_id") else {
                 throw CassandraClient.Error.badParams("user_id not found in row")
             }
-            return CassandraClient.RowEncryptionContext(keyspace: keyspace, table: tableName, primaryKey: Data(uid.utf8))
+            return CassandraClient.EncryptionContext.Base(
+                keyspace: keyspace,
+                table: tableName,
+                primaryKey: Data(uid.utf8)
+            )
         }
 
         try session.run(
             "insert into \(tableName) (user_id, secret_name, secret_age) values (?, ?, ?)",
             parameters: [
                 .string(userId),
-                .encryptedString(CassandraClient.Encrypted(name), context: baseContext),
-                .encryptedInt32(CassandraClient.Encrypted(age), context: baseContext.withColumn("secret_age")),
+                .encryptedString(CassandraClient.Encrypted(name), context: baseContext.forColumn("secret_name")),
+                .encryptedInt32(CassandraClient.Encrypted(age), context: baseContext.forColumn("secret_age")),
             ],
             options: options
         ).wait()
