@@ -189,21 +189,21 @@ extension CassandraClient {
                 guard data.count == 4 else {
                     throw DecodingError.typeMismatch("Expected 4 bytes for Int32, got \(data.count)")
                 }
-                let value = data.withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
+                let value = data.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
                 return Encrypted<Int32>(value) as! T
             } else if type == Encrypted<Int64>.self {
                 let data = try decryptColumnData(key: key)
                 guard data.count == 8 else {
                     throw DecodingError.typeMismatch("Expected 8 bytes for Int64, got \(data.count)")
                 }
-                let value = data.withUnsafeBytes { $0.load(as: Int64.self).bigEndian }
+                let value = data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
                 return Encrypted<Int64>(value) as! T
             } else if type == Encrypted<Double>.self {
                 let data = try decryptColumnData(key: key)
                 guard data.count == 8 else {
                     throw DecodingError.typeMismatch("Expected 8 bytes for Double, got \(data.count)")
                 }
-                let bits = data.withUnsafeBytes { $0.load(as: UInt64.self).bigEndian }
+                let bits = data.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).bigEndian }
                 return Encrypted<Double>(Double(bitPattern: bits)) as! T
             } else if type == Encrypted<Foundation.UUID>.self {
                 let data = try decryptColumnData(key: key)

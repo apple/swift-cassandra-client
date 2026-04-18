@@ -830,7 +830,7 @@ extension CassandraClient.Column {
         guard data.count == 4 else {
             throw CassandraClient.Error.decryptionError("Expected 4 bytes for Int32, got \(data.count)")
         }
-        return data.withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
+        return data.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
     }
 
     /// Decrypt column and return as `Int64`.
@@ -842,7 +842,7 @@ extension CassandraClient.Column {
         guard data.count == 8 else {
             throw CassandraClient.Error.decryptionError("Expected 8 bytes for Int64, got \(data.count)")
         }
-        return data.withUnsafeBytes { $0.load(as: Int64.self).bigEndian }
+        return data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
     }
 
     /// Decrypt column and return as `Double`.
@@ -854,7 +854,7 @@ extension CassandraClient.Column {
         guard data.count == 8 else {
             throw CassandraClient.Error.decryptionError("Expected 8 bytes for Double, got \(data.count)")
         }
-        let bits = data.withUnsafeBytes { $0.load(as: UInt64.self).bigEndian }
+        let bits = data.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).bigEndian }
         return Double(bitPattern: bits)
     }
 
