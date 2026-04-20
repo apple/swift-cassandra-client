@@ -148,8 +148,9 @@ extension CassandraClient {
             return cass_statement_bind_collection(self.rawPointer, index, collection)
         }
 
-        func setPagingSize(_ pagingSize: Int32) throws {
-            try checkResult { cass_statement_set_paging_size(self.rawPointer, pagingSize) }
+        /// Sets the paging size of the returned paginated results.
+        public func setPagingSize(_ pagingSize: Int) throws {
+            try checkResult { cass_statement_set_paging_size(self.rawPointer, Int32(clamping: pagingSize)) }
         }
 
         /// Sets the starting page of the returned paginated results.
