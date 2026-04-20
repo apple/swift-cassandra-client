@@ -350,7 +350,7 @@ final class EncryptorTests: XCTestCase {
         var expectedLength = UInt32(utf8.count).bigEndian
         var expected = Data(bytes: &expectedLength, count: 4)
         expected.append(utf8)
-        XCTAssertEqual(encoded, expected)
+        XCTAssertEqual(encoded.data, expected)
     }
 
     /// Composite key (string + UUID) is deterministic and produces correct bytes.
@@ -361,7 +361,7 @@ final class EncryptorTests: XCTestCase {
         XCTAssertEqual(encoded1, encoded2, "Same inputs should produce identical output")
         // String "user" = 4 bytes → length(4) + value(4) = 8
         // UUID = 16 bytes → length(4) + value(16) = 20
-        XCTAssertEqual(encoded1.count, 8 + 20)
+        XCTAssertEqual(encoded1.data.count, 8 + 20)
     }
 
     /// Length-prefixing prevents ambiguity: ("ab", "c") != ("a", "bc").

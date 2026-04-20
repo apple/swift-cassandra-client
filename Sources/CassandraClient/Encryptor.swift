@@ -108,7 +108,7 @@ extension CassandraClient {
     ///
     /// This type cannot be constructed directly — use `encodeKeyComponents` to
     /// ensure key bytes are always length-prefixed and unambiguous.
-    public struct PrimaryKey: Sendable {
+    public struct PrimaryKey: Sendable, Equatable {
         internal let data: Data
     }
 }
