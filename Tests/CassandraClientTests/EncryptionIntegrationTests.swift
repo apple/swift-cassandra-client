@@ -49,7 +49,8 @@ final class EncryptionIntegrationTests: XCTestCase {
         XCTAssertNoThrow(
             self.encryptor = try CassandraClient.Encryptor(
                 keyMap: [keyName: keyData],
-                currentKeyName: keyName
+                currentKeyName: keyName,
+                salt: Data("integration-test-salt".utf8)
             )
         )
 

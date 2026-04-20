@@ -412,4 +412,53 @@ final class EncryptorTests: XCTestCase {
         group.wait()
         XCTAssertEqual(errors.count, 0, "Concurrent errors: \(errors)")
     }
+
+    // MARK: - Salt
+
+    /// Encrypt then decrypt with a custom salt should round-trip correctly.
+    func testCustomSaltRoundtrip() throws {
+        let keyData = randomKey()
+        let salt = Data("my-application-salt".utf8)
+        let encryptor = try CassandraClient.Encryptor(
+            keyMap: ["key-1": keyData],
+            currentKeyName: "key-1",
+            salt: salt
+        )
+        let context = testContext()
+        let plaintext = Data("secret-value".utf8)
+
+        let encrypted = try encryptor.encrypt(plaintext, context: context)
+        let decrypted = try encryptor.decrypt(encrypted, context: context)
+
+        XCTAssertEqual(decrypted, plaintext)
+    }
+
+    /// Different salts with the same key should produce different ciphertext envelopes
+    /// (different KEK → different DEK → different ciphertext).
+    func testDifferentSaltProducesDifferentKeys() throws {
+        let keyData = randomKey()
+        let encryptorA = try CassandraClient.Encryptor(
+            keyMap: ["key-1": keyData],
+            currentKeyName: "key-1",
+            salt: Data("salt-a".utf8)
+        )
+        let encryptorB = try CassandraClient.Encryptor(
+            keyMap: ["key-1": keyData],
+            currentKeyName: "key-1",
+            salt: Data("salt-b".utf8)
+        )
+        let context = testContext()
+        let plaintext = Data("hello".utf8)
+
+        let encryptedA = try encryptorA.encrypt(plaintext, context: context)
+        let encryptedB = try encryptorB.encrypt(plaintext, context: context)
+
+        // Both should decrypt with their own encryptor
+        XCTAssertEqual(try encryptorA.decrypt(encryptedA, context: context), plaintext)
+        XCTAssertEqual(try encryptorB.decrypt(encryptedB, context: context), plaintext)
+
+        // Cross-decryption should fail (different salt → different derived keys)
+        XCTAssertThrowsError(try encryptorA.decrypt(encryptedB, context: context))
+        XCTAssertThrowsError(try encryptorB.decrypt(encryptedA, context: context))
+    }
 }

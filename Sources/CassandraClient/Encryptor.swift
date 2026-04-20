@@ -163,10 +163,12 @@ extension CassandraClient {
     @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     struct KeysHolder {
         private var rootKeys: [String: Data]
+        private let salt: Data
         private var kekCache: [String: SymmetricKey] = [:]
 
-        init(rootKeys: [String: Data]) {
+        init(rootKeys: [String: Data], salt: Data = Data()) {
             self.rootKeys = rootKeys
+            self.salt = salt
         }
 
         func hasKey(_ name: String) -> Bool {
@@ -192,9 +194,9 @@ extension CassandraClient {
                 throw CassandraClient.Error.keyNotFound("Key '\(keyName)' not found in keyMap")
             }
             let rootKey = SymmetricKey(data: rootKeyData)
-            let kek = HKDF<SHA256>.deriveKey(
+            let kek = HKDF<SHA512>.deriveKey(
                 inputKeyMaterial: rootKey,
-                salt: Data(),
+                salt: self.salt,
                 info: Data(context.utf8),
                 outputByteCount: 32
             )
@@ -210,7 +212,7 @@ extension CassandraClient {
             primaryKey: CassandraClient.PrimaryKey
         ) throws -> SymmetricKey {
             let kek = try self.deriveKEK(keyName: keyName, context: context)
-            return HKDF<SHA256>.deriveKey(
+            return HKDF<SHA512>.deriveKey(
                 inputKeyMaterial: kek,
                 salt: Data(),
                 info: primaryKey.data,
@@ -250,7 +252,7 @@ extension CassandraClient {
         ///   - currentKeyName: The key name to use for new encryptions. Must exist in `keyMap`.
         /// - Throws: `CassandraClient.Error.encryptionConfigError` if the key map is empty,
         ///   a key name is invalid, a key is not 32 bytes, or `currentKeyName` is not in the map.
-        public init(keyMap: [String: Data], currentKeyName: String) throws {
+        public init(keyMap: [String: Data], currentKeyName: String, salt: Data = Data()) throws {
             guard !keyMap.isEmpty else {
                 throw CassandraClient.Error.encryptionConfigError("keyMap must not be empty")
             }
@@ -265,7 +267,7 @@ extension CassandraClient {
             self.state = Mutex(
                 State(
                     currentKeyName: currentKeyName,
-                    keysHolder: KeysHolder(rootKeys: keyMap)
+                    keysHolder: KeysHolder(rootKeys: keyMap, salt: salt)
                 )
             )
         }
