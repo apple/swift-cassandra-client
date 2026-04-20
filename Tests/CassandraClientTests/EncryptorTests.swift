@@ -30,12 +30,15 @@ func randomKey() -> Data {
 final class EncryptorTests: XCTestCase {
 
     // Helper: create a simple context for testing
-    private func testContext(column: String = "ssn", primaryKey: Data? = nil) -> CassandraClient.EncryptionContext {
+    private func testContext(
+        column: String = "ssn",
+        primaryKey: CassandraClient.PrimaryKey? = nil
+    ) -> CassandraClient.EncryptionContext {
         CassandraClient.EncryptionContext(
             keyspace: "test_keyspace",
             table: "users",
             column: column,
-            primaryKey: primaryKey ?? Data("row-1".utf8)
+            primaryKey: primaryKey ?? CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1"))
         )
     }
 
@@ -84,7 +87,7 @@ final class EncryptorTests: XCTestCase {
         let rowContext = CassandraClient.EncryptionContext.Base(
             keyspace: "test_keyspace",
             table: "users",
-            primaryKey: Data("row-1".utf8)
+            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1"))
         )
         let ssnContext = rowContext.forColumn("ssn")
         let ccContext = rowContext.forColumn("credit_card")
@@ -100,12 +103,12 @@ final class EncryptorTests: XCTestCase {
         let (encryptor, _) = try makeEncryptor()
         let plaintext = Data("secret-value".utf8)
 
-        let context1 = testContext(primaryKey: Data("row-1".utf8))
+        let context1 = testContext(primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1")))
         let context2 = CassandraClient.EncryptionContext(
             keyspace: "test_keyspace",
             table: "users",
             column: "ssn",
-            primaryKey: Data("row-2".utf8)
+            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-2"))
         )
 
         let encrypted1 = try encryptor.encrypt(plaintext, context: context1)
@@ -117,8 +120,8 @@ final class EncryptorTests: XCTestCase {
     /// Decrypt with a different primaryKey should fail.
     func testWrongContext() throws {
         let (encryptor, _) = try makeEncryptor()
-        let contextA = testContext(primaryKey: Data("row-1".utf8))
-        let contextB = testContext(primaryKey: Data("row-2".utf8))
+        let contextA = testContext(primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1")))
+        let contextB = testContext(primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-2")))
         let encrypted = try encryptor.encrypt(Data("secret".utf8), context: contextA)
         XCTAssertThrowsError(try encryptor.decrypt(encrypted, context: contextB))
     }
@@ -135,7 +138,7 @@ final class EncryptorTests: XCTestCase {
         let encrypted = try encryptor.encrypt(data, context: context)
         let decrypted = try encryptor.decrypt(encrypted, context: context)
         XCTAssertEqual(decrypted.count, 4)
-        let result = decrypted.withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
+        let result = decrypted.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
         XCTAssertEqual(result, value)
     }
 
@@ -149,7 +152,7 @@ final class EncryptorTests: XCTestCase {
         let encrypted = try encryptor.encrypt(data, context: context)
         let decrypted = try encryptor.decrypt(encrypted, context: context)
         XCTAssertEqual(decrypted.count, 8)
-        let result = decrypted.withUnsafeBytes { $0.load(as: Int64.self).bigEndian }
+        let result = decrypted.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
         XCTAssertEqual(result, value)
     }
 
@@ -163,7 +166,7 @@ final class EncryptorTests: XCTestCase {
         let encrypted = try encryptor.encrypt(data, context: context)
         let decrypted = try encryptor.decrypt(encrypted, context: context)
         XCTAssertEqual(decrypted.count, 8)
-        let result = Double(bitPattern: decrypted.withUnsafeBytes { $0.load(as: UInt64.self).bigEndian })
+        let result = Double(bitPattern: decrypted.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).bigEndian })
         XCTAssertEqual(result, value)
     }
 
@@ -389,7 +392,7 @@ final class EncryptorTests: XCTestCase {
                         keyspace: "test",
                         table: "users",
                         column: "col_\(i % 5)",
-                        primaryKey: Data("row-\(i)".utf8)
+                        primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-\(i)"))
                     )
                     let encrypted = try encryptor.encrypt(plaintext, context: context)
                     let decrypted = try encryptor.decrypt(encrypted, context: context)

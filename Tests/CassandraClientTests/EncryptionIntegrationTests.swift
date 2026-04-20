@@ -94,7 +94,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             keyspace: self.configuration.keyspace!,
             table: tableName,
             column: "secret",
-            primaryKey: Data(userId.utf8)
+            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(userId))
         )
 
         let options = CassandraClient.Statement.Options()
@@ -152,7 +152,7 @@ final class EncryptionIntegrationTests: XCTestCase {
         let baseContext = CassandraClient.EncryptionContext.Base(
             keyspace: keyspace,
             table: tableName,
-            primaryKey: Data(userId.utf8)
+            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(userId))
         )
 
         let options = CassandraClient.Statement.Options()
@@ -241,7 +241,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             keyspace: keyspace,
             table: tableName,
             column: "secret",
-            primaryKey: Data(userId.utf8)
+            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(userId))
         )
 
         // Step 1: Write with key-1 (the encryptor from setUp uses "test-key")
@@ -330,7 +330,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             keyspace: keyspace,
             table: tableName,
             column: "secret",
-            primaryKey: Data("user-null".utf8)
+            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("user-null"))
         )
 
         let decrypted = try row.column("secret")?.decryptedString(
@@ -358,7 +358,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             keyspace: self.configuration.keyspace!,
             table: tableName,
             column: "secret",
-            primaryKey: Data(userId.utf8)
+            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(userId))
         )
 
         let writeOptions = CassandraClient.Statement.Options()
@@ -381,7 +381,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             return CassandraClient.EncryptionContext.Base(
                 keyspace: self.configuration.keyspace!,
                 table: tableName,
-                primaryKey: Data(uid.utf8)
+                primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(uid))
             )
         }
 
@@ -423,7 +423,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             return CassandraClient.EncryptionContext.Base(
                 keyspace: keyspace,
                 table: tableName,
-                primaryKey: Data(uid.utf8)
+                primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(uid))
             )
         }
 
@@ -432,7 +432,7 @@ final class EncryptionIntegrationTests: XCTestCase {
                 keyspace: keyspace,
                 table: tableName,
                 column: "secret",
-                primaryKey: Data(userId.utf8)
+                primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(userId))
             )
             try session.run(
                 "insert into \(tableName) (user_id, secret) values (?, ?)",
@@ -477,7 +477,7 @@ final class EncryptionIntegrationTests: XCTestCase {
         let userId = "user-multi-col"
         let name = "Alice"
         let age: Int32 = 30
-        let primaryKeyData = Data(userId.utf8)
+        let primaryKeyData = CassandraClient.EncryptionContext.encodeKeyComponents(.string(userId))
 
         let baseContext = CassandraClient.EncryptionContext.Base(
             keyspace: keyspace,
@@ -494,7 +494,7 @@ final class EncryptionIntegrationTests: XCTestCase {
             return CassandraClient.EncryptionContext.Base(
                 keyspace: keyspace,
                 table: tableName,
-                primaryKey: Data(uid.utf8)
+                primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string(uid))
             )
         }
 

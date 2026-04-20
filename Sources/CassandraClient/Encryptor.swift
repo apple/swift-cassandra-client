@@ -27,10 +27,10 @@ extension CassandraClient {
         public let keyspace: String
         public let table: String
         public let column: String
-        /// Full primary key bytes (partition key + clustering columns).
-        public let primaryKey: Data
+        /// Full primary key (partition key + clustering columns), built via ``encodeKeyComponents(_:)``.
+        public let primaryKey: PrimaryKey
 
-        internal init(keyspace: String, table: String, column: String, primaryKey: Data) {
+        internal init(keyspace: String, table: String, column: String, primaryKey: PrimaryKey) {
             self.keyspace = keyspace
             self.table = table
             self.column = column
@@ -39,13 +39,13 @@ extension CassandraClient {
 
         internal var contextString: String { "\(self.keyspace).\(self.table).\(self.column)" }
 
-        /// Encode typed key components into a single `Data` value.
+        /// Encode typed key components into a ``PrimaryKey``.
         ///
         /// Each component is serialized as `[4-byte big-endian length][value bytes]`.
         /// This length-prefixing ensures composite keys are unambiguous — for example,
         /// `encodeKeyComponents(.string("ab"), .string("c"))` produces different bytes
         /// from `encodeKeyComponents(.string("a"), .string("bc"))`.
-        public static func encodeKeyComponents(_ components: CassandraClient.KeyComponent...) -> Data {
+        public static func encodeKeyComponents(_ components: CassandraClient.KeyComponent...) -> PrimaryKey {
             var result = Data()
             for component in components {
                 let bytes: Data
@@ -71,16 +71,16 @@ extension CassandraClient {
                 result.append(Data(bytes: &length, count: 4))
                 result.append(bytes)
             }
-            return result
+            return PrimaryKey(data: result)
         }
 
         /// Base context without a column name. Use ``forColumn(_:)`` to produce a full ``EncryptionContext``.
         public struct Base {
             public let keyspace: String
             public let table: String
-            public let primaryKey: Data
+            public let primaryKey: PrimaryKey
 
-            public init(keyspace: String, table: String, primaryKey: Data) {
+            public init(keyspace: String, table: String, primaryKey: PrimaryKey) {
                 self.keyspace = keyspace
                 self.table = table
                 self.primaryKey = primaryKey
@@ -100,6 +100,18 @@ extension CassandraClient {
 }
 
 extension CassandraClient.EncryptionContext: Sendable {}
+
+// MARK: - PrimaryKey
+
+extension CassandraClient {
+    /// Opaque primary key built via ``EncryptionContext/encodeKeyComponents(_:)``.
+    ///
+    /// This type cannot be constructed directly — use `encodeKeyComponents` to
+    /// ensure key bytes are always length-prefixed and unambiguous.
+    public struct PrimaryKey: Sendable {
+        internal let data: Data
+    }
+}
 
 // MARK: - KeyComponent
 
@@ -192,12 +204,16 @@ extension CassandraClient {
 
         /// Derive a per-row data encryption key (DEK) from the column key and primary key bytes.
         /// Not cached — each row has a unique primary key, so caching would grow unbounded.
-        mutating func deriveDEK(keyName: String, context: String, primaryKey: Data) throws -> SymmetricKey {
+        mutating func deriveDEK(
+            keyName: String,
+            context: String,
+            primaryKey: CassandraClient.PrimaryKey
+        ) throws -> SymmetricKey {
             let kek = try self.deriveKEK(keyName: keyName, context: context)
             return HKDF<SHA256>.deriveKey(
                 inputKeyMaterial: kek,
                 salt: Data(),
-                info: primaryKey,
+                info: primaryKey.data,
                 outputByteCount: 32
             )
         }
