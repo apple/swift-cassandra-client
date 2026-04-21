@@ -27,7 +27,7 @@ extension CassandraClient {
         public let keyspace: String
         public let table: String
         public let column: String
-        /// Full primary key (partition key + clustering columns), built via ``encodeKeyComponents(_:)``.
+        /// Full primary key (partition key + clustering columns), built via ``PrimaryKey/init(from:)``.
         public let primaryKey: PrimaryKey
 
         internal init(keyspace: String, table: String, column: String, primaryKey: PrimaryKey) {
@@ -38,41 +38,6 @@ extension CassandraClient {
         }
 
         internal var contextString: String { "\(self.keyspace).\(self.table).\(self.column)" }
-
-        /// Encode typed key components into a ``PrimaryKey``.
-        ///
-        /// Each component is serialized as `[4-byte big-endian length][value bytes]`.
-        /// This length-prefixing ensures composite keys are unambiguous — for example,
-        /// `encodeKeyComponents(.string("ab"), .string("c"))` produces different bytes
-        /// from `encodeKeyComponents(.string("a"), .string("bc"))`.
-        public static func encodeKeyComponents(_ components: CassandraClient.KeyComponent...) -> PrimaryKey {
-            var result = Data()
-            for component in components {
-                let bytes: Data
-                switch component {
-                case .string(let s):
-                    bytes = Data(s.utf8)
-                case .uuid(let u):
-                    let t = u.uuid
-                    bytes = Data([
-                        t.0, t.1, t.2, t.3, t.4, t.5, t.6, t.7,
-                        t.8, t.9, t.10, t.11, t.12, t.13, t.14, t.15,
-                    ])
-                case .int32(let v):
-                    var be = v.bigEndian
-                    bytes = Data(bytes: &be, count: 4)
-                case .int64(let v):
-                    var be = v.bigEndian
-                    bytes = Data(bytes: &be, count: 8)
-                case .data(let d):
-                    bytes = d
-                }
-                var length = UInt32(bytes.count).bigEndian
-                result.append(Data(bytes: &length, count: 4))
-                result.append(bytes)
-            }
-            return PrimaryKey(data: result)
-        }
 
         /// Base context without a column name. Use ``forColumn(_:)`` to produce a full ``EncryptionContext``.
         public struct Base {
@@ -104,19 +69,50 @@ extension CassandraClient.EncryptionContext: Sendable {}
 // MARK: - PrimaryKey
 
 extension CassandraClient {
-    /// Opaque primary key built via ``EncryptionContext/encodeKeyComponents(_:)``.
+    /// Opaque primary key with length-prefixed key components.
     ///
-    /// This type cannot be constructed directly — use `encodeKeyComponents` to
-    /// ensure key bytes are always length-prefixed and unambiguous.
+    /// Each component is serialized as `[4-byte big-endian length][value bytes]`.
+    /// This ensures composite keys are unambiguous — for example,
+    /// `PrimaryKey(from: .string("ab"), .string("c"))` produces different bytes
+    /// from `PrimaryKey(from: .string("a"), .string("bc"))`.
     public struct PrimaryKey: Sendable, Equatable {
         internal let data: Data
+
+        public init(from components: CassandraClient.KeyComponent...) {
+            var result = Data()
+            for component in components {
+                let bytes: Data
+                switch component {
+                case .string(let s):
+                    bytes = Data(s.utf8)
+                case .uuid(let u):
+                    let t = u.uuid
+                    bytes = Data([
+                        t.0, t.1, t.2, t.3, t.4, t.5, t.6, t.7,
+                        t.8, t.9, t.10, t.11, t.12, t.13, t.14, t.15,
+                    ])
+                case .int32(let v):
+                    var be = v.bigEndian
+                    bytes = Data(bytes: &be, count: 4)
+                case .int64(let v):
+                    var be = v.bigEndian
+                    bytes = Data(bytes: &be, count: 8)
+                case .data(let d):
+                    bytes = d
+                }
+                var length = UInt32(bytes.count).bigEndian
+                result.append(Data(bytes: &length, count: 4))
+                result.append(bytes)
+            }
+            self.data = result
+        }
     }
 }
 
 // MARK: - KeyComponent
 
 extension CassandraClient {
-    /// A typed key component for use with ``EncryptionContext/encodeKeyComponents(_:)``.
+    /// A typed key component for use with ``PrimaryKey/init(from:)``.
     public enum KeyComponent {
         case string(String)
         case uuid(Foundation.UUID)
@@ -250,6 +246,7 @@ extension CassandraClient {
         ///     Multiple keys can be provided to support key rotation — old keys decrypt existing data,
         ///     while `currentKeyName` selects which key is used for new encryptions.
         ///   - currentKeyName: The key name to use for new encryptions. Must exist in `keyMap`.
+        ///   - salt: Optional salt for HKDF key derivation. Defaults to empty.
         /// - Throws: `CassandraClient.Error.encryptionConfigError` if the key map is empty,
         ///   a key name is invalid, a key is not 32 bytes, or `currentKeyName` is not in the map.
         public init(keyMap: [String: Data], currentKeyName: String, salt: Data = Data()) throws {

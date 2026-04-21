@@ -38,7 +38,7 @@ final class EncryptorTests: XCTestCase {
             keyspace: "test_keyspace",
             table: "users",
             column: column,
-            primaryKey: primaryKey ?? CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1"))
+            primaryKey: primaryKey ?? CassandraClient.PrimaryKey(from: .string("row-1"))
         )
     }
 
@@ -87,7 +87,7 @@ final class EncryptorTests: XCTestCase {
         let rowContext = CassandraClient.EncryptionContext.Base(
             keyspace: "test_keyspace",
             table: "users",
-            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1"))
+            primaryKey: CassandraClient.PrimaryKey(from: .string("row-1"))
         )
         let ssnContext = rowContext.forColumn("ssn")
         let ccContext = rowContext.forColumn("credit_card")
@@ -103,12 +103,12 @@ final class EncryptorTests: XCTestCase {
         let (encryptor, _) = try makeEncryptor()
         let plaintext = Data("secret-value".utf8)
 
-        let context1 = testContext(primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1")))
+        let context1 = testContext(primaryKey: CassandraClient.PrimaryKey(from: .string("row-1")))
         let context2 = CassandraClient.EncryptionContext(
             keyspace: "test_keyspace",
             table: "users",
             column: "ssn",
-            primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-2"))
+            primaryKey: CassandraClient.PrimaryKey(from: .string("row-2"))
         )
 
         let encrypted1 = try encryptor.encrypt(plaintext, context: context1)
@@ -120,8 +120,8 @@ final class EncryptorTests: XCTestCase {
     /// Decrypt with a different primaryKey should fail.
     func testWrongContext() throws {
         let (encryptor, _) = try makeEncryptor()
-        let contextA = testContext(primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-1")))
-        let contextB = testContext(primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-2")))
+        let contextA = testContext(primaryKey: CassandraClient.PrimaryKey(from: .string("row-1")))
+        let contextB = testContext(primaryKey: CassandraClient.PrimaryKey(from: .string("row-2")))
         let encrypted = try encryptor.encrypt(Data("secret".utf8), context: contextA)
         XCTAssertThrowsError(try encryptor.decrypt(encrypted, context: contextB))
     }
@@ -341,11 +341,11 @@ final class EncryptorTests: XCTestCase {
         XCTAssertThrowsError(try encryptor.decrypt(encrypted, context: context))
     }
 
-    // MARK: - encodeKeyComponents
+    // MARK: - PrimaryKey
 
     /// Single string component produces 4-byte length prefix followed by UTF-8 bytes.
     func testEncodeKeyComponentsSingleString() {
-        let encoded = CassandraClient.EncryptionContext.encodeKeyComponents(.string("hello"))
+        let encoded = CassandraClient.PrimaryKey(from: .string("hello"))
         let utf8 = Data("hello".utf8)
         var expectedLength = UInt32(utf8.count).bigEndian
         var expected = Data(bytes: &expectedLength, count: 4)
@@ -356,8 +356,8 @@ final class EncryptorTests: XCTestCase {
     /// Composite key (string + UUID) is deterministic and produces correct bytes.
     func testEncodeKeyComponentsComposite() {
         let uuid = Foundation.UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
-        let encoded1 = CassandraClient.EncryptionContext.encodeKeyComponents(.string("user"), .uuid(uuid))
-        let encoded2 = CassandraClient.EncryptionContext.encodeKeyComponents(.string("user"), .uuid(uuid))
+        let encoded1 = CassandraClient.PrimaryKey(from: .string("user"), .uuid(uuid))
+        let encoded2 = CassandraClient.PrimaryKey(from: .string("user"), .uuid(uuid))
         XCTAssertEqual(encoded1, encoded2, "Same inputs should produce identical output")
         // String "user" = 4 bytes → length(4) + value(4) = 8
         // UUID = 16 bytes → length(4) + value(16) = 20
@@ -366,8 +366,8 @@ final class EncryptorTests: XCTestCase {
 
     /// Length-prefixing prevents ambiguity: ("ab", "c") != ("a", "bc").
     func testEncodeKeyComponentsAmbiguity() {
-        let abC = CassandraClient.EncryptionContext.encodeKeyComponents(.string("ab"), .string("c"))
-        let aBc = CassandraClient.EncryptionContext.encodeKeyComponents(.string("a"), .string("bc"))
+        let abC = CassandraClient.PrimaryKey(from: .string("ab"), .string("c"))
+        let aBc = CassandraClient.PrimaryKey(from: .string("a"), .string("bc"))
         XCTAssertNotEqual(abC, aBc, "Length-prefixing should prevent ambiguity from naive concatenation")
     }
 
@@ -392,7 +392,7 @@ final class EncryptorTests: XCTestCase {
                         keyspace: "test",
                         table: "users",
                         column: "col_\(i % 5)",
-                        primaryKey: CassandraClient.EncryptionContext.encodeKeyComponents(.string("row-\(i)"))
+                        primaryKey: CassandraClient.PrimaryKey(from: .string("row-\(i)"))
                     )
                     let encrypted = try encryptor.encrypt(plaintext, context: context)
                     let decrypted = try encryptor.decrypt(encrypted, context: context)
