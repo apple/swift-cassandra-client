@@ -38,7 +38,7 @@ final class EncryptorTests: XCTestCase {
             keyspace: "test_keyspace",
             table: "users",
             column: column,
-            primaryKey: primaryKey ?? CassandraClient.PrimaryKey(from: .string("row-1"))
+            primaryKey: primaryKey ?? .init(from: .string("row-1"))
         )
     }
 
@@ -87,7 +87,7 @@ final class EncryptorTests: XCTestCase {
         let rowContext = CassandraClient.EncryptionContext.Base(
             keyspace: "test_keyspace",
             table: "users",
-            primaryKey: CassandraClient.PrimaryKey(from: .string("row-1"))
+            primaryKey: .init(from: .string("row-1"))
         )
         let ssnContext = rowContext.forColumn("ssn")
         let ccContext = rowContext.forColumn("credit_card")
@@ -103,12 +103,12 @@ final class EncryptorTests: XCTestCase {
         let (encryptor, _) = try makeEncryptor()
         let plaintext = Data("secret-value".utf8)
 
-        let context1 = testContext(primaryKey: CassandraClient.PrimaryKey(from: .string("row-1")))
+        let context1 = testContext(primaryKey: .init(from: .string("row-1")))
         let context2 = CassandraClient.EncryptionContext(
             keyspace: "test_keyspace",
             table: "users",
             column: "ssn",
-            primaryKey: CassandraClient.PrimaryKey(from: .string("row-2"))
+            primaryKey: .init(from: .string("row-2"))
         )
 
         let encrypted1 = try encryptor.encrypt(plaintext, context: context1)
@@ -120,8 +120,8 @@ final class EncryptorTests: XCTestCase {
     /// Decrypt with a different primaryKey should fail.
     func testWrongContext() throws {
         let (encryptor, _) = try makeEncryptor()
-        let contextA = testContext(primaryKey: CassandraClient.PrimaryKey(from: .string("row-1")))
-        let contextB = testContext(primaryKey: CassandraClient.PrimaryKey(from: .string("row-2")))
+        let contextA = testContext(primaryKey: .init(from: .string("row-1")))
+        let contextB = testContext(primaryKey: .init(from: .string("row-2")))
         let encrypted = try encryptor.encrypt(Data("secret".utf8), context: contextA)
         XCTAssertThrowsError(try encryptor.decrypt(encrypted, context: contextB))
     }
@@ -392,7 +392,7 @@ final class EncryptorTests: XCTestCase {
                         keyspace: "test",
                         table: "users",
                         column: "col_\(i % 5)",
-                        primaryKey: CassandraClient.PrimaryKey(from: .string("row-\(i)"))
+                        primaryKey: .init(from: .string("row-\(i)"))
                     )
                     let encrypted = try encryptor.encrypt(plaintext, context: context)
                     let decrypted = try encryptor.decrypt(encrypted, context: context)
