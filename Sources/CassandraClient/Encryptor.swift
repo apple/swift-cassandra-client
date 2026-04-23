@@ -81,28 +81,9 @@ extension CassandraClient {
         public init(from components: CassandraClient.KeyComponent...) {
             var result = Data()
             for component in components {
-                let bytes: Data
-                switch component {
-                case .string(let s):
-                    bytes = Data(s.utf8)
-                case .uuid(let u):
-                    let t = u.uuid
-                    bytes = Data([
-                        t.0, t.1, t.2, t.3, t.4, t.5, t.6, t.7,
-                        t.8, t.9, t.10, t.11, t.12, t.13, t.14, t.15,
-                    ])
-                case .int32(let v):
-                    var be = v.bigEndian
-                    bytes = Data(bytes: &be, count: 4)
-                case .int64(let v):
-                    var be = v.bigEndian
-                    bytes = Data(bytes: &be, count: 8)
-                case .data(let d):
-                    bytes = d
-                }
-                var length = UInt32(bytes.count).bigEndian
+                var length = UInt32(component.bytes.count).bigEndian
                 result.append(Data(bytes: &length, count: 4))
-                result.append(bytes)
+                result.append(component.bytes)
             }
             self.data = result
         }
@@ -113,12 +94,44 @@ extension CassandraClient {
 
 extension CassandraClient {
     /// A typed key component for use with ``PrimaryKey/init(from:)``.
-    public enum KeyComponent {
-        case string(String)
-        case uuid(Foundation.UUID)
-        case int32(Int32)
-        case int64(Int64)
-        case data(Data)
+    ///
+    /// New component types can be added without breaking existing consumers.
+    public struct KeyComponent: Sendable {
+        /// The serialized bytes for this component.
+        internal let bytes: Data
+
+        public static func string(_ value: String) -> KeyComponent {
+            KeyComponent(bytes: Data(value.utf8))
+        }
+
+        public static func uuid(_ value: Foundation.UUID) -> KeyComponent {
+            let t = value.uuid
+            return KeyComponent(
+                bytes: Data([
+                    t.0, t.1, t.2, t.3, t.4, t.5, t.6, t.7,
+                    t.8, t.9, t.10, t.11, t.12, t.13, t.14, t.15,
+                ])
+            )
+        }
+
+        public static func int32(_ value: Int32) -> KeyComponent {
+            var be = value.bigEndian
+            return KeyComponent(bytes: Data(bytes: &be, count: 4))
+        }
+
+        public static func int64(_ value: Int64) -> KeyComponent {
+            var be = value.bigEndian
+            return KeyComponent(bytes: Data(bytes: &be, count: 8))
+        }
+
+        public static func data(_ value: Data) -> KeyComponent {
+            KeyComponent(bytes: value)
+        }
+
+        public static func date(_ value: Date) -> KeyComponent {
+            var be = Int64(value.timeIntervalSince1970 * 1000).bigEndian
+            return KeyComponent(bytes: Data(bytes: &be, count: 8))
+        }
     }
 }
 
