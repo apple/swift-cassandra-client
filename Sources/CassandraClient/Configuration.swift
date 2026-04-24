@@ -48,6 +48,17 @@ extension CassandraClient {
         public var prepareStrategy: PrepareStrategy?
         public var compact: Bool?
 
+        /// Encryptor for transparent column encryption.
+        // TODO: Add encrypted column registration (EncryptedColumnSchema, registerEncryptedColumns, isEncrypted)
+        // once prepared statement metadata integration is available for enforcement.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        public var encryptor: Encryptor? {
+            get { self._encryptor as? Encryptor }
+            set { self._encryptor = newValue }
+        }
+
+        private var _encryptor: AnyObject?
+
         /// Sets the cluster's consistency level. Default is `.localOne`.
         public var consistency: CassandraClient.Consistency?
 
