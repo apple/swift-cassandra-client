@@ -82,6 +82,11 @@ extension CassandraClient {
             case sslIdentityMismatch(String)
             case sslProtocolError(String)
             case sslClosed(String)
+            // encryption errors
+            case encryptionError(String)
+            case decryptionError(String)
+            case encryptionConfigError(String)
+            case keyNotFound(String)
             // catch all
             case other(code: UInt32, description: String?)
         }
@@ -347,6 +352,14 @@ extension CassandraClient {
                 return "Protocol error: \(description)"
             case .sslClosed(let description):
                 return "Connection closed: \(description)"
+            case .encryptionError(let description):
+                return "Encryption error: \(description)"
+            case .decryptionError(let description):
+                return "Decryption error: \(description)"
+            case .encryptionConfigError(let description):
+                return "Encryption configuration error: \(description)"
+            case .keyNotFound(let description):
+                return "Encryption key not found: \(description)"
             case .other(let code, let description):
                 return "Other (\(code)): \(description ?? "unknown")"
             }
@@ -474,6 +487,14 @@ extension CassandraClient {
                 return "Protocol error"
             case .sslClosed:
                 return "Connection closed"
+            case .encryptionError:
+                return "Encryption error"
+            case .decryptionError:
+                return "Decryption error"
+            case .encryptionConfigError:
+                return "Encryption configuration error"
+            case .keyNotFound:
+                return "Encryption key not found"
             case .other(let code, _):
                 return "Other (\(code))"
             }
@@ -718,6 +739,23 @@ extension CassandraClient {
 
         public static func sslClosed(_ description: String) -> Error {
             .init(code: .sslClosed(description))
+        }
+
+        // encryption errors
+        public static func encryptionError(_ description: String) -> Error {
+            .init(code: .encryptionError(description))
+        }
+
+        public static func decryptionError(_ description: String) -> Error {
+            .init(code: .decryptionError(description))
+        }
+
+        public static func encryptionConfigError(_ description: String) -> Error {
+            .init(code: .encryptionConfigError(description))
+        }
+
+        public static func keyNotFound(_ description: String) -> Error {
+            .init(code: .keyNotFound(description))
         }
 
         public static func other(code: UInt32, description: String?) -> Error {
