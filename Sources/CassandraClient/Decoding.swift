@@ -218,6 +218,13 @@ extension CassandraClient {
             } else if type == Encrypted<[UInt8]>.self {
                 let data = try decryptColumnData(key: key)
                 return Encrypted<[UInt8]>(Array(data)) as! T
+            } else if type == Encrypted<Foundation.Date>.self {
+                let data = try decryptColumnData(key: key)
+                guard data.count == 8 else {
+                    throw DecodingError.typeMismatch("Expected 8 bytes for Date, got \(data.count)")
+                }
+                let millis = data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
+                return Encrypted<Foundation.Date>(Foundation.Date(timeIntervalSince1970: Double(millis) / 1000.0)) as! T
             } else if type == [UInt8].self {
                 guard let value: [UInt8] = row.column(key.stringValue) else {
                     throw DecodingError.typeMismatch(

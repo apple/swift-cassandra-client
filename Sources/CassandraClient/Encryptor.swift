@@ -13,7 +13,10 @@
 //===----------------------------------------------------------------------===//
 
 import Crypto
+import Dispatch
 import Foundation
+import Logging
+import Metrics
 import Synchronization
 
 // MARK: - EncryptionContext
@@ -79,6 +82,11 @@ extension CassandraClient {
         internal let data: Data
 
         public init(from components: CassandraClient.KeyComponent...) {
+            self.init(from: components)
+        }
+
+        /// Internal init from an array of key components (variadic can't be forwarded).
+        internal init(from components: [CassandraClient.KeyComponent]) {
             var result = Data()
             for component in components {
                 var length = UInt32(component.bytes.count).bigEndian
@@ -248,9 +256,38 @@ extension CassandraClient {
         private struct State {
             var currentKeyName: String
             var keysHolder: KeysHolder
+            var metricsCache: [String: EncryptorMetrics] = [:]
+
+            mutating func metrics(forKey keyName: String) -> EncryptorMetrics {
+                if let cached = metricsCache[keyName] {
+                    return cached
+                }
+                let m = EncryptorMetrics(keyName: keyName)
+                metricsCache[keyName] = m
+                return m
+            }
+        }
+
+        /// Cached metric handles for a single key name, avoiding per-call allocation.
+        private struct EncryptorMetrics {
+            let encryptTotal: Counter
+            let encryptDuration: Timer
+            let decryptTotal: Counter
+            let decryptDuration: Timer
+            let decryptFailures: Counter
+
+            init(keyName: String) {
+                let dims = [("keyName", keyName)]
+                self.encryptTotal = Counter(label: "cassandra.encryption.encrypt.total", dimensions: dims)
+                self.encryptDuration = Timer(label: "cassandra.encryption.encrypt.duration", dimensions: dims)
+                self.decryptTotal = Counter(label: "cassandra.encryption.decrypt.total", dimensions: dims)
+                self.decryptDuration = Timer(label: "cassandra.encryption.decrypt.duration", dimensions: dims)
+                self.decryptFailures = Counter(label: "cassandra.encryption.decrypt.failures", dimensions: dims)
+            }
         }
 
         private let state: Mutex<State>
+        private let logger: Logger
 
         /// Create an encryptor with the given key map and current key name.
         ///
@@ -260,9 +297,15 @@ extension CassandraClient {
         ///     while `currentKeyName` selects which key is used for new encryptions.
         ///   - currentKeyName: The key name to use for new encryptions. Must exist in `keyMap`.
         ///   - salt: Optional salt for HKDF key derivation. Defaults to empty.
+        ///   - logger: Logger for encryption audit trail. Defaults to a logger labeled "cassandra.encryption".
         /// - Throws: `CassandraClient.Error.encryptionConfigError` if the key map is empty,
         ///   a key name is invalid, a key is not 32 bytes, or `currentKeyName` is not in the map.
-        public init(keyMap: [String: Data], currentKeyName: String, salt: Data = Data()) throws {
+        public init(
+            keyMap: [String: Data],
+            currentKeyName: String,
+            salt: Data = Data(),
+            logger: Logger = Logger(label: "cassandra.encryption")
+        ) throws {
             guard !keyMap.isEmpty else {
                 throw CassandraClient.Error.encryptionConfigError("keyMap must not be empty")
             }
@@ -274,6 +317,7 @@ extension CassandraClient {
                     "currentKeyName '\(currentKeyName)' not found in keyMap"
                 )
             }
+            self.logger = logger
             self.state = Mutex(
                 State(
                     currentKeyName: currentKeyName,
@@ -290,12 +334,22 @@ extension CassandraClient {
         /// Set the key name used for new encryptions. The key must already exist in the key map.
         public func setCurrentKeyName(_ name: String) throws {
             try Self.validateKeyName(name)
-            try self.state.withLock {
+            let oldName = try self.state.withLock {
                 guard $0.keysHolder.hasKey(name) else {
                     throw CassandraClient.Error.keyNotFound("Key '\(name)' not found in keyMap")
                 }
+                let old = $0.currentKeyName
                 $0.currentKeyName = name
+                return old
             }
+            self.logger.info(
+                "Key rotation",
+                metadata: [
+                    "encryption.keyRotation.from": "\(oldName)",
+                    "encryption.keyRotation.to": "\(name)",
+                ]
+            )
+            Counter(label: "cassandra.encryption.key_rotation.total", dimensions: [("keyName", name)]).increment()
         }
 
         /// Replace the entire key map. Existing keys cannot be removed or changed.
@@ -304,8 +358,9 @@ extension CassandraClient {
             for (name, key) in newKeyMap {
                 try Self.validateKey(name: name, secret: key)
             }
-            try self.state.withLock {
-                for (existingName, existingKey) in $0.keysHolder.allKeys {
+            let newKeyCount = try self.state.withLock {
+                let existingKeys = $0.keysHolder.allKeys
+                for (existingName, existingKey) in existingKeys {
                     guard let newKey = newKeyMap[existingName] else {
                         throw CassandraClient.Error.encryptionConfigError(
                             "Cannot remove existing key '\(existingName)'"
@@ -322,8 +377,16 @@ extension CassandraClient {
                         "currentKeyName '\($0.currentKeyName)' not found in new keyMap"
                     )
                 }
+                let added = newKeyMap.count - existingKeys.count
                 $0.keysHolder = KeysHolder(rootKeys: newKeyMap)
+                return added
             }
+            self.logger.info(
+                "Keys loaded",
+                metadata: [
+                    "encryption.keysLoaded": "\(newKeyCount)"
+                ]
+            )
         }
 
         /// Encrypt plaintext data for the given context.
@@ -333,14 +396,16 @@ extension CassandraClient {
         /// The envelope is self-describing — it contains the key name and algorithm used,
         /// so `decrypt` can process data encrypted with any key in the key map.
         internal func encrypt(_ data: Data, context: EncryptionContext) throws -> Data {
-            let (keyName, dek) = try self.state.withLock {
+            let start = DispatchTime.now()
+            let (keyName, dek, metrics) = try self.state.withLock {
                 let name = $0.currentKeyName
                 let key = try $0.keysHolder.deriveDEK(
                     keyName: name,
                     context: context.contextString,
                     primaryKey: context.primaryKey
                 )
-                return (name, key)
+                let m = $0.metrics(forKey: name)
+                return (name, key, m)
             }
 
             let keyNameBytes = Data(keyName.utf8)
@@ -363,6 +428,18 @@ extension CassandraClient {
             envelope.append(contentsOf: sealed.nonce)
             envelope.append(sealed.ciphertext)
             envelope.append(sealed.tag)
+
+            let duration = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+            self.logger.debug(
+                "Encrypted column",
+                metadata: [
+                    "encryption.keyName": "\(keyName)",
+                    "encryption.column": "\(context.column)",
+                ]
+            )
+            metrics.encryptTotal.increment()
+            metrics.encryptDuration.recordNanoseconds(Int64(duration))
+
             return envelope
         }
 
@@ -372,9 +449,15 @@ extension CassandraClient {
         /// using the key from the envelope (not `currentKeyName`), and decrypts.
         /// This allows data encrypted with any key in the key map to be decrypted.
         internal func decrypt(_ envelope: Data, context: EncryptionContext) throws -> Data {
+            let start = DispatchTime.now()
             // Minimum envelope: version(1) + algorithm(1) + keyNameLen(1) + keyName(1+) + nonce(12) + tag(16)
             let minSize = 1 + 1 + 1 + 1 + Self.nonceSize + 16
             guard envelope.count >= minSize else {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — envelope too small",
+                    keyName: "unavailable",
+                    column: context.column
+                )
                 throw CassandraClient.Error.decryptionError(
                     "Envelope too small: \(envelope.count) bytes, minimum \(minSize)"
                 )
@@ -385,28 +468,53 @@ extension CassandraClient {
             let version = envelope[offset]
             offset += 1
             guard version == Self.envelopeVersion else {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — unsupported envelope version",
+                    keyName: "unavailable",
+                    column: context.column
+                )
                 throw CassandraClient.Error.decryptionError("Unsupported envelope version: \(version)")
             }
 
             let algorithm = envelope[offset]
             offset += 1
             guard algorithm == Self.algorithmHKDFDerivedAESGCM else {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — unsupported algorithm",
+                    keyName: "unavailable",
+                    column: context.column
+                )
                 throw CassandraClient.Error.decryptionError("Unsupported algorithm: \(algorithm)")
             }
 
             let keyNameLen = Int(envelope[offset])
             offset += 1
             guard keyNameLen > 0, offset + keyNameLen <= envelope.count else {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — invalid key name length",
+                    keyName: "unavailable",
+                    column: context.column
+                )
                 throw CassandraClient.Error.decryptionError("Invalid key name length: \(keyNameLen)")
             }
 
             let keyNameBytes = envelope[offset..<offset + keyNameLen]
             offset += keyNameLen
             guard let keyName = String(data: Data(keyNameBytes), encoding: .utf8) else {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — invalid key name encoding",
+                    keyName: "unavailable",
+                    column: context.column
+                )
                 throw CassandraClient.Error.decryptionError("Invalid key name encoding")
             }
 
             guard envelope.count - offset >= Self.nonceSize + 16 else {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — envelope too small for nonce + ciphertext + tag",
+                    keyName: keyName,
+                    column: context.column
+                )
                 throw CassandraClient.Error.decryptionError("Envelope too small for nonce + ciphertext + tag")
             }
 
@@ -415,18 +523,26 @@ extension CassandraClient {
 
             let ciphertextAndTag = envelope[offset...]
 
-            let dek = try self.state.withLock {
-                try $0.keysHolder.deriveDEK(
+            let (dek, metrics) = try self.state.withLock {
+                let key = try $0.keysHolder.deriveDEK(
                     keyName: keyName,
                     context: context.contextString,
                     primaryKey: context.primaryKey
                 )
+                let m = $0.metrics(forKey: keyName)
+                return (key, m)
             }
 
             let nonce: AES.GCM.Nonce
             do {
                 nonce = try AES.GCM.Nonce(data: nonceData)
             } catch {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — invalid nonce",
+                    keyName: keyName,
+                    column: context.column,
+                    metrics: metrics
+                )
                 throw CassandraClient.Error.decryptionError("Invalid nonce: \(error)")
             }
 
@@ -438,14 +554,57 @@ extension CassandraClient {
                     tag: ciphertextAndTag.suffix(16)
                 )
             } catch {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — invalid sealed box",
+                    keyName: keyName,
+                    column: context.column,
+                    metrics: metrics
+                )
                 throw CassandraClient.Error.decryptionError("Invalid sealed box: \(error)")
             }
 
             let aad = Data(context.contextString.utf8)
             do {
-                return try AES.GCM.open(sealedBox, using: dek, authenticating: aad)
+                let plaintext = try AES.GCM.open(sealedBox, using: dek, authenticating: aad)
+                let duration = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+                self.logger.debug(
+                    "Decrypted column",
+                    metadata: [
+                        "encryption.keyName": "\(keyName)",
+                        "encryption.column": "\(context.column)",
+                    ]
+                )
+                metrics.decryptTotal.increment()
+                metrics.decryptDuration.recordNanoseconds(Int64(duration))
+                return plaintext
             } catch {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — possible data corruption or tampering",
+                    keyName: keyName,
+                    column: context.column,
+                    metrics: metrics
+                )
                 throw CassandraClient.Error.decryptionError("AES-GCM authentication failed: \(error)")
+            }
+        }
+
+        private func onDecryptionFailure(
+            message: String,
+            keyName: String,
+            column: String,
+            metrics: EncryptorMetrics? = nil
+        ) {
+            self.logger.warning(
+                "\(message)",
+                metadata: [
+                    "encryption.keyName": "\(keyName)",
+                    "encryption.column": "\(column)",
+                ]
+            )
+            if let metrics = metrics {
+                metrics.decryptFailures.increment()
+            } else {
+                Counter(label: "cassandra.encryption.decrypt.failures", dimensions: [("keyName", keyName)]).increment()
             }
         }
 
@@ -477,6 +636,74 @@ extension CassandraClient {
 
 @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Encryptor: Sendable {}
+
+// MARK: - KeyColumnType
+
+extension CassandraClient {
+    /// Type tag for key columns used in column registration.
+    ///
+    /// New column types can be added without breaking existing consumers.
+    public struct KeyColumnType: Sendable, Equatable {
+        internal let rawValue: String
+
+        public static let string = KeyColumnType(rawValue: "string")
+        public static let uuid = KeyColumnType(rawValue: "uuid")
+        public static let int32 = KeyColumnType(rawValue: "int32")
+        public static let int64 = KeyColumnType(rawValue: "int64")
+        public static let data = KeyColumnType(rawValue: "data")
+        public static let date = KeyColumnType(rawValue: "date")
+    }
+}
+
+// MARK: - EncryptionSchema
+
+extension CassandraClient {
+    /// Describes one table's encrypted column layout for automatic context building.
+    ///
+    /// Register a schema via ``Configuration/registerEncryptionSchema(_:)`` so the decoder
+    /// can build ``EncryptionContext/Base`` per row without an `encryptionContextBuilder` closure.
+    public struct EncryptionSchema: Sendable {
+        /// A column in the table's primary key, used to build the PrimaryKey for DEK derivation.
+        public struct KeyColumn: Sendable {
+            public let name: String
+            public let type: KeyColumnType
+
+            public init(name: String, type: KeyColumnType) {
+                self.name = name
+                self.type = type
+            }
+        }
+
+        public let keyspace: String
+        public let table: String
+        public let keyColumns: [KeyColumn]
+        /// Names of all encrypted regular columns in the table.
+        public let encryptedColumns: Set<String>
+
+        public init(
+            keyspace: String,
+            table: String,
+            keyColumns: [KeyColumn],
+            encryptedColumns: Set<String> = []
+        ) throws {
+            let keyColumnNames = Set(keyColumns.map(\.name))
+            let overlap = keyColumnNames.intersection(encryptedColumns)
+            guard overlap.isEmpty else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Key columns cannot also be encrypted columns: \(overlap.sorted())"
+                )
+            }
+            self.keyspace = keyspace
+            self.table = table
+            self.keyColumns = keyColumns
+            self.encryptedColumns = encryptedColumns
+        }
+
+        /// Registry lookup key: "keyspace.table".
+        internal var registryKey: String { "\(self.keyspace).\(self.table)" }
+
+    }
+}
 
 // MARK: - CodingUserInfoKey extensions for encryption
 

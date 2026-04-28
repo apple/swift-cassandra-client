@@ -461,4 +461,81 @@ final class EncryptorTests: XCTestCase {
         XCTAssertThrowsError(try encryptorA.decrypt(encryptedB, context: context))
         XCTAssertThrowsError(try encryptorB.decrypt(encryptedA, context: context))
     }
+
+    // MARK: - Array-based PrimaryKey.init
+
+    /// Array-based PrimaryKey.init produces identical bytes to the variadic init.
+    func testArrayBasedPrimaryKeyInit() {
+        let variadic = CassandraClient.PrimaryKey(
+            from:
+                .string("user"),
+            .int32(42),
+            .uuid(Foundation.UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!)
+        )
+        let arrayBased = CassandraClient.PrimaryKey(from: [
+            .string("user"),
+            .int32(42),
+            .uuid(Foundation.UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!),
+        ])
+        XCTAssertEqual(variadic, arrayBased)
+    }
+
+    // MARK: - EncryptionSchema
+
+    /// Basic construction and registryKey.
+    func testEncryptionSchemaConstruction() throws {
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: "prod",
+            table: "users",
+            keyColumns: [
+                .init(name: "user_id", type: .string),
+                .init(name: "created_at", type: .int64),
+            ],
+            encryptedColumns: ["phone_enc", "secret", "ssn"]
+        )
+        XCTAssertEqual(schema.registryKey, "prod.users")
+        XCTAssertEqual(schema.keyColumns.count, 2)
+        XCTAssertTrue(schema.encryptedColumns.contains("phone_enc"))
+        XCTAssertEqual(schema.encryptedColumns, ["phone_enc", "secret", "ssn"])
+    }
+
+    /// Register a schema on Configuration and verify it round-trips through the AnyObject? backing store.
+    func testRegisterAndRetrieveSchema() throws {
+        var config = CassandraClient.Configuration(
+            contactPointsProvider: { callback in callback(.success(["localhost"])) },
+            port: 9042,
+            protocolVersion: .v3
+        )
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: "prod",
+            table: "users",
+            keyColumns: [
+                .init(name: "user_id", type: .string)
+            ],
+            encryptedColumns: ["ssn"]
+        )
+        config.registerEncryptionSchema(schema)
+
+        let retrieved = config.encryptionSchemas["prod.users"]
+        XCTAssertNotNil(retrieved)
+        XCTAssertEqual(retrieved?.keyspace, "prod")
+        XCTAssertEqual(retrieved?.table, "users")
+        XCTAssertEqual(retrieved?.keyColumns.count, 1)
+        XCTAssertEqual(retrieved?.encryptedColumns, ["ssn"])
+    }
+
+    /// Key column names must not overlap with encrypted column names.
+    func testEncryptionSchemaRejectsKeyColumnOverlap() {
+        XCTAssertThrowsError(
+            try CassandraClient.EncryptionSchema(
+                keyspace: "prod",
+                table: "users",
+                keyColumns: [.init(name: "user_id", type: .string)],
+                encryptedColumns: ["user_id", "ssn"]
+            )
+        ) { error in
+            let description = String(describing: error)
+            XCTAssertTrue(description.contains("user_id"), "Error should mention the overlapping column")
+        }
+    }
 }

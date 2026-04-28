@@ -873,6 +873,19 @@ extension CassandraClient.Column {
         )
         return Foundation.UUID(uuid: u)
     }
+
+    /// Decrypt column and return as `Date`.
+    public func decryptedDate(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.Date? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        guard data.count == 8 else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Date, got \(data.count)")
+        }
+        let millis = data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
+        return Foundation.Date(timeIntervalSince1970: Double(millis) / 1000.0)
+    }
 }
 
 @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
@@ -983,5 +996,23 @@ extension CassandraClient.Row {
         context: CassandraClient.EncryptionContext
     ) throws -> Foundation.UUID? {
         try self.column(index)?.decryptedUUID(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by name and return as `Date`.
+    public func decryptedDate(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.Date? {
+        try self.column(name)?.decryptedDate(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `Date`.
+    public func decryptedDate(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.Date? {
+        try self.column(index)?.decryptedDate(encryptor: encryptor, context: context)
     }
 }
