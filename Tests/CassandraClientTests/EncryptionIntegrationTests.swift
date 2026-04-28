@@ -50,7 +50,8 @@ final class EncryptionIntegrationTests: XCTestCase {
             self.encryptor = try CassandraClient.Encryptor(
                 keyMap: [keyName: keyData],
                 currentKeyName: keyName,
-                salt: Data("integration-test-salt".utf8)
+                salt: Data("integration-test-salt".utf8),
+                logger: Logger(label: "test.encryptor")
             )
         )
 

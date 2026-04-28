@@ -189,21 +189,27 @@ extension CassandraClient {
                 guard data.count == 4 else {
                     throw DecodingError.typeMismatch("Expected 4 bytes for Int32, got \(data.count)")
                 }
-                let value = data.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+                guard let value = data.parseInt32BigEndian() else {
+                    throw DecodingError.typeMismatch("Expected 4 bytes for Int32, got \(data.count)")
+                }
                 return Encrypted<Int32>(value) as! T
             } else if type == Encrypted<Int64>.self {
                 let data = try decryptColumnData(key: key)
                 guard data.count == 8 else {
                     throw DecodingError.typeMismatch("Expected 8 bytes for Int64, got \(data.count)")
                 }
-                let value = data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
+                guard let value = data.parseInt64BigEndian() else {
+                    throw DecodingError.typeMismatch("Expected 8 bytes for Int64, got \(data.count)")
+                }
                 return Encrypted<Int64>(value) as! T
             } else if type == Encrypted<Double>.self {
                 let data = try decryptColumnData(key: key)
                 guard data.count == 8 else {
                     throw DecodingError.typeMismatch("Expected 8 bytes for Double, got \(data.count)")
                 }
-                let bits = data.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).bigEndian }
+                guard let bits = data.parseUInt64BigEndian() else {
+                    throw DecodingError.typeMismatch("Expected 8 bytes for Double, got \(data.count)")
+                }
                 return Encrypted<Double>(Double(bitPattern: bits)) as! T
             } else if type == Encrypted<Foundation.UUID>.self {
                 let data = try decryptColumnData(key: key)
@@ -223,7 +229,9 @@ extension CassandraClient {
                 guard data.count == 8 else {
                     throw DecodingError.typeMismatch("Expected 8 bytes for Date, got \(data.count)")
                 }
-                let millis = data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
+                guard let millis = data.parseInt64BigEndian() else {
+                    throw DecodingError.typeMismatch("Expected 8 bytes for Date, got \(data.count)")
+                }
                 return Encrypted<Foundation.Date>(Foundation.Date(timeIntervalSince1970: Double(millis) / 1000.0)) as! T
             } else if type == [UInt8].self {
                 guard let value: [UInt8] = row.column(key.stringValue) else {

@@ -277,12 +277,12 @@ extension CassandraClient {
             let decryptFailures: Counter
 
             init(keyName: String) {
-                let dims = [("keyName", keyName)]
-                self.encryptTotal = Counter(label: "cassandra.encryption.encrypt.total", dimensions: dims)
-                self.encryptDuration = Timer(label: "cassandra.encryption.encrypt.duration", dimensions: dims)
-                self.decryptTotal = Counter(label: "cassandra.encryption.decrypt.total", dimensions: dims)
-                self.decryptDuration = Timer(label: "cassandra.encryption.decrypt.duration", dimensions: dims)
-                self.decryptFailures = Counter(label: "cassandra.encryption.decrypt.failures", dimensions: dims)
+                let dims = [(EncryptionMetric.dimensionKeyName, keyName)]
+                self.encryptTotal = Counter(label: EncryptionMetric.encryptTotal, dimensions: dims)
+                self.encryptDuration = Timer(label: EncryptionMetric.encryptDuration, dimensions: dims)
+                self.decryptTotal = Counter(label: EncryptionMetric.decryptTotal, dimensions: dims)
+                self.decryptDuration = Timer(label: EncryptionMetric.decryptDuration, dimensions: dims)
+                self.decryptFailures = Counter(label: EncryptionMetric.decryptFailures, dimensions: dims)
             }
         }
 
@@ -297,14 +297,14 @@ extension CassandraClient {
         ///     while `currentKeyName` selects which key is used for new encryptions.
         ///   - currentKeyName: The key name to use for new encryptions. Must exist in `keyMap`.
         ///   - salt: Optional salt for HKDF key derivation. Defaults to empty.
-        ///   - logger: Logger for encryption audit trail. Defaults to a logger labeled "cassandra.encryption".
+        ///   - logger: Logger for encryption audit trail.
         /// - Throws: `CassandraClient.Error.encryptionConfigError` if the key map is empty,
         ///   a key name is invalid, a key is not 32 bytes, or `currentKeyName` is not in the map.
         public init(
             keyMap: [String: Data],
             currentKeyName: String,
             salt: Data = Data(),
-            logger: Logger = Logger(label: "cassandra.encryption")
+            logger: Logger
         ) throws {
             guard !keyMap.isEmpty else {
                 throw CassandraClient.Error.encryptionConfigError("keyMap must not be empty")
@@ -343,13 +343,14 @@ extension CassandraClient {
                 return old
             }
             self.logger.info(
-                "Key rotation",
+                "Cassandra client key rotated",
                 metadata: [
-                    "encryption.keyRotation.from": "\(oldName)",
-                    "encryption.keyRotation.to": "\(name)",
+                    EncryptionLogKey.keyRotationFrom: "\(oldName)",
+                    EncryptionLogKey.keyRotationTo: "\(name)",
                 ]
             )
-            Counter(label: "cassandra.encryption.key_rotation.total", dimensions: [("keyName", name)]).increment()
+            Counter(label: EncryptionMetric.keyRotationTotal, dimensions: [(EncryptionMetric.dimensionKeyName, name)])
+                .increment()
         }
 
         /// Replace the entire key map. Existing keys cannot be removed or changed.
@@ -384,7 +385,7 @@ extension CassandraClient {
             self.logger.info(
                 "Keys loaded",
                 metadata: [
-                    "encryption.keysLoaded": "\(newKeyCount)"
+                    EncryptionLogKey.keysLoaded: "\(newKeyCount)"
                 ]
             )
         }
@@ -433,8 +434,8 @@ extension CassandraClient {
             self.logger.debug(
                 "Encrypted column",
                 metadata: [
-                    "encryption.keyName": "\(keyName)",
-                    "encryption.column": "\(context.column)",
+                    EncryptionLogKey.keyName: "\(keyName)",
+                    EncryptionLogKey.column: "\(context.column)",
                 ]
             )
             metrics.encryptTotal.increment()
@@ -570,8 +571,8 @@ extension CassandraClient {
                 self.logger.debug(
                     "Decrypted column",
                     metadata: [
-                        "encryption.keyName": "\(keyName)",
-                        "encryption.column": "\(context.column)",
+                        EncryptionLogKey.keyName: "\(keyName)",
+                        EncryptionLogKey.column: "\(context.column)",
                     ]
                 )
                 metrics.decryptTotal.increment()
@@ -597,14 +598,17 @@ extension CassandraClient {
             self.logger.warning(
                 "\(message)",
                 metadata: [
-                    "encryption.keyName": "\(keyName)",
-                    "encryption.column": "\(column)",
+                    EncryptionLogKey.keyName: "\(keyName)",
+                    EncryptionLogKey.column: "\(column)",
                 ]
             )
             if let metrics = metrics {
                 metrics.decryptFailures.increment()
             } else {
-                Counter(label: "cassandra.encryption.decrypt.failures", dimensions: [("keyName", keyName)]).increment()
+                Counter(
+                    label: EncryptionMetric.decryptFailures,
+                    dimensions: [(EncryptionMetric.dimensionKeyName, keyName)]
+                ).increment()
             }
         }
 

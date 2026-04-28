@@ -17,6 +17,37 @@ import Foundation
 import Logging
 import NIO
 
+// MARK: - Safe big-endian parsing helpers
+
+extension Data {
+    internal func parseInt32BigEndian() -> Int32? {
+        guard self.count >= 4 else { return nil }
+        var value = UInt32(0)
+        for byte in self.prefix(4) {
+            value = (value << 8) | UInt32(byte)
+        }
+        return Int32(bitPattern: value)
+    }
+
+    internal func parseInt64BigEndian() -> Int64? {
+        guard self.count >= 8 else { return nil }
+        var value = UInt64(0)
+        for byte in self.prefix(8) {
+            value = (value << 8) | UInt64(byte)
+        }
+        return Int64(bitPattern: value)
+    }
+
+    internal func parseUInt64BigEndian() -> UInt64? {
+        guard self.count >= 8 else { return nil }
+        var value = UInt64(0)
+        for byte in self.prefix(8) {
+            value = (value << 8) | UInt64(byte)
+        }
+        return value
+    }
+}
+
 public protocol PagingStateToken: ContiguousBytes {}
 
 extension CassandraClient {
@@ -830,7 +861,10 @@ extension CassandraClient.Column {
         guard data.count == 4 else {
             throw CassandraClient.Error.decryptionError("Expected 4 bytes for Int32, got \(data.count)")
         }
-        return data.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+        guard let value = data.parseInt32BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 4 bytes for Int32, got \(data.count)")
+        }
+        return value
     }
 
     /// Decrypt column and return as `Int64`.
@@ -842,7 +876,10 @@ extension CassandraClient.Column {
         guard data.count == 8 else {
             throw CassandraClient.Error.decryptionError("Expected 8 bytes for Int64, got \(data.count)")
         }
-        return data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
+        guard let value = data.parseInt64BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Int64, got \(data.count)")
+        }
+        return value
     }
 
     /// Decrypt column and return as `Double`.
@@ -854,7 +891,9 @@ extension CassandraClient.Column {
         guard data.count == 8 else {
             throw CassandraClient.Error.decryptionError("Expected 8 bytes for Double, got \(data.count)")
         }
-        let bits = data.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).bigEndian }
+        guard let bits = data.parseUInt64BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Double, got \(data.count)")
+        }
         return Double(bitPattern: bits)
     }
 
@@ -883,7 +922,9 @@ extension CassandraClient.Column {
         guard data.count == 8 else {
             throw CassandraClient.Error.decryptionError("Expected 8 bytes for Date, got \(data.count)")
         }
-        let millis = data.withUnsafeBytes { $0.loadUnaligned(as: Int64.self).bigEndian }
+        guard let millis = data.parseInt64BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Date, got \(data.count)")
+        }
         return Foundation.Date(timeIntervalSince1970: Double(millis) / 1000.0)
     }
 }

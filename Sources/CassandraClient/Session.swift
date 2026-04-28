@@ -119,7 +119,7 @@ extension CassandraSession {
             (logger ?? encryptionLogger).debug(
                 "Decrypted rows",
                 metadata: [
-                    "encryption.rowsDecrypted": "\(count)"
+                    CassandraClient.EncryptionLogKey.rowsDecrypted: "\(count)"
                 ]
             )
         }
