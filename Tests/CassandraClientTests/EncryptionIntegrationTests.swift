@@ -663,7 +663,6 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// encryptionTable set but no matching schema registered → throws encryptionConfigError.
     func testColumnRegistrationMissingSchema() throws {
         let tableName = "test_colreg_missing_\(DispatchTime.now().uptimeNanoseconds)"
-        let keyspace = self.configuration.keyspace!
 
         // Create the table and insert a row so the decoder is invoked
         do {
