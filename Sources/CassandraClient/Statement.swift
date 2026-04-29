@@ -432,6 +432,10 @@ extension CassandraClient {
             /// Use `"table"` (combined with the session keyspace) or `"keyspace.table"` for cross-keyspace queries.
             /// When set and a matching ``EncryptionSchema`` is registered, the decoder builds
             /// ``EncryptionContext/Base`` automatically. ``encryptionContextBuilder`` takes precedence if both are set.
+            ///
+            /// - Important: The query must SELECT all primary key columns registered in the schema.
+            ///   The decoder reads these columns from each result row to build the ``PrimaryKey`` for key derivation.
+            ///   Omitting a key column will cause decryption to fail at runtime.
             @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionTable: String? {
                 get { self._encryptionTable }

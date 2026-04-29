@@ -180,12 +180,16 @@ extension CassandraClient {
     @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     struct KeysHolder {
         private var rootKeys: [String: Data]
-        private let salt: Data
+        let salt: Data
+        private let kekSalt: Data
+        private let dekSalt: Data
         private var kekCache: [String: SymmetricKey] = [:]
 
-        init(rootKeys: [String: Data], salt: Data = Data()) {
+        init(rootKeys: [String: Data], salt: Data) {
             self.rootKeys = rootKeys
             self.salt = salt
+            self.kekSalt = salt + Data("-KEK".utf8)
+            self.dekSalt = salt + Data("-DEK".utf8)
         }
 
         func hasKey(_ name: String) -> Bool {
@@ -211,10 +215,9 @@ extension CassandraClient {
                 throw CassandraClient.Error.keyNotFound("Key '\(keyName)' not found in keyMap")
             }
             let rootKey = SymmetricKey(data: rootKeyData)
-            let kekSalt = self.salt.isEmpty ? Data() : self.salt + Data("-kek".utf8)
             let kek = HKDF<SHA512>.deriveKey(
                 inputKeyMaterial: rootKey,
-                salt: kekSalt,
+                salt: self.kekSalt,
                 info: Data(context.utf8),
                 outputByteCount: 32
             )
@@ -230,10 +233,9 @@ extension CassandraClient {
             primaryKey: CassandraClient.PrimaryKey
         ) throws -> SymmetricKey {
             let kek = try self.deriveKEK(keyName: keyName, context: context)
-            let dekSalt = self.salt.isEmpty ? Data() : self.salt + Data("-dek".utf8)
             return HKDF<SHA512>.deriveKey(
                 inputKeyMaterial: kek,
-                salt: dekSalt,
+                salt: self.dekSalt,
                 info: primaryKey.data,
                 outputByteCount: 32
             )
@@ -298,16 +300,19 @@ extension CassandraClient {
         ///     Multiple keys can be provided to support key rotation — old keys decrypt existing data,
         ///     while `currentKeyName` selects which key is used for new encryptions.
         ///   - currentKeyName: The key name to use for new encryptions. Must exist in `keyMap`.
-        ///   - salt: Optional salt for HKDF key derivation. Defaults to empty.
+        ///   - salt: Salt for HKDF key derivation. Suffixed with `-KEK` and `-DEK` internally for domain separation.
         ///   - logger: Logger for encryption audit trail.
         /// - Throws: `CassandraClient.Error.encryptionConfigError` if the key map is empty,
-        ///   a key name is invalid, a key is not 32 bytes, or `currentKeyName` is not in the map.
+        ///   a key name is invalid, a key is not 32 bytes, the salt is empty, or `currentKeyName` is not in the map.
         public init(
             keyMap: [String: Data],
             currentKeyName: String,
-            salt: Data = Data(),
+            salt: Data,
             logger: Logger
         ) throws {
+            guard !salt.isEmpty else {
+                throw CassandraClient.Error.encryptionConfigError("salt must not be empty")
+            }
             guard !keyMap.isEmpty else {
                 throw CassandraClient.Error.encryptionConfigError("keyMap must not be empty")
             }
@@ -381,7 +386,7 @@ extension CassandraClient {
                     )
                 }
                 let added = newKeyMap.count - existingKeys.count
-                $0.keysHolder = KeysHolder(rootKeys: newKeyMap)
+                $0.keysHolder = KeysHolder(rootKeys: newKeyMap, salt: $0.keysHolder.salt)
                 return added
             }
             self.logger.info(
@@ -526,14 +531,25 @@ extension CassandraClient {
 
             let ciphertextAndTag = envelope[offset...]
 
-            let (dek, metrics) = try self.state.withLock {
-                let key = try $0.keysHolder.deriveDEK(
+            let dek: SymmetricKey
+            let metrics: EncryptorMetrics
+            do {
+                (dek, metrics) = try self.state.withLock {
+                    let key = try $0.keysHolder.deriveDEK(
+                        keyName: keyName,
+                        context: context.contextString,
+                        primaryKey: context.primaryKey
+                    )
+                    let m = $0.metrics(forKey: keyName)
+                    return (key, m)
+                }
+            } catch {
+                self.onDecryptionFailure(
+                    message: "Decryption failed — key derivation error",
                     keyName: keyName,
-                    context: context.contextString,
-                    primaryKey: context.primaryKey
+                    column: context.column
                 )
-                let m = $0.metrics(forKey: keyName)
-                return (key, m)
+                throw error
             }
 
             let nonce: AES.GCM.Nonce

@@ -50,6 +50,7 @@ final class EncryptorTests: XCTestCase {
         let encryptor = try CassandraClient.Encryptor(
             keyMap: [keyName: keyData],
             currentKeyName: keyName,
+            salt: Data("test-salt".utf8),
             logger: Logger(label: "test.encryptor")
         )
         return (encryptor, keyData)
@@ -236,12 +237,25 @@ final class EncryptorTests: XCTestCase {
         XCTAssertThrowsError(try encryptor2.decrypt(encrypted, context: context))
     }
 
+    /// Empty salt should be rejected.
+    func testEmptySaltRejected() {
+        XCTAssertThrowsError(
+            try CassandraClient.Encryptor(
+                keyMap: ["key-1": randomKey()],
+                currentKeyName: "key-1",
+                salt: Data(),
+                logger: Logger(label: "test.encryptor")
+            )
+        )
+    }
+
     /// Empty key name should be rejected.
     func testEmptyKeyName() {
         XCTAssertThrowsError(
             try CassandraClient.Encryptor(
                 keyMap: ["": randomKey()],
                 currentKeyName: "",
+                salt: Data("test-salt".utf8),
                 logger: Logger(label: "test.encryptor")
             )
         )
@@ -253,6 +267,7 @@ final class EncryptorTests: XCTestCase {
             try CassandraClient.Encryptor(
                 keyMap: ["key with spaces": randomKey()],
                 currentKeyName: "key with spaces",
+                salt: Data("test-salt".utf8),
                 logger: Logger(label: "test.encryptor")
             )
         )
@@ -264,6 +279,7 @@ final class EncryptorTests: XCTestCase {
             try CassandraClient.Encryptor(
                 keyMap: ["key-1": Data([0x01, 0x02, 0x03])],
                 currentKeyName: "key-1",
+                salt: Data("test-salt".utf8),
                 logger: Logger(label: "test.encryptor")
             )
         )
@@ -276,6 +292,7 @@ final class EncryptorTests: XCTestCase {
         let encryptor = try CassandraClient.Encryptor(
             keyMap: ["key-1": key1, "key-2": key2],
             currentKeyName: "key-1",
+            salt: Data("test-salt".utf8),
             logger: Logger(label: "test.encryptor")
         )
         // New map missing "key-2" — should throw
@@ -288,6 +305,7 @@ final class EncryptorTests: XCTestCase {
         let encryptor = try CassandraClient.Encryptor(
             keyMap: ["key-1": key1],
             currentKeyName: "key-1",
+            salt: Data("test-salt".utf8),
             logger: Logger(label: "test.encryptor")
         )
         // Same name, different bytes — should throw
@@ -300,6 +318,7 @@ final class EncryptorTests: XCTestCase {
         let encryptor = try CassandraClient.Encryptor(
             keyMap: ["key-1": key1],
             currentKeyName: "key-1",
+            salt: Data("test-salt".utf8),
             logger: Logger(label: "test.encryptor")
         )
         let key2 = randomKey()
