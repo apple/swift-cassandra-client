@@ -211,9 +211,10 @@ extension CassandraClient {
                 throw CassandraClient.Error.keyNotFound("Key '\(keyName)' not found in keyMap")
             }
             let rootKey = SymmetricKey(data: rootKeyData)
+            let kekSalt = self.salt.isEmpty ? Data() : self.salt + Data("-kek".utf8)
             let kek = HKDF<SHA512>.deriveKey(
                 inputKeyMaterial: rootKey,
-                salt: self.salt,
+                salt: kekSalt,
                 info: Data(context.utf8),
                 outputByteCount: 32
             )
@@ -229,9 +230,10 @@ extension CassandraClient {
             primaryKey: CassandraClient.PrimaryKey
         ) throws -> SymmetricKey {
             let kek = try self.deriveKEK(keyName: keyName, context: context)
+            let dekSalt = self.salt.isEmpty ? Data() : self.salt + Data("-dek".utf8)
             return HKDF<SHA512>.deriveKey(
                 inputKeyMaterial: kek,
-                salt: Data(),
+                salt: dekSalt,
                 info: primaryKey.data,
                 outputByteCount: 32
             )
