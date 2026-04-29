@@ -154,6 +154,22 @@ public class CassandraClient: CassandraSession {
         )
     }
 
+    /// Execute a batch of statements.
+    ///
+    /// - Parameters:
+    ///   - configuration: Options to apply to the batch.
+    ///   - eventLoop: The `EventLoop` to use, or create a new one.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - build: Closure that adds statements to the batch.
+    public func batch(
+        configuration: Batch.Configuration = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none,
+        _ build: (inout Batch) throws -> Void
+    ) -> EventLoopFuture<Void> {
+        self.defaultSession.batch(configuration: configuration, on: eventLoop, logger: logger, build)
+    }
+
     /// Create a new ``CassandraSession`` that can be used to perform queries on the given or configured keyspace.
     ///
     /// - Parameters:
@@ -269,6 +285,21 @@ extension CassandraClient {
             pageSize: pageSize,
             logger: logger
         )
+    }
+
+    /// Execute a batch of statements.
+    ///
+    /// - Parameters:
+    ///   - configuration: Options to apply to the batch.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - build: Closure that adds statements to the batch.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func batch(
+        configuration: Batch.Configuration = .init(),
+        logger: Logger? = .none,
+        _ build: (inout Batch) async throws -> Void
+    ) async throws {
+        try await self.defaultSession.batch(configuration: configuration, logger: logger, build)
     }
 
     /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure.
