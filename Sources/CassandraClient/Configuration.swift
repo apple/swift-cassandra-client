@@ -49,8 +49,6 @@ extension CassandraClient {
         public var compact: Bool?
 
         /// Encryptor for transparent column encryption.
-        // TODO: Add encrypted column registration (EncryptedColumnSchema, registerEncryptedColumns, isEncrypted)
-        // once prepared statement metadata integration is available for enforcement.
         @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public var encryptor: Encryptor? {
             get { self._encryptor as? Encryptor }
@@ -58,6 +56,23 @@ extension CassandraClient {
         }
 
         private var _encryptor: AnyObject?
+
+        /// Registered encryption schemas.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        public var encryptionSchemas: [String: EncryptionSchema] {
+            get { self._encryptionSchemas as! [String: EncryptionSchema] }
+            set { self._encryptionSchemas = newValue }
+        }
+
+        private var _encryptionSchemas: Any = [String: EncryptionSchema]()
+
+        /// Register an encryption schema for automatic context building during decoding.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        public mutating func registerEncryptionSchema(_ schema: EncryptionSchema) {
+            var schemas = self.encryptionSchemas
+            schemas[schema.registryKey] = schema
+            self.encryptionSchemas = schemas
+        }
 
         /// Sets the cluster's consistency level. Default is `.localOne`.
         public var consistency: CassandraClient.Consistency?

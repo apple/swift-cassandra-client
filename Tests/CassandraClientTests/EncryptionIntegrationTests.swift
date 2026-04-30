@@ -50,7 +50,8 @@ final class EncryptionIntegrationTests: XCTestCase {
             self.encryptor = try CassandraClient.Encryptor(
                 keyMap: [keyName: keyData],
                 currentKeyName: keyName,
-                salt: Data("integration-test-salt".utf8)
+                salt: Data("integration-test-salt".utf8),
+                logger: Logger(label: "test.encryptor")
             )
         )
 
@@ -75,6 +76,14 @@ final class EncryptionIntegrationTests: XCTestCase {
         super.tearDown()
         XCTAssertNoThrow(try self.cassandraClient.shutdown())
         self.cassandraClient = nil
+    }
+
+    /// Shutdown and recreate the client after configuration changes (e.g. registering schemas).
+    private func recreateClient() {
+        XCTAssertNoThrow(try self.cassandraClient.shutdown())
+        var logger = Logger(label: "test")
+        logger.logLevel = .debug
+        self.cassandraClient = CassandraClient(configuration: self.configuration, logger: logger)
     }
 
     // MARK: - Write path + manual read path
@@ -521,6 +530,219 @@ final class EncryptionIntegrationTests: XCTestCase {
         XCTAssertEqual(results[0].secret_name.value, name)
         XCTAssertEqual(results[0].secret_age.value, age)
     }
+
+    // MARK: - Column registration
+
+    /// No clustering key, one encrypted regular column.
+    /// Verify decryption works without an encryptionContextBuilder — uses column registration instead.
+    func testColumnRegistrationSimple() throws {
+        let tableName = "test_colreg_simple_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        // Create table using a session from the current client
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        // Register the schema
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+
+        // Recreate client with updated configuration
+        self.recreateClient()
+
+        let userId = "user-reg"
+        let secretValue = "registered-secret"
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: .init(from: .string(userId))
+        )
+
+        // Write with explicit context using a new session
+        let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+        defer { XCTAssertNoThrow(try session.shutdown()) }
+
+        try session.run(
+            "insert into \(tableName) (user_id, secret) values (?, ?)",
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(secretValue), context: baseContext.forColumn("secret")),
+            ]
+        ).wait()
+
+        // Read via column registration — no encryptionContextBuilder needed
+        var readOptions = CassandraClient.Statement.Options()
+        readOptions.encryptionTable = tableName
+
+        let results: [UserWithSecret] = try self.cassandraClient.query(
+            "select user_id, secret from \(tableName) where user_id = ?",
+            parameters: [.string(userId)],
+            options: readOptions
+        ).wait()
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].user_id, userId)
+        XCTAssertEqual(results[0].secret.value, secretValue)
+    }
+
+    /// Both encryptionContextBuilder and encryptionTable are set — builder wins.
+    func testColumnRegistrationBuilderTakesPrecedence() throws {
+        let tableName = "test_colreg_prec_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        // Create table using a session from the current client
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        // Register schema and recreate client
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+
+        self.recreateClient()
+
+        let userId = "user-prec"
+        let secretValue = "precedence-secret"
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: .init(from: .string(userId))
+        )
+
+        // Insert using the new client's session
+        let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+        defer { XCTAssertNoThrow(try session.shutdown()) }
+
+        try session.run(
+            "insert into \(tableName) (user_id, secret) values (?, ?)",
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(secretValue), context: baseContext.forColumn("secret")),
+            ]
+        ).wait()
+
+        // Set both builder and encryptionTable — builder should win
+        var readOptions = CassandraClient.Statement.Options()
+        readOptions.encryptionTable = tableName
+        readOptions.encryptionContextBuilder = { row in
+            guard let uid: String = row.column("user_id") else {
+                throw CassandraClient.Error.badParams("user_id not found in row")
+            }
+            return CassandraClient.EncryptionContext.Base(
+                keyspace: keyspace,
+                table: tableName,
+                primaryKey: .init(from: .string(uid))
+            )
+        }
+
+        let results: [UserWithSecret] = try self.cassandraClient.query(
+            "select user_id, secret from \(tableName) where user_id = ?",
+            parameters: [.string(userId)],
+            options: readOptions
+        ).wait()
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].secret.value, secretValue)
+    }
+
+    /// encryptionTable set but no matching schema registered → throws encryptionConfigError.
+    func testColumnRegistrationMissingSchema() throws {
+        let tableName = "test_colreg_missing_\(DispatchTime.now().uptimeNanoseconds)"
+
+        // Create the table and insert a row so the decoder is invoked
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+            try session.run(
+                "insert into \(tableName) (user_id, secret) values (?, ?)",
+                parameters: [.string("user-1"), .bytes([0x01, 0x02])]
+            ).wait()
+        }
+
+        // Do NOT register a schema — that's what we're testing
+        var readOptions = CassandraClient.Statement.Options()
+        readOptions.encryptionTable = tableName
+
+        do {
+            let _: [UserWithSecret] = try self.cassandraClient.query(
+                "select user_id, secret from \(tableName)",
+                options: readOptions
+            ).wait()
+            XCTFail("Expected encryptionConfigError to be thrown")
+        } catch let error as CassandraClient.Error {
+            let msg = error.description
+            XCTAssertTrue(
+                msg.contains("No EncryptionSchema registered"),
+                "Unexpected message: \(msg)"
+            )
+        }
+    }
+
+    // MARK: - Write-path enforcement
+
+    /// Binding an encrypted value to a column NOT registered as encrypted should throw.
+    func testWritePathRejectsEncryptedForPlaintextColumn() throws {
+        let tableName = "test_wp_reject_enc_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, name text)").wait()
+        }
+
+        // Schema has no encrypted columns — only PK
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+
+        self.recreateClient()
+
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: .init(from: .string("user-1"))
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        do {
+            // Bind encrypted value to a plaintext column — should be rejected
+            try self.cassandraClient.run(
+                "insert into \(tableName) (user_id, name) values (?, ?)",
+                parameters: [
+                    .string("user-1"),
+                    .encryptedString(CassandraClient.Encrypted("oops"), context: baseContext.forColumn("name")),
+                ],
+                options: options
+            ).wait()
+            XCTFail("Expected encryptionConfigError for encrypted value on plaintext column")
+        } catch let error as CassandraClient.Error {
+            let msg = error.description
+            XCTAssertTrue(msg.contains("name"), "Error should mention column name: \(msg)")
+        }
+    }
+
 }
 
 // MARK: - Test model

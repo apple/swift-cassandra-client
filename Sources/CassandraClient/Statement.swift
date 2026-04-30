@@ -40,6 +40,10 @@ extension CassandraClient {
             self._encryptor = _encryptor
             self.rawPointer = cass_statement_new(query, parameters.count)
 
+            try self.bindParameters()
+        }
+
+        private func bindParameters() throws {
             for (index, parameter) in parameters.enumerated() {
                 let result: CassError
                 switch parameter {
@@ -131,6 +135,13 @@ extension CassandraClient {
                     ])
                     result = try self.bindEncrypted(
                         plaintext,
+                        context: context,
+                        at: index
+                    )
+                case .encryptedDate(let wrapped, let context):
+                    var bigEndian = Int64(wrapped.value.timeIntervalSince1970 * 1000).bigEndian
+                    result = try self.bindEncrypted(
+                        Data(bytes: &bigEndian, count: 8),
                         context: context,
                         at: index
                     )
@@ -282,6 +293,7 @@ extension CassandraClient {
             case encryptedInt64(Encrypted<Int64>, context: EncryptionContext)
             case encryptedDouble(Encrypted<Double>, context: EncryptionContext)
             case encryptedUUID(Encrypted<Foundation.UUID>, context: EncryptionContext)
+            case encryptedDate(Encrypted<Foundation.Date>, context: EncryptionContext)
 
             case int8Array([Int8])
             case int16Array([Int16])
@@ -360,6 +372,34 @@ extension CassandraClient {
             case timeuuidBoolMap([TimeBasedUUID: Bool])
             case timeuuidStringMap([TimeBasedUUID: String])
             case timeuuidUUIDMap([TimeBasedUUID: Foundation.UUID])
+
+            /// Whether this value is an encrypted regular column value (`.encryptedXxx` cases).
+            internal var isEncrypted: Bool {
+                switch self {
+                case .encryptedString, .encryptedBytes, .encryptedInt32,
+                    .encryptedInt64, .encryptedDouble, .encryptedUUID,
+                    .encryptedDate:
+                    return true
+                default:
+                    return false
+                }
+            }
+
+            /// The column name from the encryption context, if this is an encrypted value.
+            internal var encryptedColumnName: String? {
+                switch self {
+                case .encryptedString(_, let ctx),
+                    .encryptedBytes(_, let ctx),
+                    .encryptedInt32(_, let ctx),
+                    .encryptedInt64(_, let ctx),
+                    .encryptedDouble(_, let ctx),
+                    .encryptedUUID(_, let ctx),
+                    .encryptedDate(_, let ctx):
+                    return ctx.column
+                default:
+                    return nil
+                }
+            }
         }
 
         public struct Options: CustomStringConvertible {
@@ -368,11 +408,44 @@ extension CassandraClient {
             /// Sets the statement's request timeout in milliseconds. Default is `CASS_UINT64_MAX`
             public var requestTimeout: UInt64?
 
+            /// Type-erased backing store for ``encryptionContextBuilder``.
+            private var _encryptionContextBuilder: Any?
+
             /// Closure that extracts encryption context from each row during Codable decoding.
+            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionContextBuilder:
                 (
                     (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 )?
+            {
+                get {
+                    self._encryptionContextBuilder
+                        as? (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
+                }
+                set { self._encryptionContextBuilder = newValue }
+            }
+
+            /// Backing store for ``encryptionTable``.
+            private var _encryptionTable: String?
+
+            /// Table name for column-registration-based automatic decryption.
+            /// Use `"table"` (combined with the session keyspace) or `"keyspace.table"` for cross-keyspace queries.
+            /// When set and a matching ``EncryptionSchema`` is registered, the decoder builds
+            /// ``EncryptionContext/Base`` automatically. ``encryptionContextBuilder`` takes precedence if both are set.
+            ///
+            /// - Important: The query must SELECT all primary key columns registered in the schema.
+            ///   The decoder reads these columns from each result row to build the ``PrimaryKey`` for key derivation.
+            ///   Omitting a key column will cause decryption to fail at runtime.
+            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+            public var encryptionTable: String? {
+                get { self._encryptionTable }
+                set { self._encryptionTable = newValue }
+            }
+
+            /// Whether any encryption options are set (context builder or table name).
+            internal var hasEncryptionOptions: Bool {
+                self._encryptionContextBuilder != nil || self._encryptionTable != nil
+            }
 
             public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: UInt64? = nil) {
                 self.consistency = consistency
