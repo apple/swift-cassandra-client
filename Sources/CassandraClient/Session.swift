@@ -70,6 +70,43 @@ public protocol CassandraSession {
         logger: Logger?
     ) -> EventLoopFuture<CassandraClient.PaginatedRows>
 
+    /// Prepare a CQL query for repeated execution.
+    ///
+    /// The server parses and validates the query once. The returned ``CassandraClient/PreparedStatement``
+    /// can then be bound with different parameters and executed multiple times without re-parsing.
+    ///
+    /// - Parameters:
+    ///   - query: The CQL query string with `?` placeholders.
+    ///   - eventLoop: The `EventLoop` to use. Optional.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: A ``CassandraClient/PreparedStatement``.
+    func prepare(
+        _ query: String,
+        on eventLoop: EventLoop?,
+        logger: Logger?
+    ) -> EventLoopFuture<CassandraClient.PreparedStatement>
+
+    /// Execute a prepared statement with bound parameters.
+    ///
+    /// **All** rows are returned.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``CassandraClient/PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - eventLoop: The `EventLoop` to use. Optional.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/Rows``.
+    func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value],
+        options: CassandraClient.Statement.Options,
+        on eventLoop: EventLoop?,
+        logger: Logger?
+    ) -> EventLoopFuture<CassandraClient.Rows>
+
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -350,6 +387,81 @@ extension CassandraSession {
             return eventLoop.makeFailedFuture(error)
         }
     }
+
+    /// Prepare a CQL query for repeated execution.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    public func prepare(
+        _ query: String,
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
+        self.prepare(query, on: eventLoop, logger: logger)
+    }
+
+    /// Execute a prepared statement with bound parameters.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    public func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<CassandraClient.Rows> {
+        do {
+            let statement: CassandraClient.Statement
+            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                try self.validateEncryptionBindings(
+                    prepared: prepared,
+                    parameters: parameters,
+                    options: options
+                )
+                statement = try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    parameters: parameters,
+                    options: options,
+                    _encryptor: self.encryptor
+                )
+            } else {
+                statement = try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    parameters: parameters,
+                    options: options,
+                    _encryptor: nil
+                )
+            }
+            return self.execute(statement: statement, on: eventLoop, logger: logger)
+        } catch {
+            let eventLoop = eventLoop ?? eventLoopGroup.next()
+            return eventLoop.makeFailedFuture(error)
+        }
+    }
+
+    /// Execute a prepared statement and decode each row into a `Decodable` type.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    public func execute<T: Decodable>(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<[T]> {
+        self.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger
+        ).flatMapThrowing { rows in
+            let result = try rows.map { row in
+                try T(from: self.makeDecoder(row: row, options: options))
+            }
+            self.logDecryptedRows(count: result.count, options: options, logger: logger)
+            return result
+        }
+    }
 }
 
 extension CassandraClient {
@@ -504,6 +616,58 @@ extension CassandraClient {
             return eventLoop.makeSucceededFuture(
                 PaginatedRows(session: self, statement: statement, on: eventLoop, logger: logger)
             )
+        }
+
+        func prepare(
+            _ query: String,
+            on eventLoop: EventLoop?,
+            logger: Logger? = .none
+        ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
+            self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
+                logger.debug("preparing: \(query)")
+                let promise = eventLoop.makePromise(of: CassandraClient.PreparedStatement.self)
+                let future = cass_session_prepare(self.rawPointer, query)
+                futureSetPreparedCallback(future!) { result in
+                    promise.completeWith(result)
+                }
+                return promise.futureResult
+            }
+        }
+
+        func execute(
+            prepared: CassandraClient.PreparedStatement,
+            parameters: [CassandraClient.Statement.Value] = [],
+            options: CassandraClient.Statement.Options = .init(),
+            on eventLoop: EventLoop? = .none,
+            logger: Logger? = .none
+        ) -> EventLoopFuture<CassandraClient.Rows> {
+            do {
+                let statement: CassandraClient.Statement
+                if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                    try self.validateEncryptionBindings(
+                        prepared: prepared,
+                        parameters: parameters,
+                        options: options
+                    )
+                    statement = try CassandraClient.Statement(
+                        preparedRawPointer: prepared.bind(),
+                        parameters: parameters,
+                        options: options,
+                        _encryptor: self.encryptor
+                    )
+                } else {
+                    statement = try CassandraClient.Statement(
+                        preparedRawPointer: prepared.bind(),
+                        parameters: parameters,
+                        options: options,
+                        _encryptor: nil
+                    )
+                }
+                return self.execute(statement: statement, on: eventLoop, logger: logger)
+            } catch {
+                let eventLoop = eventLoop ?? self.eventLoopGroup.next()
+                return eventLoop.makeFailedFuture(error)
+            }
         }
 
         func execute(
