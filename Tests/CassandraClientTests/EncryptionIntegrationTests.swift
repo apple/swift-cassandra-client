@@ -593,6 +593,66 @@ final class EncryptionIntegrationTests: XCTestCase {
         XCTAssertEqual(results[0].secret.value, secretValue)
     }
 
+    /// Prepared statement read path with column registration — execute<T>(prepared:) decodes via makeDecoder.
+    func testColumnRegistrationWithPreparedStatement() async throws {
+        let tableName = "test_colreg_prep_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        // Create table using a session from the current client
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+
+        self.recreateClient()
+
+        let userId = "user-prep"
+        let secretValue = "prepared-secret"
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: .init(from: .string(userId))
+        )
+
+        // Write using a prepared statement with explicit context
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(secretValue), context: baseContext.forColumn("secret")),
+            ]
+        )
+
+        // Read using a prepared statement with column registration
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select user_id, secret from \(tableName) where user_id = ?"
+        )
+        var readOptions = CassandraClient.Statement.Options()
+        readOptions.encryptionTable = tableName
+
+        let results: [UserWithSecret] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string(userId)],
+            options: readOptions
+        )
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].user_id, userId)
+        XCTAssertEqual(results[0].secret.value, secretValue)
+    }
+
     /// Both encryptionContextBuilder and encryptionTable are set — builder wins.
     func testColumnRegistrationBuilderTakesPrecedence() throws {
         let tableName = "test_colreg_prec_\(DispatchTime.now().uptimeNanoseconds)"
@@ -696,8 +756,50 @@ final class EncryptionIntegrationTests: XCTestCase {
 
     // MARK: - Write-path enforcement
 
+    /// Binding a plaintext value to a column registered as encrypted should throw.
+    func testWritePathRejectsPlaintextForEncryptedColumn() async throws {
+        let tableName = "test_wp_reject_pt_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+
+        self.recreateClient()
+
+        let prepared = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        do {
+            // Bind plaintext bytes to an encrypted column — should be rejected
+            _ = try await self.cassandraClient.execute(
+                prepared: prepared,
+                parameters: [.string("user-1"), .bytes([0x01, 0x02])],
+                options: options
+            )
+            XCTFail("Expected encryptionConfigError for plaintext value on encrypted column")
+        } catch let error as CassandraClient.Error {
+            let msg = error.description
+            XCTAssertTrue(msg.contains("secret"), "Error should mention column name: \(msg)")
+        }
+    }
+
     /// Binding an encrypted value to a column NOT registered as encrypted should throw.
-    func testWritePathRejectsEncryptedForPlaintextColumn() throws {
+    func testWritePathRejectsEncryptedForPlaintextColumn() async throws {
         let tableName = "test_wp_reject_enc_\(DispatchTime.now().uptimeNanoseconds)"
         let keyspace = self.configuration.keyspace!
 
@@ -717,6 +819,10 @@ final class EncryptionIntegrationTests: XCTestCase {
 
         self.recreateClient()
 
+        let prepared = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, name) values (?, ?)"
+        )
+
         let baseContext = CassandraClient.EncryptionContext.Base(
             keyspace: keyspace,
             table: tableName,
@@ -728,14 +834,14 @@ final class EncryptionIntegrationTests: XCTestCase {
 
         do {
             // Bind encrypted value to a plaintext column — should be rejected
-            try self.cassandraClient.run(
-                "insert into \(tableName) (user_id, name) values (?, ?)",
+            _ = try await self.cassandraClient.execute(
+                prepared: prepared,
                 parameters: [
                     .string("user-1"),
                     .encryptedString(CassandraClient.Encrypted("oops"), context: baseContext.forColumn("name")),
                 ],
                 options: options
-            ).wait()
+            )
             XCTFail("Expected encryptionConfigError for encrypted value on plaintext column")
         } catch let error as CassandraClient.Error {
             let msg = error.description
