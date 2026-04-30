@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
+import Logging
 import XCTest
 
 @testable import CassandraClient
@@ -48,7 +49,9 @@ final class EncryptorTests: XCTestCase {
         let keyData = key ?? randomKey()
         let encryptor = try CassandraClient.Encryptor(
             keyMap: [keyName: keyData],
-            currentKeyName: keyName
+            currentKeyName: keyName,
+            salt: Data("test-salt".utf8),
+            logger: Logger(label: "test.encryptor")
         )
         return (encryptor, keyData)
     }
@@ -234,12 +237,26 @@ final class EncryptorTests: XCTestCase {
         XCTAssertThrowsError(try encryptor2.decrypt(encrypted, context: context))
     }
 
+    /// Empty salt should be rejected.
+    func testEmptySaltRejected() {
+        XCTAssertThrowsError(
+            try CassandraClient.Encryptor(
+                keyMap: ["key-1": randomKey()],
+                currentKeyName: "key-1",
+                salt: Data(),
+                logger: Logger(label: "test.encryptor")
+            )
+        )
+    }
+
     /// Empty key name should be rejected.
     func testEmptyKeyName() {
         XCTAssertThrowsError(
             try CassandraClient.Encryptor(
                 keyMap: ["": randomKey()],
-                currentKeyName: ""
+                currentKeyName: "",
+                salt: Data("test-salt".utf8),
+                logger: Logger(label: "test.encryptor")
             )
         )
     }
@@ -249,7 +266,9 @@ final class EncryptorTests: XCTestCase {
         XCTAssertThrowsError(
             try CassandraClient.Encryptor(
                 keyMap: ["key with spaces": randomKey()],
-                currentKeyName: "key with spaces"
+                currentKeyName: "key with spaces",
+                salt: Data("test-salt".utf8),
+                logger: Logger(label: "test.encryptor")
             )
         )
     }
@@ -259,7 +278,9 @@ final class EncryptorTests: XCTestCase {
         XCTAssertThrowsError(
             try CassandraClient.Encryptor(
                 keyMap: ["key-1": Data([0x01, 0x02, 0x03])],
-                currentKeyName: "key-1"
+                currentKeyName: "key-1",
+                salt: Data("test-salt".utf8),
+                logger: Logger(label: "test.encryptor")
             )
         )
     }
@@ -270,7 +291,9 @@ final class EncryptorTests: XCTestCase {
         let key2 = randomKey()
         let encryptor = try CassandraClient.Encryptor(
             keyMap: ["key-1": key1, "key-2": key2],
-            currentKeyName: "key-1"
+            currentKeyName: "key-1",
+            salt: Data("test-salt".utf8),
+            logger: Logger(label: "test.encryptor")
         )
         // New map missing "key-2" — should throw
         XCTAssertThrowsError(try encryptor.loadKeys(from: ["key-1": key1]))
@@ -281,7 +304,9 @@ final class EncryptorTests: XCTestCase {
         let key1 = randomKey()
         let encryptor = try CassandraClient.Encryptor(
             keyMap: ["key-1": key1],
-            currentKeyName: "key-1"
+            currentKeyName: "key-1",
+            salt: Data("test-salt".utf8),
+            logger: Logger(label: "test.encryptor")
         )
         // Same name, different bytes — should throw
         XCTAssertThrowsError(try encryptor.loadKeys(from: ["key-1": randomKey()]))
@@ -292,7 +317,9 @@ final class EncryptorTests: XCTestCase {
         let key1 = randomKey()
         let encryptor = try CassandraClient.Encryptor(
             keyMap: ["key-1": key1],
-            currentKeyName: "key-1"
+            currentKeyName: "key-1",
+            salt: Data("test-salt".utf8),
+            logger: Logger(label: "test.encryptor")
         )
         let key2 = randomKey()
         XCTAssertNoThrow(try encryptor.loadKeys(from: ["key-1": key1, "key-2": key2]))
@@ -422,7 +449,8 @@ final class EncryptorTests: XCTestCase {
         let encryptor = try CassandraClient.Encryptor(
             keyMap: ["key-1": keyData],
             currentKeyName: "key-1",
-            salt: salt
+            salt: salt,
+            logger: Logger(label: "test.encryptor")
         )
         let context = testContext()
         let plaintext = Data("secret-value".utf8)
@@ -440,12 +468,14 @@ final class EncryptorTests: XCTestCase {
         let encryptorA = try CassandraClient.Encryptor(
             keyMap: ["key-1": keyData],
             currentKeyName: "key-1",
-            salt: Data("salt-a".utf8)
+            salt: Data("salt-a".utf8),
+            logger: Logger(label: "test.encryptor")
         )
         let encryptorB = try CassandraClient.Encryptor(
             keyMap: ["key-1": keyData],
             currentKeyName: "key-1",
-            salt: Data("salt-b".utf8)
+            salt: Data("salt-b".utf8),
+            logger: Logger(label: "test.encryptor")
         )
         let context = testContext()
         let plaintext = Data("hello".utf8)
@@ -460,5 +490,82 @@ final class EncryptorTests: XCTestCase {
         // Cross-decryption should fail (different salt → different derived keys)
         XCTAssertThrowsError(try encryptorA.decrypt(encryptedB, context: context))
         XCTAssertThrowsError(try encryptorB.decrypt(encryptedA, context: context))
+    }
+
+    // MARK: - Array-based PrimaryKey.init
+
+    /// Array-based PrimaryKey.init produces identical bytes to the variadic init.
+    func testArrayBasedPrimaryKeyInit() {
+        let variadic = CassandraClient.PrimaryKey(
+            from:
+                .string("user"),
+            .int32(42),
+            .uuid(Foundation.UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!)
+        )
+        let arrayBased = CassandraClient.PrimaryKey(from: [
+            .string("user"),
+            .int32(42),
+            .uuid(Foundation.UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!),
+        ])
+        XCTAssertEqual(variadic, arrayBased)
+    }
+
+    // MARK: - EncryptionSchema
+
+    /// Basic construction and registryKey.
+    func testEncryptionSchemaConstruction() throws {
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: "prod",
+            table: "users",
+            keyColumns: [
+                .init(name: "user_id", type: .string),
+                .init(name: "created_at", type: .int64),
+            ],
+            encryptedColumns: ["phone_enc", "secret", "ssn"]
+        )
+        XCTAssertEqual(schema.registryKey, "prod.users")
+        XCTAssertEqual(schema.keyColumns.count, 2)
+        XCTAssertTrue(schema.encryptedColumns.contains("phone_enc"))
+        XCTAssertEqual(schema.encryptedColumns, ["phone_enc", "secret", "ssn"])
+    }
+
+    /// Register a schema on Configuration and verify it round-trips through the AnyObject? backing store.
+    func testRegisterAndRetrieveSchema() throws {
+        var config = CassandraClient.Configuration(
+            contactPointsProvider: { callback in callback(.success(["localhost"])) },
+            port: 9042,
+            protocolVersion: .v3
+        )
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: "prod",
+            table: "users",
+            keyColumns: [
+                .init(name: "user_id", type: .string)
+            ],
+            encryptedColumns: ["ssn"]
+        )
+        config.registerEncryptionSchema(schema)
+
+        let retrieved = config.encryptionSchemas["prod.users"]
+        XCTAssertNotNil(retrieved)
+        XCTAssertEqual(retrieved?.keyspace, "prod")
+        XCTAssertEqual(retrieved?.table, "users")
+        XCTAssertEqual(retrieved?.keyColumns.count, 1)
+        XCTAssertEqual(retrieved?.encryptedColumns, ["ssn"])
+    }
+
+    /// Key column names must not overlap with encrypted column names.
+    func testEncryptionSchemaRejectsKeyColumnOverlap() {
+        XCTAssertThrowsError(
+            try CassandraClient.EncryptionSchema(
+                keyspace: "prod",
+                table: "users",
+                keyColumns: [.init(name: "user_id", type: .string)],
+                encryptedColumns: ["user_id", "ssn"]
+            )
+        ) { error in
+            let description = String(describing: error)
+            XCTAssertTrue(description.contains("user_id"), "Error should mention the overlapping column")
+        }
     }
 }
