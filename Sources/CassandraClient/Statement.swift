@@ -43,6 +43,22 @@ extension CassandraClient {
             try self.bindParameters()
         }
 
+        /// Internal init for prepared statements. Takes a pre-bound `CassStatement*` from `cass_prepared_bind()`.
+        internal init(
+            preparedRawPointer: OpaquePointer,
+            parameters: [Value],
+            options: Options,
+            _encryptor: AnyObject?
+        ) throws {
+            self.query = "(prepared)"
+            self.parameters = parameters
+            self.options = options
+            self._encryptor = _encryptor
+            self.rawPointer = preparedRawPointer
+
+            try self.bindParameters()
+        }
+
         private func bindParameters() throws {
             for (index, parameter) in parameters.enumerated() {
                 let result: CassError

@@ -50,9 +50,10 @@ extension CassandraSession {
     /// For each `.encryptedXxx` value, extracts the column name from its `EncryptionContext`
     /// and checks that column is in the schema's `encryptedColumns` set.
     ///
-    /// This catches: encrypted values bound to wrong/unregistered columns (typos, copy-paste errors).
-    /// It does NOT catch: plaintext values bound to encrypted columns — that requires prepared statement
-    /// metadata to map positional parameters to column names.
+    /// This overload only checks one direction: encrypted values bound to unregistered columns.
+    /// Plaintext values bound to encrypted columns go undetected.
+    /// When executing prepared statements, ``validateEncryptionBindings(prepared:parameters:options:)``
+    /// checks both directions using parameter metadata.
     @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     func validateEncryptionBindings(
         parameters: [CassandraClient.Statement.Value],
@@ -64,6 +65,39 @@ extension CassandraSession {
         for value in parameters {
             guard value.isEncrypted, let columnName = value.encryptedColumnName else { continue }
             guard schema.encryptedColumns.contains(columnName) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Column '\(columnName)' is not registered as encrypted but received an encrypted value"
+                )
+            }
+        }
+    }
+
+    /// Validate that bound parameter values match the encryption schema using prepared statement metadata.
+    /// Ensures encrypted columns receive encrypted values and plaintext columns receive plaintext values.
+    ///
+    /// This validation requires prepared statement metadata to map parameter indices to column names,
+    /// so it only runs for prepared statement execution.
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+    func validateEncryptionBindings(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value],
+        options: CassandraClient.Statement.Options
+    ) throws {
+        guard let tableName = options.encryptionTable else { return }
+        let schema = try self.resolveSchema(tableName: tableName)
+
+        for i in 0..<parameters.count {
+            guard let columnName = prepared.parameterName(at: i) else { continue }
+            let value = parameters[i]
+            let isEncryptedColumn = schema.encryptedColumns.contains(columnName)
+
+            if isEncryptedColumn {
+                guard value.isEncrypted else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Column '\(columnName)' is registered as encrypted but received a plaintext value"
+                    )
+                }
+            } else if value.isEncrypted {
                 throw CassandraClient.Error.encryptionConfigError(
                     "Column '\(columnName)' is not registered as encrypted but received an encrypted value"
                 )

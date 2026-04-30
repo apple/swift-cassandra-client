@@ -104,6 +104,39 @@ public protocol CassandraSession {
     )
         async throws -> CassandraClient.PaginatedRows
 
+    /// Prepare a CQL query for repeated execution.
+    ///
+    /// The server parses and validates the query once. The returned ``CassandraClient/PreparedStatement``
+    /// can then be bound with different parameters and executed multiple times without re-parsing.
+    ///
+    /// - Parameters:
+    ///   - query: The CQL query string with `?` placeholders.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: A ``CassandraClient/PreparedStatement``.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func prepare(
+        _ query: String,
+        logger: Logger?
+    ) async throws -> CassandraClient.PreparedStatement
+
+    /// Execute a prepared statement with bound parameters.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``CassandraClient/PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/Rows``.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value],
+        options: CassandraClient.Statement.Options,
+        logger: Logger?
+    ) async throws -> CassandraClient.Rows
+
     /// Terminate the session and free resources.
     func shutdown() throws
 
@@ -595,6 +628,47 @@ extension CassandraSession {
         }
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
+
+    /// Prepare a CQL query for repeated execution.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func prepare(
+        _ query: String,
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.PreparedStatement {
+        try await self.prepare(query, logger: logger)
+    }
+
+    /// Execute a prepared statement with bound parameters.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.Rows {
+        try await self.execute(prepared: prepared, parameters: parameters, options: options, logger: logger)
+    }
+
+    /// Execute a prepared statement and decode each row into a `Decodable` type.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func execute<T: Decodable>(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none
+    ) async throws -> [T] {
+        let rows = try await self.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            logger: logger
+        )
+        let result = try rows.map { row in
+            try T(from: self.makeDecoder(row: row, options: options))
+        }
+        self.logDecryptedRows(count: result.count, options: options, logger: logger)
+        return result
+    }
 }
 
 extension CassandraClient.Session {
@@ -657,6 +731,82 @@ extension CassandraClient.Session {
     {
         try statement.setPagingSize(pageSize)
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func prepare(
+        _ query: String,
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.PreparedStatement {
+        let logger = logger ?? self.logger
+
+        lock.lock()
+        switch state {
+        case .idle:
+            let task = self.connect(logger: logger)
+            state = .connecting(ConnectionTask(task))
+            lock.unlock()
+
+            try await task.value
+            lock.withLock {
+                self.state = .connected
+            }
+            return try await self.prepare(query, logger: logger)
+        case .connectingFuture(let future):
+            lock.unlock()
+            try await future.get()
+            return try await self.prepare(query, logger: logger)
+        case .connecting(let task):
+            lock.unlock()
+            try await task.task.value
+            return try await self.prepare(query, logger: logger)
+        case .connected:
+            lock.unlock()
+            logger.debug("preparing: \(query)")
+            let future = cass_session_prepare(rawPointer, query)
+            return try await withCheckedThrowingContinuation { continuation in
+                futureSetPreparedCallback(future!) { result in
+                    continuation.resume(with: result)
+                }
+            }
+        case .disconnected:
+            lock.unlock()
+            if eventLoopGroupContainer.managed {
+                preconditionFailure("client is disconnected")
+            }
+            throw CassandraClient.Error.disconnected
+        }
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.Rows {
+        let statement: CassandraClient.Statement
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            try self.validateEncryptionBindings(
+                prepared: prepared,
+                parameters: parameters,
+                options: options
+            )
+            statement = try CassandraClient.Statement(
+                preparedRawPointer: prepared.bind(),
+                parameters: parameters,
+                options: options,
+                _encryptor: self.encryptor
+            )
+        } else {
+            statement = try CassandraClient.Statement(
+                preparedRawPointer: prepared.bind(),
+                parameters: parameters,
+                options: options,
+                _encryptor: nil
+            )
+        }
+        return try await self.execute(statement: statement, logger: logger)
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -723,6 +873,27 @@ private func futureSetResultCallback(
             let result: Result<CassandraClient.Rows, Error> =
                 resultCode == CASS_OK
                 ? .success(CassandraClient.Rows(future)) : .failure(CassandraClient.Error(future))
+            cass_future_free(future)
+            completion(result)
+        }
+    }
+    cass_future_set_callback(future, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
+}
+
+private func futureSetPreparedCallback(
+    _ future: OpaquePointer,
+    completion: @escaping (Result<CassandraClient.PreparedStatement, Error>) -> Void
+) {
+    let closure = unmanagedRetainedClosure {
+        DispatchQueue.global().async {
+            let resultCode = cass_future_error_code(future)
+            let result: Result<CassandraClient.PreparedStatement, Error>
+            if resultCode == CASS_OK {
+                let prepared = cass_future_get_prepared(future)!
+                result = .success(CassandraClient.PreparedStatement(rawPointer: prepared))
+            } else {
+                result = .failure(CassandraClient.Error(future))
+            }
             cass_future_free(future)
             completion(result)
         }

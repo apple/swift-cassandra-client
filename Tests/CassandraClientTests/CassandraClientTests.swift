@@ -1385,6 +1385,95 @@ final class Tests: XCTestCase {
         }
         return buffer
     }
+
+    // MARK: - Prepared statements
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testPreparedStatementRoundtrip() throws {
+        runAsyncAndWaitFor {
+            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+            try await self.cassandraClient.run("create table \(tableName) (id int primary key, name text);")
+
+            let insertStmt = try await self.cassandraClient.prepare(
+                "insert into \(tableName) (id, name) values (?, ?)"
+            )
+            try await self.cassandraClient.execute(
+                prepared: insertStmt,
+                parameters: [.int32(1), .string("alice")]
+            )
+
+            let selectStmt = try await self.cassandraClient.prepare(
+                "select id, name from \(tableName) where id = ?"
+            )
+            let rows = try await self.cassandraClient.execute(
+                prepared: selectStmt,
+                parameters: [.int32(1)]
+            )
+            let result = Array(rows)
+            XCTAssertEqual(result.count, 1)
+            XCTAssertEqual(result[0].column(0)?.int32, 1)
+            XCTAssertEqual(result[0].column(1)?.string, "alice")
+        }
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testPreparedStatementReuse() throws {
+        runAsyncAndWaitFor {
+            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+            try await self.cassandraClient.run("create table \(tableName) (id int primary key, name text);")
+
+            let insertStmt = try await self.cassandraClient.prepare(
+                "insert into \(tableName) (id, name) values (?, ?)"
+            )
+            for i: Int32 in 0..<10 {
+                try await self.cassandraClient.execute(
+                    prepared: insertStmt,
+                    parameters: [.int32(i), .string("user-\(i)")]
+                )
+            }
+
+            let rows = try await self.cassandraClient.query("select * from \(tableName);")
+            XCTAssertEqual(Array(rows).count, 10)
+        }
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testPreparedStatementMetadata() throws {
+        runAsyncAndWaitFor {
+            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+            try await self.cassandraClient.run(
+                "create table \(tableName) (id int primary key, name text, score double);"
+            )
+
+            let stmt = try await self.cassandraClient.prepare(
+                "insert into \(tableName) (id, name, score) values (?, ?, ?)"
+            )
+            XCTAssertEqual(stmt.parameterCount, 3)
+            XCTAssertEqual(stmt.parameterName(at: 0), "id")
+            XCTAssertEqual(stmt.parameterName(at: 1), "name")
+            XCTAssertEqual(stmt.parameterName(at: 2), "score")
+            XCTAssertNil(stmt.parameterName(at: 3))
+            XCTAssertNil(stmt.parameterName(at: -1))
+
+            let noParamsStmt = try await self.cassandraClient.prepare(
+                "select * from \(tableName)"
+            )
+            XCTAssertEqual(noParamsStmt.parameterCount, 0)
+            XCTAssertNil(noParamsStmt.parameterName(at: 0))
+        }
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testPreparedStatementInvalidQuery() throws {
+        runAsyncAndWaitFor {
+            do {
+                _ = try await self.cassandraClient.prepare("select * from nonexistent_table_xyz")
+                XCTFail("Expected prepare to throw for invalid query")
+            } catch {
+                XCTAssertTrue(error is CassandraClient.Error)
+            }
+        }
+    }
 }
 
 extension XCTestCase {
