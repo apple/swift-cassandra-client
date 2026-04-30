@@ -154,6 +154,74 @@ public class CassandraClient: CassandraSession {
         )
     }
 
+    /// Prepare a CQL query for repeated execution using the default ``CassandraSession``.
+    ///
+    /// - Parameters:
+    ///   - query: The CQL query string with `?` placeholders.
+    ///   - eventLoop: The `EventLoop` to use, or create a new one.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///
+    /// - Returns: A ``PreparedStatement``.
+    public func prepare(
+        _ query: String,
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<PreparedStatement> {
+        self.defaultSession.prepare(query, on: eventLoop, logger: logger)
+    }
+
+    /// Execute a ``PreparedStatement`` with bound parameters using the default ``CassandraSession``.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - eventLoop: The `EventLoop` to use, or create a new one.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///
+    /// - Returns: The resulting ``Rows``.
+    public func execute(
+        prepared: PreparedStatement,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<Rows> {
+        self.defaultSession.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger
+        )
+    }
+
+    /// Execute a ``PreparedStatement`` and decode each row into a `Decodable` type using the default ``CassandraSession``.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - eventLoop: The `EventLoop` to use, or create a new one.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///
+    /// - Returns: The decoded rows.
+    public func execute<T: Decodable>(
+        prepared: PreparedStatement,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<[T]> {
+        self.defaultSession.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger
+        )
+    }
+
     /// Create a new ``CassandraSession`` that can be used to perform queries on the given or configured keyspace.
     ///
     /// - Parameters:
