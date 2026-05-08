@@ -104,7 +104,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl", exact: "2.36.0"),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
-        .package(url: "https://github.com/apple/swift-crypto", .upToNextMajor(from: "3.0.0")),
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-metrics", .upToNextMajor(from: "2.0.0")),
     ],
     targets: [
