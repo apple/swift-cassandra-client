@@ -275,7 +275,9 @@ extension CassandraClient.Column {
 
         var map: [K: V] = [:]
 
-        let iterator = cass_iterator_from_map(self.rawPointer)
+        guard let iterator = cass_iterator_from_map(self.rawPointer) else {
+            return nil
+        }
         defer { cass_iterator_free(iterator) }
 
         while cass_iterator_next(iterator) == cass_true {
