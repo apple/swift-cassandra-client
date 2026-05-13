@@ -104,6 +104,27 @@ public protocol CassandraSession {
     )
         async throws -> CassandraClient.PaginatedRows
 
+    /// Execute a batch of statements.
+    ///
+    /// - Parameters:
+    ///   - configuration: Options to apply to the batch.
+    ///   - eventLoop: The `EventLoop` to use, or create a new one.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - build: Closure that adds statements to the batch.
+    func batch(
+        configuration: CassandraClient.Batch.Configuration,
+        on eventLoop: EventLoop?,
+        logger: Logger?,
+        _ build: (inout CassandraClient.Batch) throws -> Void
+    ) -> EventLoopFuture<Void>
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func batch(
+        configuration: CassandraClient.Batch.Configuration,
+        logger: Logger?,
+        _ build: (inout CassandraClient.Batch) async throws -> Void
+    ) async throws
+
     /// Terminate the session and free resources.
     func shutdown() throws
 
@@ -368,13 +389,12 @@ extension CassandraClient {
             }
         }
 
-        func execute(
-            statement: Statement,
+        /// Ensure the session is connected, then invoke `body` on the given event loop.
+        private func withConnection<Result>(
             on eventLoop: EventLoop?,
-            logger: Logger? = .none
-        )
-            -> EventLoopFuture<Rows>
-        {
+            logger: Logger?,
+            _ body: @escaping (EventLoop, Logger) -> EventLoopFuture<Result>
+        ) -> EventLoopFuture<Result> {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
             let logger = logger ?? self.logger
 
@@ -388,40 +408,49 @@ extension CassandraClient {
                     self.lock.withLock {
                         self.state = .connected
                     }
-                    return self.execute(statement: statement, on: eventLoop, logger: logger)
+                    return body(eventLoop, logger)
                 }
             case .connectingFuture(let future):
                 self.lock.unlock()
                 return future.flatMap { _ in
-                    self.execute(statement: statement, on: eventLoop, logger: logger)
+                    body(eventLoop, logger)
                 }
             case .connecting(let task):
                 self.lock.unlock()
-                let promise = eventLoop.makePromise(of: Rows.self)
+                let promise = eventLoop.makePromise(of: Result.self)
                 if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
                     promise.completeWithTask {
                         try await task.task.value
-                        return try await self.execute(statement: statement, logger: logger)
+                        return try await body(eventLoop, logger).get()
                     }
                 }
                 return promise.futureResult
             case .connected:
                 self.lock.unlock()
+                return body(eventLoop, logger)
+            case .disconnected:
+                self.lock.unlock()
+                if self.eventLoopGroupContainer.managed {
+                    preconditionFailure("client is disconnected")
+                }
+                return eventLoop.makeFailedFuture(Error.disconnected)
+            }
+        }
+
+        func execute(
+            statement: Statement,
+            on eventLoop: EventLoop?,
+            logger: Logger? = .none
+        ) -> EventLoopFuture<Rows> {
+            self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("executing: \(statement.query)")
                 logger.trace("\(statement.parameters)")
                 let promise = eventLoop.makePromise(of: Rows.self)
-                let future = cass_session_execute(rawPointer, statement.rawPointer)
+                let future = cass_session_execute(self.rawPointer, statement.rawPointer)
                 futureSetResultCallback(future!) { result in
                     promise.completeWith(result)
                 }
                 return promise.futureResult
-            case .disconnected:
-                self.lock.unlock()
-                if self.eventLoopGroupContainer.managed {
-                    // eventloop *is* shutdown now
-                    preconditionFailure("client is disconnected")
-                }
-                return eventLoop.makeFailedFuture(Error.disconnected)
             }
         }
 
@@ -442,6 +471,45 @@ extension CassandraClient {
             return eventLoop.makeSucceededFuture(
                 PaginatedRows(session: self, statement: statement, on: eventLoop, logger: logger)
             )
+        }
+
+        func execute(
+            batch: consuming Batch,
+            on eventLoop: EventLoop?,
+            logger: Logger?
+        ) -> EventLoopFuture<Void> {
+            self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
+                logger.debug("executing batch")
+                let promise = eventLoop.makePromise(of: Void.self)
+                let future = cass_session_execute_batch(self.rawPointer, batch.rawPointer)
+                futureSetCallback(future!) { result in
+                    promise.completeWith(result)
+                }
+                return promise.futureResult
+            }
+        }
+
+        /// Execute a batch of statements.
+        ///
+        /// - Parameters:
+        ///   - configuration: Options to apply to the batch.
+        ///   - eventLoop: The `EventLoop` to use, or create a new one.
+        ///   - logger: If `nil`, the client's default `Logger` is used.
+        ///   - build: Closure that adds statements to the batch.
+        public func batch(
+            configuration: Batch.Configuration = .init(),
+            on eventLoop: EventLoop? = .none,
+            logger: Logger? = .none,
+            _ build: (inout Batch) throws -> Void
+        ) -> EventLoopFuture<Void> {
+            do {
+                var batch = try Batch(configuration: configuration)
+                try build(&batch)
+                return self.execute(batch: batch, on: eventLoop, logger: logger)
+            } catch {
+                let eventLoop = eventLoop ?? eventLoopGroup.next()
+                return eventLoop.makeFailedFuture(error)
+            }
         }
 
         private func connect(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Void> {
@@ -598,13 +666,12 @@ extension CassandraSession {
 }
 
 extension CassandraClient.Session {
+    /// Ensure the session is connected, then invoke `body`.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func execute(
-        statement: CassandraClient.Statement,
-        logger: Logger? = .none
-    ) async throws
-        -> CassandraClient.Rows
-    {
+    private func withConnection<T>(
+        logger: Logger?,
+        _ body: (Logger) async throws -> T
+    ) async throws -> T {
         let logger = logger ?? self.logger
 
         lock.lock()
@@ -618,17 +685,34 @@ extension CassandraClient.Session {
             lock.withLock {
                 self.state = .connected
             }
-            return try await self.execute(statement: statement, logger: logger)
+            return try await body(logger)
         case .connectingFuture(let future):
             lock.unlock()
             try await future.get()
-            return try await self.execute(statement: statement, logger: logger)
+            return try await body(logger)
         case .connecting(let task):
             lock.unlock()
             try await task.task.value
-            return try await self.execute(statement: statement, logger: logger)
+            return try await body(logger)
         case .connected:
             lock.unlock()
+            return try await body(logger)
+        case .disconnected:
+            lock.unlock()
+            if eventLoopGroupContainer.managed {
+                preconditionFailure("client is disconnected")
+            }
+            throw CassandraClient.Error.disconnected
+        }
+    }
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func execute(
+        statement: CassandraClient.Statement,
+        logger: Logger? = .none
+    ) async throws
+        -> CassandraClient.Rows
+    {
+        try await self.withConnection(logger: logger) { logger in
             logger.debug("executing: \(statement.query)")
             logger.trace("\(statement.parameters)")
             let future = cass_session_execute(rawPointer, statement.rawPointer)
@@ -637,13 +721,6 @@ extension CassandraClient.Session {
                     continuation.resume(with: result)
                 }
             }
-        case .disconnected:
-            lock.unlock()
-            if eventLoopGroupContainer.managed {
-                // eventloop *is* shutdown now
-                preconditionFailure("client is disconnected")
-            }
-            throw CassandraClient.Error.disconnected
         }
     }
 
@@ -652,11 +729,42 @@ extension CassandraClient.Session {
         statement: CassandraClient.Statement,
         pageSize: Int32,
         logger: Logger? = .none
-    )
-        async throws -> CassandraClient.PaginatedRows
-    {
+    ) async throws -> CassandraClient.PaginatedRows {
         try statement.setPagingSize(pageSize)
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func execute(
+        batch: borrowing CassandraClient.Batch,
+        logger: Logger?
+    ) async throws {
+        try await self.withConnection(logger: logger) { logger in
+            logger.debug("executing batch")
+            let future = cass_session_execute_batch(rawPointer, batch.rawPointer)
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Swift.Error>) in
+                futureSetCallback(future!) { result in
+                    continuation.resume(with: result)
+                }
+            }
+        }
+    }
+
+    /// Execute a batch of statements.
+    ///
+    /// - Parameters:
+    ///   - configuration: Options to apply to the batch.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - build: Closure that adds statements to the batch.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func batch(
+        configuration: CassandraClient.Batch.Configuration = .init(),
+        logger: Logger? = .none,
+        _ build: (inout CassandraClient.Batch) async throws -> Void
+    ) async throws {
+        var batch = try CassandraClient.Batch(configuration: configuration)
+        try await build(&batch)
+        try await self.execute(batch: batch, logger: logger)
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)

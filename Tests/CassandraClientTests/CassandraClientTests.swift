@@ -1370,6 +1370,53 @@ final class Tests: XCTestCase {
         XCTAssertEqual(row.column("valid_map"), validMap)
     }
 
+    // MARK: - Batch tests
+
+    func testBatchInsertion() throws {
+        let tableName = "test_batch_logged_\(DispatchTime.now().uptimeNanoseconds)"
+        try self.cassandraClient.run(
+            "create table \(tableName) (id int primary key, name text);"
+        ).wait()
+
+        try self.cassandraClient.batch { batch in
+            for i: Int32 in 0..<10 {
+                try batch.add(
+                    statement: CassandraClient.Statement(
+                        query: "insert into \(tableName) (id, name) values (?, ?);",
+                        parameters: [.int32(i), .string("name_\(i)")]
+                    )
+                )
+            }
+        }.wait()
+
+        let result = try self.cassandraClient.query("select * from \(tableName);").wait()
+        XCTAssertEqual(Array(result).count, 10)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testBatchInsertionAsync() throws {
+        runAsyncAndWaitFor {
+            let tableName = "test_batch_async_\(DispatchTime.now().uptimeNanoseconds)"
+            try await self.cassandraClient.run(
+                "create table \(tableName) (id int primary key, name text);"
+            )
+
+            try await self.cassandraClient.batch { batch in
+                for i: Int32 in 0..<10 {
+                    try batch.add(
+                        statement: CassandraClient.Statement(
+                            query: "insert into \(tableName) (id, name) values (?, ?);",
+                            parameters: [.int32(i), .string("name_\(i)")]
+                        )
+                    )
+                }
+            }
+
+            let result = try await self.cassandraClient.query("select * from \(tableName);")
+            XCTAssertEqual(Array(result).count, 10)
+        }
+    }
+
     // meh, but nothing cross platform available
     func randomBytes(size: Int) -> [UInt8] {
         var buffer = [UInt8]()
