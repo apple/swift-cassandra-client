@@ -61,13 +61,13 @@ final class Tests: XCTestCase {
     override func tearDown() {
         super.tearDown()
 
-        XCTAssertNoThrow(try self.cassandraClient.shutdown())
+        XCTAssertNoThrow(try self.cassandraClient.syncShutdown())
         self.cassandraClient = nil  // FIXME: for tsan
     }
 
     func testSession() {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(try session.run("create table \(tableName) (data bigint primary key);").wait())
@@ -85,7 +85,7 @@ final class Tests: XCTestCase {
     func testAsyncSession() throws {
         runAsyncAndWaitFor {
             let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
+            defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
             let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
             try await session.run("create table \(tableName) (data bigint primary key);")
@@ -108,7 +108,7 @@ final class Tests: XCTestCase {
         var configuration = self.configuration!
         configuration.keyspace = "test_\(DispatchTime.now().uptimeNanoseconds)"
         let cassandraClient = CassandraClient(configuration: configuration)
-        defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
+        defer { XCTAssertNoThrow(try cassandraClient.syncShutdown()) }
 
         XCTAssertNoThrow(
             try cassandraClient.withSession(keyspace: .none) { session in
@@ -126,7 +126,7 @@ final class Tests: XCTestCase {
             var configuration = self.configuration!
             configuration.keyspace = "test_\(DispatchTime.now().uptimeNanoseconds)"
             let cassandraClient = CassandraClient(configuration: configuration)
-            defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
+            defer { XCTAssertNoThrow(try cassandraClient.syncShutdown()) }
 
             try await cassandraClient.withSession(keyspace: .none) { session in
                 try await session.run(
@@ -141,7 +141,7 @@ final class Tests: XCTestCase {
         var configuration = self.configuration!
         configuration.keyspace = "test_\(DispatchTime.now().uptimeNanoseconds)"
         let cassandraClient = CassandraClient(configuration: configuration)
-        defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
+        defer { XCTAssertNoThrow(try cassandraClient.syncShutdown()) }
         XCTAssertNoThrow(
             try cassandraClient.withSession(keyspace: .none) { session in
                 session.run(
@@ -159,8 +159,8 @@ final class Tests: XCTestCase {
         XCTAssertNoThrow(
             try cassandraClient.run("create table \(tableName) (id int primary key);").wait()
         )
-        XCTAssertNoThrow(try cassandraClient.shutdown())
-        XCTAssertNoThrow(try cassandraClient.shutdown())
+        XCTAssertNoThrow(try cassandraClient.syncShutdown())
+        XCTAssertNoThrow(try cassandraClient.syncShutdown())
     }
 
     func testShutdownELGShared() {
@@ -175,11 +175,11 @@ final class Tests: XCTestCase {
         XCTAssertNoThrow(
             try cassandraClient.run("create table \(tableName) (id int primary key);").wait()
         )
-        XCTAssertNoThrow(try cassandraClient.shutdown())
+        XCTAssertNoThrow(try cassandraClient.syncShutdown())
         XCTAssertThrowsError(try cassandraClient.query("select * from \(tableName);").wait()) { error in
             XCTAssertEqual(error as? CassandraClient.Error, CassandraClient.Error.disconnected)
         }
-        XCTAssertNoThrow(try cassandraClient.shutdown())
+        XCTAssertNoThrow(try cassandraClient.syncShutdown())
     }
 
     func testKeyspace() {
@@ -205,7 +205,7 @@ final class Tests: XCTestCase {
         var configuration = self.configuration!
         configuration.keyspace = keyspace2
         let cassandraClient = CassandraClient(configuration: configuration)
-        defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
+        defer { XCTAssertNoThrow(try cassandraClient.syncShutdown()) }
         XCTAssertNoThrow(
             try cassandraClient.withSession(keyspace: .none) { session in
                 try session
@@ -1227,7 +1227,7 @@ final class Tests: XCTestCase {
         logger.logLevel = .debug
 
         let serialClient = CassandraClient(configuration: serialConfig, logger: logger)
-        defer { XCTAssertNoThrow(try serialClient.shutdown()) }
+        defer { XCTAssertNoThrow(try serialClient.syncShutdown()) }
 
         XCTAssertNoThrow(
             try serialClient.withSession(keyspace: .none) { session in
@@ -1238,7 +1238,7 @@ final class Tests: XCTestCase {
         )
 
         let serialSession = serialClient.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try serialSession.shutdown()) }
+        defer { XCTAssertNoThrow(try serialSession.syncShutdown()) }
 
         let tableName = "test_serial_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(try serialSession.run("create table \(tableName) (id int primary key, value int);").wait())
@@ -1259,10 +1259,10 @@ final class Tests: XCTestCase {
         localSerialConfig.serialConsistency = .localSerial
 
         let localSerialClient = CassandraClient(configuration: localSerialConfig, logger: logger)
-        defer { XCTAssertNoThrow(try localSerialClient.shutdown()) }
+        defer { XCTAssertNoThrow(try localSerialClient.syncShutdown()) }
 
         let localSerialSession = localSerialClient.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try localSerialSession.shutdown()) }
+        defer { XCTAssertNoThrow(try localSerialSession.syncShutdown()) }
 
         let tableName2 = "test_local_serial_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(
@@ -1288,10 +1288,10 @@ final class Tests: XCTestCase {
         nilSerialConfig.serialConsistency = nil
 
         let nilSerialClient = CassandraClient(configuration: nilSerialConfig, logger: logger)
-        defer { XCTAssertNoThrow(try nilSerialClient.shutdown()) }
+        defer { XCTAssertNoThrow(try nilSerialClient.syncShutdown()) }
 
         let nilSerialSession = nilSerialClient.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try nilSerialSession.shutdown()) }
+        defer { XCTAssertNoThrow(try nilSerialSession.syncShutdown()) }
 
         let tableName3 = "test_nil_serial_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(try nilSerialSession.run("create table \(tableName3) (id int primary key, value int);").wait())

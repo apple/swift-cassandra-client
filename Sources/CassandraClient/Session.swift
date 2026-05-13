@@ -105,7 +105,12 @@ public protocol CassandraSession {
         async throws -> CassandraClient.PaginatedRows
 
     /// Terminate the session and free resources.
-    func shutdown() throws
+    @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdown()")
+    func syncShutdown() throws
+
+    /// Terminate the session and free resources.
+    @available(macOS 10.15, *)
+    func shutdown() async throws
 
     /// Get metrics for this session.
     func getMetrics() -> CassandraMetrics
@@ -354,7 +359,8 @@ extension CassandraClient {
             cass_session_free(self.rawPointer)
         }
 
-        func shutdown() throws {
+        @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdown()")
+        func syncShutdown() throws {
             self.lock.lock()
             defer {
                 self.state = .disconnected
@@ -362,7 +368,22 @@ extension CassandraClient {
             }
             switch self.state {
             case .connected:
-                try self.disconnect()
+                try self.syncDisconnect()
+            default:
+                break
+            }
+        }
+
+        @available(macOS 10.15, *)
+        func shutdown() async throws {
+            self.lock.lock()
+            defer {
+                self.state = .disconnected
+                self.lock.unlock()
+            }
+            switch self.state {
+            case .connected:
+                try await self.disconnect()
             default:
                 break
             }
@@ -466,7 +487,8 @@ extension CassandraClient {
                 }
         }
 
-        private func disconnect() throws {
+        @available(*, noasync, message: "Can block indefinitely, prefer disconnect()", renamed: "disconnect()")
+        private func syncDisconnect() throws {
             var error: Swift.Error?
             let semaphore = DispatchSemaphore(value: 0)
             let future = cass_session_close(rawPointer)
@@ -479,6 +501,16 @@ extension CassandraClient {
             semaphore.wait()
             if let error = error {
                 throw error
+            }
+        }
+
+        @available(macOS 10.15, *)
+        private func disconnect() async throws {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Swift.Error>) in
+                let future = cass_session_close(rawPointer)
+                futureSetCallback(future!) { result in
+                    cont.resume(with: result)
+                }
             }
         }
 
