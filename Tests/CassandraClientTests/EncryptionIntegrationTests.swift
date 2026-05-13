@@ -74,13 +74,13 @@ final class EncryptionIntegrationTests: XCTestCase {
 
     override func tearDown() {
         super.tearDown()
-        XCTAssertNoThrow(try self.cassandraClient.shutdown())
+        XCTAssertNoThrow(try self.cassandraClient.syncShutdown())
         self.cassandraClient = nil
     }
 
     /// Shutdown and recreate the client after configuration changes (e.g. registering schemas).
     private func recreateClient() {
-        XCTAssertNoThrow(try self.cassandraClient.shutdown())
+        XCTAssertNoThrow(try self.cassandraClient.syncShutdown())
         var logger = Logger(label: "test")
         logger.logLevel = .debug
         self.cassandraClient = CassandraClient(configuration: self.configuration, logger: logger)
@@ -91,7 +91,7 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// Insert an encrypted string via Statement, read it back using Column.decryptedString.
     func testWriteAndManualRead() throws {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_enc_\(DispatchTime.now().uptimeNanoseconds)"
 
@@ -142,7 +142,7 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// Write and read back all encrypted types: String, Int32, Int64, Double, UUID, [UInt8].
     func testAllEncryptedTypes() throws {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_enc_all_\(DispatchTime.now().uptimeNanoseconds)"
 
@@ -238,7 +238,7 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// re-encrypt old data with key-2, verify it now uses key-2.
     func testKeyRotationAndReEncryption() throws {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_enc_rotate_\(DispatchTime.now().uptimeNanoseconds)"
         let keyspace = self.configuration.keyspace!
@@ -318,7 +318,7 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// A null encrypted column should return nil, not crash.
     func testNullEncryptedColumn() throws {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_enc_null_\(DispatchTime.now().uptimeNanoseconds)"
         let keyspace = self.configuration.keyspace!
@@ -355,7 +355,7 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// Insert encrypted data, read it back using the Codable path with Encrypted<String>.
     func testCodableDecrypt() throws {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_enc_codable_\(DispatchTime.now().uptimeNanoseconds)"
 
@@ -411,7 +411,7 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// Insert 3 rows, read all back via Codable, verify each decrypts with its own primaryKey.
     func testCodableMultipleRows() throws {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_enc_multi_\(DispatchTime.now().uptimeNanoseconds)"
         let keyspace = self.configuration.keyspace!
@@ -475,7 +475,7 @@ final class EncryptionIntegrationTests: XCTestCase {
     /// Struct with two Encrypted fields of different types, decoded via Codable.
     func testCodableMultipleEncryptedColumns() throws {
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         let tableName = "test_enc_multi_col_\(DispatchTime.now().uptimeNanoseconds)"
         let keyspace = self.configuration.keyspace!
@@ -542,7 +542,7 @@ final class EncryptionIntegrationTests: XCTestCase {
         // Create table using a session from the current client
         do {
             let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
+            defer { XCTAssertNoThrow(try session.syncShutdown()) }
             try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
         }
 
@@ -568,7 +568,7 @@ final class EncryptionIntegrationTests: XCTestCase {
 
         // Write with explicit context using a new session
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         try session.run(
             "insert into \(tableName) (user_id, secret) values (?, ?)",
@@ -601,7 +601,7 @@ final class EncryptionIntegrationTests: XCTestCase {
         // Create table using a session from the current client
         do {
             let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
+            defer { XCTAssertNoThrow(try session.syncShutdown()) }
             try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
         }
 
@@ -626,7 +626,7 @@ final class EncryptionIntegrationTests: XCTestCase {
 
         // Insert using the new client's session
         let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
+        defer { XCTAssertNoThrow(try session.syncShutdown()) }
 
         try session.run(
             "insert into \(tableName) (user_id, secret) values (?, ?)",
@@ -667,7 +667,7 @@ final class EncryptionIntegrationTests: XCTestCase {
         // Create the table and insert a row so the decoder is invoked
         do {
             let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
+            defer { XCTAssertNoThrow(try session.syncShutdown()) }
             try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
             try session.run(
                 "insert into \(tableName) (user_id, secret) values (?, ?)",
@@ -703,7 +703,7 @@ final class EncryptionIntegrationTests: XCTestCase {
 
         do {
             let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
+            defer { XCTAssertNoThrow(try session.syncShutdown()) }
             try session.run("create table \(tableName) (user_id text primary key, name text)").wait()
         }
 
