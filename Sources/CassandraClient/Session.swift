@@ -200,10 +200,31 @@ import NIOCore  // for async-await bridge
     ) async throws
 
     /// Terminate the session and free resources.
+    @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdown()")
     func shutdown() throws
+
+    /// Terminate the session and free resources.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func shutdownAsync() async throws
 
     /// Get metrics for this session.
     func getMetrics() -> CassandraMetrics
+}
+
+// This extension ensures we don't break the API by adding the shutdownAsync function
+// We should remove it before 1.0
+extension CassandraSession {
+    /// Terminate the session and free resources.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @available(
+        *,
+        deprecated,
+        message:
+            "You must implement this function to shutdown async. This default implementation calls the sync shutdown function"
+    )
+    func shutdownAsync() async throws {
+        try self.shutdown()
+    }
 }
 
 private let encryptionLogger = Logger(label: "cassandra.encryption")
@@ -497,10 +518,14 @@ final class CassFuture<T>: Sendable {
 
     func asNIOFuture(eventLoop: any EventLoop) -> EventLoopFuture<T> {
         let promise = eventLoop.makePromise(of: T.self)
+        self.complete(to: promise)
+        return promise.futureResult
+    }
+
+    func complete(to promise: EventLoopPromise<T>) {
         self.setResultCallback { result in
             promise.completeWith(result)
         }
-        return promise.futureResult
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -512,6 +537,7 @@ final class CassFuture<T>: Sendable {
         }
     }
 
+    @available(*, noasync, message: "Can block indefinitely, prefer await()", renamed: "await()")
     func syncWait() throws -> T {
         var result: Result<T, any Error>?
         let semaphore = DispatchSemaphore(value: 0)
@@ -665,6 +691,7 @@ extension CassandraClient {
             case connectingFuture(EventLoopFuture<Void>)
             case connecting(ConnectionTask)
             case connected
+            case disconnecting(ConnectionTask)
             case disconnectingFuture(EventLoopFuture<Void>)
             case disconnected
         }
@@ -688,6 +715,7 @@ extension CassandraClient {
             }
         }
 
+        @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdown()")
         func shutdown() throws {
             enum Action {
                 case alreadyShut
@@ -701,6 +729,8 @@ extension CassandraClient {
                     let promise = el.makePromise(of: Void.self)
                     state = .disconnectingFuture(promise.futureResult)
                     return .disconnectThenMarkShut(promise)
+                case .disconnecting:
+                    preconditionFailure("Cannot call sync shutdown after async shutdown")
                 case .disconnectingFuture(let existing):
                     return .wait(existing)
                 case .idle, .connecting, .connectingFuture, .disconnected:
@@ -729,6 +759,53 @@ extension CassandraClient {
                         preconditionFailure("State changed from disconnecting to not disconnecting unexpectedly")
                     }
                 }
+            }
+        }
+
+        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+        func shutdownAsync() async throws {
+            enum Action {
+                case alreadyShut
+                case waitThenMarkShut(ConnectionTask)
+                case wait(ConnectionTask)
+                case waitFuture(EventLoopFuture<Void>)
+            }
+            let action: Action = self._state.withLockedValue { state in
+                switch state {
+                case .connected:
+                    let task = ConnectionTask(
+                        Task {
+                            try await self.disconnect()
+                        }
+                    )
+                    state = .disconnecting(task)
+                    return .waitThenMarkShut(task)
+                case .disconnecting(let existing):
+                    return .wait(existing)
+                case .disconnectingFuture(let existing):
+                    return .waitFuture(existing)
+                case .idle, .connecting, .connectingFuture, .disconnected:
+                    state = .disconnected
+                    return .alreadyShut
+                }
+            }
+            switch action {
+            case .alreadyShut:
+                return
+            case .waitThenMarkShut(let task):
+                try await task.task.value
+                self._state.withLockedValue { state in
+                    switch state {
+                    case .disconnecting, .disconnectingFuture:
+                        state = .disconnected
+                    default:
+                        preconditionFailure("State changed from disconnecting to not disconnecting unexpectedly")
+                    }
+                }
+            case .waitFuture(let future):
+                try await future.get()
+            case .wait(let task):
+                try await task.task.value
             }
         }
 
@@ -767,7 +844,7 @@ extension CassandraClient {
                     return .awaitConnecting(task)
                 case .connected:
                     return .ready
-                case .disconnected, .disconnectingFuture:
+                case .disconnected, .disconnecting, .disconnectingFuture:
                     return .disconnected
                 }
             }
@@ -1139,9 +1216,10 @@ extension CassandraClient {
                 }
         }
 
-        private func disconnect() throws {
+        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+        private func disconnect() async throws {
             let future = self.underlying.close()
-            try future.syncWait()
+            try await future.await()
         }
 
         func getMetrics() -> CassandraMetrics {
@@ -1340,7 +1418,7 @@ extension CassandraClient.Session {
                 return .awaitConnectingFuture(future)
             case .connected:
                 return .ready
-            case .disconnected, .disconnectingFuture:
+            case .disconnected, .disconnecting, .disconnectingFuture:
                 return .disconnected
             }
         }
