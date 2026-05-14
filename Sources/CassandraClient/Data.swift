@@ -55,8 +55,8 @@ extension CassandraClient {
     public final class Rows: Sequence {
         internal let rawPointer: OpaquePointer
 
-        internal init(_ resultFutureRawPointer: OpaquePointer) {
-            self.rawPointer = cass_future_get_result(resultFutureRawPointer)
+        internal init(_ resultRawPointer: OpaquePointer) {
+            self.rawPointer = resultRawPointer
         }
 
         deinit {

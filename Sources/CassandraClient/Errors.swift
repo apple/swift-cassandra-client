@@ -97,15 +97,6 @@ extension CassandraClient {
             self.code = code
         }
 
-        init(_ future: OpaquePointer) {
-            let errorCode = cass_future_error_code(future)
-            var messageRaw: UnsafePointer<CChar>?
-            var messageLength = Int()
-            cass_future_error_message(future, &messageRaw, &messageLength)
-            let message = messageRaw.map { String(cString: $0) }
-            self.init(errorCode, message: message)
-        }
-
         init(_ error: CassError, message: String? = .none) {
             let message = message ?? ""
             switch error {
