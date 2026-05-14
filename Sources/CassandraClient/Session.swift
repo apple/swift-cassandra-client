@@ -321,8 +321,7 @@ extension CassandraClient {
 
         private let configuration: Configuration
         private let logger: Logger
-        private var state = State.idle
-        private let lock = Lock()
+        private let _state = NIOLockedValueBox(State.idle)
 
         private let rawPointer: OpaquePointer
 
@@ -346,7 +345,7 @@ extension CassandraClient {
         }
 
         deinit {
-            guard case .disconnected = (self.lock.withLock { self.state }) else {
+            guard case .disconnected = (self._state.withLockedValue { $0 }) else {
                 preconditionFailure(
                     "Session not shut down before the deinit. Please call session.shutdown() when no longer needed."
                 )
@@ -355,16 +354,16 @@ extension CassandraClient {
         }
 
         func shutdown() throws {
-            self.lock.lock()
-            defer {
-                self.state = .disconnected
-                self.lock.unlock()
-            }
-            switch self.state {
-            case .connected:
-                try self.disconnect()
-            default:
-                break
+            try self._state.withLockedValue { state in
+                defer {
+                    state = .disconnected
+                }
+                switch state {
+                case .disconnected:
+                    try self.disconnect()
+                default:
+                    break
+                }
             }
         }
 
@@ -378,50 +377,46 @@ extension CassandraClient {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
             let logger = logger ?? self.logger
 
-            self.lock.lock()
-            switch self.state {
-            case .idle:
-                let future = self.connect(on: eventLoop, logger: logger)
-                self.state = .connectingFuture(future)
-                self.lock.unlock()
-                return future.flatMap { _ in
-                    self.lock.withLock {
-                        self.state = .connected
+            return self._state.withLockedValue { state in
+                switch state {
+                case .idle:
+                    let future = self.connect(on: eventLoop, logger: logger)
+                    state = .connectingFuture(future)
+                    return future.flatMap { _ in
+                        self._state.withLockedValue {
+                            $0 = .connected
+                        }
+                        return self.execute(statement: statement, on: eventLoop, logger: logger)
                     }
-                    return self.execute(statement: statement, on: eventLoop, logger: logger)
-                }
-            case .connectingFuture(let future):
-                self.lock.unlock()
-                return future.flatMap { _ in
-                    self.execute(statement: statement, on: eventLoop, logger: logger)
-                }
-            case .connecting(let task):
-                self.lock.unlock()
-                let promise = eventLoop.makePromise(of: Rows.self)
-                if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
-                    promise.completeWithTask {
-                        try await task.task.value
-                        return try await self.execute(statement: statement, logger: logger)
+                case .connectingFuture(let future):
+                    return future.flatMap { _ in
+                        self.execute(statement: statement, on: eventLoop, logger: logger)
                     }
+                case .connecting(let task):
+                    let promise = eventLoop.makePromise(of: Rows.self)
+                    if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
+                        promise.completeWithTask {
+                            try await task.task.value
+                            return try await self.execute(statement: statement, logger: logger)
+                        }
+                    }
+                    return promise.futureResult
+                case .connected:
+                    logger.debug("executing: \(statement.query)")
+                    logger.trace("\(statement.parameters)")
+                    let promise = eventLoop.makePromise(of: Rows.self)
+                    let future = cass_session_execute(rawPointer, statement.rawPointer)
+                    futureSetResultCallback(future!) { result in
+                        promise.completeWith(result)
+                    }
+                    return promise.futureResult
+                case .disconnected:
+                    if self.eventLoopGroupContainer.managed {
+                        // eventloop *is* shutdown now
+                        preconditionFailure("client is disconnected")
+                    }
+                    return eventLoop.makeFailedFuture(Error.disconnected)
                 }
-                return promise.futureResult
-            case .connected:
-                self.lock.unlock()
-                logger.debug("executing: \(statement.query)")
-                logger.trace("\(statement.parameters)")
-                let promise = eventLoop.makePromise(of: Rows.self)
-                let future = cass_session_execute(rawPointer, statement.rawPointer)
-                futureSetResultCallback(future!) { result in
-                    promise.completeWith(result)
-                }
-                return promise.futureResult
-            case .disconnected:
-                self.lock.unlock()
-                if self.eventLoopGroupContainer.managed {
-                    // eventloop *is* shutdown now
-                    preconditionFailure("client is disconnected")
-                }
-                return eventLoop.makeFailedFuture(Error.disconnected)
             }
         }
 
@@ -607,28 +602,49 @@ extension CassandraClient.Session {
     {
         let logger = logger ?? self.logger
 
-        lock.lock()
-        switch state {
-        case .idle:
-            let task = self.connect(logger: logger)
-            state = .connecting(ConnectionTask(task))
-            lock.unlock()
+        enum Action {
+            case awaitConnect(ConnectionTask)
+            case awaitConnecting(ConnectionTask)
+            case awaitConnectingFuture(EventLoopFuture<Void>)
+            case execute
+        }
 
-            try await task.value
-            lock.withLock {
-                self.state = .connected
+        let action: Action = try self._state.withLockedValue { state in
+            switch state {
+            case .idle:
+                let task = self.connect(logger: logger)
+                let connectionTask = ConnectionTask(task)
+                state = .connecting(connectionTask)
+                return .awaitConnect(connectionTask)
+            case .connectingFuture(let future):
+                return .awaitConnectingFuture(future)
+            case .connecting(let task):
+                return .awaitConnecting(task)
+            case .connected:
+                return .execute
+            case .disconnected:
+                 if eventLoopGroupContainer.managed {
+                    // eventloop *is* shutdown now
+                    preconditionFailure("client is disconnected")
+                }
+                throw CassandraClient.Error.disconnected
+            }
+        }
+
+        switch action {
+        case .awaitConnect(let connectionTask):
+            try await connectionTask.task.value
+            self._state.withLockedValue { state in
+                state = .connected
             }
             return try await self.execute(statement: statement, logger: logger)
-        case .connectingFuture(let future):
-            lock.unlock()
+        case .awaitConnectingFuture(let future):
             try await future.get()
-            return try await self.execute(statement: statement, logger: logger)
-        case .connecting(let task):
-            lock.unlock()
+           return try await self.execute(statement: statement, logger: logger)
+        case .awaitConnecting(let task):
             try await task.task.value
-            return try await self.execute(statement: statement, logger: logger)
-        case .connected:
-            lock.unlock()
+           return try await self.execute(statement: statement, logger: logger)
+        case .execute:
             logger.debug("executing: \(statement.query)")
             logger.trace("\(statement.parameters)")
             let future = cass_session_execute(rawPointer, statement.rawPointer)
@@ -637,13 +653,6 @@ extension CassandraClient.Session {
                     continuation.resume(with: result)
                 }
             }
-        case .disconnected:
-            lock.unlock()
-            if eventLoopGroupContainer.managed {
-                // eventloop *is* shutdown now
-                preconditionFailure("client is disconnected")
-            }
-            throw CassandraClient.Error.disconnected
         }
     }
 
