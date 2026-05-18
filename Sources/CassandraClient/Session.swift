@@ -14,6 +14,7 @@
 
 @_implementationOnly import CDataStaxDriver
 import Dispatch
+import Foundation
 import Logging
 import NIO
 import NIOConcurrencyHelpers
@@ -22,6 +23,17 @@ import NIOCore  // for async-await bridge
 /// API for executing statements against Cassandra.
 public protocol CassandraSession {
     var eventLoopGroup: EventLoopGroup { get }
+
+    /// Encryptor for transparent column encryption.
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+    var encryptor: CassandraClient.Encryptor? { get }
+
+    /// Registered encrypted column schemas for automatic context building.
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+    var encryptionSchemas: [String: CassandraClient.EncryptionSchema] { get }
+
+    /// The default keyspace for this session, used to resolve unqualified table names.
+    var keyspace: String? { get }
 
     /// Execute a prepared statement.
     ///
@@ -99,7 +111,20 @@ public protocol CassandraSession {
     func getMetrics() -> CassandraMetrics
 }
 
+private let encryptionLogger = Logger(label: "cassandra.encryption")
+
 extension CassandraSession {
+    private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger?) {
+        if count > 0, options.hasEncryptionOptions {
+            (logger ?? encryptionLogger).debug(
+                "Decrypted rows",
+                metadata: [
+                    CassandraClient.EncryptionLogKey.rowsDecrypted: "\(count)"
+                ]
+            )
+        }
+    }
+
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -120,6 +145,55 @@ extension CassandraSession {
 }
 
 extension CassandraSession {
+    private func makeDecoder(
+        row: CassandraClient.Row,
+        options: CassandraClient.Statement.Options
+    ) throws -> CassandraClient.RowDecoder {
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *),
+            let builder = options.encryptionContextBuilder,
+            let encryptor = self.encryptor
+        {
+            let ctx = try builder(row)
+            return CassandraClient.RowDecoder(
+                row: row,
+                encryptor: encryptor,
+                rowContext: ctx
+            )
+        }
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *),
+            let tableName = options.encryptionTable,
+            let encryptor = self.encryptor
+        {
+            let ctx = try self.buildEncryptionContext(
+                row: row,
+                tableName: tableName,
+                encryptor: encryptor
+            )
+            return CassandraClient.RowDecoder(
+                row: row,
+                encryptor: encryptor,
+                rowContext: ctx
+            )
+        }
+        return CassandraClient.RowDecoder(row: row)
+    }
+
+    /// Creates a Statement with the session's encryptor injected from Configuration.
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+    private func makeStatement(
+        query: String,
+        parameters: [CassandraClient.Statement.Value],
+        options: CassandraClient.Statement.Options
+    ) throws -> CassandraClient.Statement {
+        try self.validateEncryptionBindings(parameters: parameters, options: options)
+        return try CassandraClient.Statement(
+            query: query,
+            parameters: parameters,
+            options: options,
+            _encryptor: self.encryptor
+        )
+    }
+
     /// Run insert / update / delete or DDL command where no result is expected.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
@@ -162,9 +236,11 @@ extension CassandraSession {
     ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger)
             .flatMapThrowing { rows in
-                try rows.map { row in
-                    try T(from: CassandraClient.RowDecoder(row: row))
+                let result = try rows.map { row in
+                    try T(from: self.makeDecoder(row: row, options: options))
                 }
+                self.logDecryptedRows(count: result.count, options: options, logger: logger)
+                return result
             }
     }
 
@@ -183,11 +259,12 @@ extension CassandraSession {
         logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.Rows> {
         do {
-            let statement = try CassandraClient.Statement(
-                query: query,
-                parameters: parameters,
-                options: options
-            )
+            let statement: CassandraClient.Statement
+            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+            } else {
+                statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+            }
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
             let eventLoop = eventLoop ?? eventLoopGroup.next()
@@ -207,11 +284,12 @@ extension CassandraSession {
         logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
         do {
-            let statement = try CassandraClient.Statement(
-                query: query,
-                parameters: parameters,
-                options: options
-            )
+            let statement: CassandraClient.Statement
+            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+            } else {
+                statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+            }
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
         } catch {
             let eventLoop = eventLoop ?? eventLoopGroup.next()
@@ -225,6 +303,20 @@ extension CassandraClient {
         private let eventLoopGroupContainer: EventLoopGroupContainer
         public var eventLoopGroup: EventLoopGroup {
             self.eventLoopGroupContainer.value
+        }
+
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        public var encryptor: CassandraClient.Encryptor? {
+            self.configuration.encryptor
+        }
+
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        public var encryptionSchemas: [String: CassandraClient.EncryptionSchema] {
+            self.configuration.encryptionSchemas
+        }
+
+        public var keyspace: String? {
+            self.configuration.keyspace
         }
 
         private let configuration: Configuration
@@ -458,9 +550,11 @@ extension CassandraSession {
             options: options,
             logger: logger
         )
-        return try rows.map { row in
-            try T(from: CassandraClient.RowDecoder(row: row))
+        let result = try rows.map { row in
+            try T(from: self.makeDecoder(row: row, options: options))
         }
+        self.logDecryptedRows(count: result.count, options: options, logger: logger)
+        return result
     }
 
     /// Query large data-sets where using an interator helps control memory usage.
@@ -475,11 +569,12 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.Rows {
-        let statement = try CassandraClient.Statement(
-            query: query,
-            parameters: parameters,
-            options: options
-        )
+        let statement: CassandraClient.Statement
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+        } else {
+            statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+        }
         return try await self.execute(statement: statement, logger: logger)
     }
 
@@ -492,11 +587,12 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
-        let statement = try CassandraClient.Statement(
-            query: query,
-            parameters: parameters,
-            options: options
-        )
+        let statement: CassandraClient.Statement
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+        } else {
+            statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
+        }
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
 }

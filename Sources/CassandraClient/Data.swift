@@ -17,6 +17,37 @@ import Foundation
 import Logging
 import NIO
 
+// MARK: - Safe big-endian parsing helpers
+
+extension Data {
+    internal func parseInt32BigEndian() -> Int32? {
+        guard self.count >= 4 else { return nil }
+        var value = UInt32(0)
+        for byte in self.prefix(4) {
+            value = (value << 8) | UInt32(byte)
+        }
+        return Int32(bitPattern: value)
+    }
+
+    internal func parseInt64BigEndian() -> Int64? {
+        guard self.count >= 8 else { return nil }
+        var value = UInt64(0)
+        for byte in self.prefix(8) {
+            value = (value << 8) | UInt64(byte)
+        }
+        return Int64(bitPattern: value)
+    }
+
+    internal func parseUInt64BigEndian() -> UInt64? {
+        guard self.count >= 8 else { return nil }
+        var value = UInt64(0)
+        for byte in self.prefix(8) {
+            value = (value << 8) | UInt64(byte)
+        }
+        return value
+    }
+}
+
 public protocol PagingStateToken: ContiguousBytes {}
 
 extension CassandraClient {
@@ -590,6 +621,17 @@ extension CassandraClient.Column {
         let error = cass_value_get_bytes(self.rawPointer, &value, &size)
         return error == CASS_OK ? Array(UnsafeBufferPointer(start: value, count: size)) : nil
     }
+
+    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+    func decryptedData(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Data? {
+        guard !self.isNull() else { return nil }
+        guard let rawBytes = self.bytes else { return nil }
+        let envelope = Data(rawBytes)
+        return try encryptor.decrypt(envelope, context: context)
+    }
 }
 
 extension CassandraClient.Row {
@@ -782,5 +824,236 @@ extension CassandraClient.Row {
     /// Get column value as `[String]`.
     public func column(_ index: Int) -> [String]? {
         self.column(index)?.stringArray
+    }
+}
+
+// MARK: - Encrypted
+
+@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+extension CassandraClient.Column {
+    /// Decrypt column and return as `String`.
+    public func decryptedString(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> String? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw CassandraClient.Error.decryptionError("Decrypted data is not valid UTF-8")
+        }
+        return string
+    }
+
+    /// Decrypt column and return as `[UInt8]`.
+    public func decryptedBytes(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> [UInt8]? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        return Array(data)
+    }
+
+    /// Decrypt column and return as `Int32`.
+    public func decryptedInt32(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Int32? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        guard data.count == 4 else {
+            throw CassandraClient.Error.decryptionError("Expected 4 bytes for Int32, got \(data.count)")
+        }
+        guard let value = data.parseInt32BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 4 bytes for Int32, got \(data.count)")
+        }
+        return value
+    }
+
+    /// Decrypt column and return as `Int64`.
+    public func decryptedInt64(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Int64? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        guard data.count == 8 else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Int64, got \(data.count)")
+        }
+        guard let value = data.parseInt64BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Int64, got \(data.count)")
+        }
+        return value
+    }
+
+    /// Decrypt column and return as `Double`.
+    public func decryptedDouble(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Double? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        guard data.count == 8 else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Double, got \(data.count)")
+        }
+        guard let bits = data.parseUInt64BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Double, got \(data.count)")
+        }
+        return Double(bitPattern: bits)
+    }
+
+    /// Decrypt column and return as `UUID`.
+    public func decryptedUUID(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.UUID? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        guard data.count == 16 else {
+            throw CassandraClient.Error.decryptionError("Expected 16 bytes for UUID, got \(data.count)")
+        }
+        let u: uuid_t = (
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]
+        )
+        return Foundation.UUID(uuid: u)
+    }
+
+    /// Decrypt column and return as `Date`.
+    public func decryptedDate(
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.Date? {
+        guard let data = try self.decryptedData(encryptor: encryptor, context: context) else { return nil }
+        guard data.count == 8 else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Date, got \(data.count)")
+        }
+        guard let millis = data.parseInt64BigEndian() else {
+            throw CassandraClient.Error.decryptionError("Expected 8 bytes for Date, got \(data.count)")
+        }
+        return Foundation.Date(timeIntervalSince1970: Double(millis) / 1000.0)
+    }
+}
+
+@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+extension CassandraClient.Row {
+    /// Decrypt column by name and return as `String`.
+    public func decryptedString(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> String? {
+        try self.column(name)?.decryptedString(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `String`.
+    public func decryptedString(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> String? {
+        try self.column(index)?.decryptedString(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by name and return as `[UInt8]`.
+    public func decryptedBytes(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> [UInt8]? {
+        try self.column(name)?.decryptedBytes(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `[UInt8]`.
+    public func decryptedBytes(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> [UInt8]? {
+        try self.column(index)?.decryptedBytes(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by name and return as `Int32`.
+    public func decryptedInt32(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Int32? {
+        try self.column(name)?.decryptedInt32(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `Int32`.
+    public func decryptedInt32(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Int32? {
+        try self.column(index)?.decryptedInt32(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by name and return as `Int64`.
+    public func decryptedInt64(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Int64? {
+        try self.column(name)?.decryptedInt64(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `Int64`.
+    public func decryptedInt64(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Int64? {
+        try self.column(index)?.decryptedInt64(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by name and return as `Double`.
+    public func decryptedDouble(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Double? {
+        try self.column(name)?.decryptedDouble(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `Double`.
+    public func decryptedDouble(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Double? {
+        try self.column(index)?.decryptedDouble(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by name and return as `UUID`.
+    public func decryptedUUID(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.UUID? {
+        try self.column(name)?.decryptedUUID(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `UUID`.
+    public func decryptedUUID(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.UUID? {
+        try self.column(index)?.decryptedUUID(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by name and return as `Date`.
+    public func decryptedDate(
+        _ name: String,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.Date? {
+        try self.column(name)?.decryptedDate(encryptor: encryptor, context: context)
+    }
+
+    /// Decrypt column by index and return as `Date`.
+    public func decryptedDate(
+        _ index: Int,
+        encryptor: CassandraClient.Encryptor,
+        context: CassandraClient.EncryptionContext
+    ) throws -> Foundation.Date? {
+        try self.column(index)?.decryptedDate(encryptor: encryptor, context: context)
     }
 }
