@@ -634,6 +634,145 @@ extension CassandraClient {
             }
         }
 
+
+        /// Resolve encryption contexts for parameters that have `context: nil` using driver schema metadata.
+        /// Discovers PK columns from Cassandra's metadata cache rather than requiring EncryptionSchema registration.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        private func resolveEncryptionContexts(
+            prepared: CassandraClient.PreparedStatement,
+            parameters: [CassandraClient.Statement.Value],
+            options: CassandraClient.Statement.Options
+        ) throws -> [CassandraClient.Statement.Value] {
+            guard let tableName = options.encryptionTable else { return parameters }
+
+            let needsResolution = parameters.contains { $0.isEncrypted && $0.encryptionContext == nil }
+            guard needsResolution else { return parameters }
+
+            // Parse keyspace and table from encryptionTable option.
+            let keyspace: String
+            let table: String
+            if let dotIndex = tableName.firstIndex(of: ".") {
+                keyspace = String(tableName[tableName.startIndex..<dotIndex])
+                table = String(tableName[tableName.index(after: dotIndex)...])
+            } else {
+                guard let sessionKeyspace = self.keyspace else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "encryptionTable '\(tableName)' has no keyspace qualifier and session has no default keyspace"
+                    )
+                }
+                keyspace = sessionKeyspace
+                table = tableName
+            }
+
+            // Look up PK columns from driver schema metadata.
+            guard let schemaMeta = cass_session_get_schema_meta(self.rawPointer) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Cannot retrieve schema metadata from session"
+                )
+            }
+            defer { cass_schema_meta_free(schemaMeta) }
+
+            guard let keyspaceMeta = cass_schema_meta_keyspace_by_name(schemaMeta, keyspace) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Keyspace '\(keyspace)' not found in schema metadata"
+                )
+            }
+
+            guard let tableMeta = cass_keyspace_meta_table_by_name(keyspaceMeta, table) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Table '\(table)' not found in keyspace '\(keyspace)' schema metadata"
+                )
+            }
+
+            // Collect PK column names in order: partition keys first, then clustering keys.
+            var pkColumnNames: [String] = []
+
+            let partitionKeyCount = cass_table_meta_partition_key_count(tableMeta)
+            for i in 0..<partitionKeyCount {
+                guard let colMeta = cass_table_meta_partition_key(tableMeta, i) else { continue }
+                var namePtr: UnsafePointer<CChar>?
+                var nameLength = Int()
+                cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                if let namePtr = namePtr {
+                    let name = String(cString: namePtr).prefix(nameLength)
+                    pkColumnNames.append(String(name))
+                }
+            }
+
+            let clusteringKeyCount = cass_table_meta_clustering_key_count(tableMeta)
+            for i in 0..<clusteringKeyCount {
+                guard let colMeta = cass_table_meta_clustering_key(tableMeta, i) else { continue }
+                var namePtr: UnsafePointer<CChar>?
+                var nameLength = Int()
+                cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                if let namePtr = namePtr {
+                    let name = String(cString: namePtr).prefix(nameLength)
+                    pkColumnNames.append(String(name))
+                }
+            }
+
+            // Build a map of parameter name → index for the prepared statement.
+            var paramIndexByName: [String: Int] = [:]
+            for i in 0..<parameters.count {
+                if let name = prepared.parameterName(at: i) {
+                    paramIndexByName[name] = i
+                }
+            }
+
+            // Extract PK values from parameters.
+            var keyComponents: [CassandraClient.KeyComponent] = []
+            for pkCol in pkColumnNames {
+                guard let paramIdx = paramIndexByName[pkCol] else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Cannot auto-infer encryption context: key column '\(pkCol)' is not present in the prepared statement parameters. Provide context manually."
+                    )
+                }
+                let component = try Self.extractKeyComponent(from: parameters[paramIdx], columnName: pkCol)
+                keyComponents.append(component)
+            }
+
+            let primaryKey = CassandraClient.PrimaryKey(from: keyComponents)
+            let baseContext = CassandraClient.EncryptionContext.Base(
+                keyspace: keyspace,
+                table: table,
+                primaryKey: primaryKey
+            )
+
+            // Replace context-less encrypted values with context-resolved ones.
+            var resolved = parameters
+            for i in 0..<resolved.count {
+                guard resolved[i].isEncrypted, resolved[i].encryptionContext == nil else { continue }
+                guard let columnName = prepared.parameterName(at: i) else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Cannot auto-infer encryption context: no column name for parameter at index \(i)"
+                    )
+                }
+                resolved[i] = resolved[i].withContext(baseContext.forColumn(columnName))
+            }
+
+            return resolved
+        }
+
+        /// Extract a KeyComponent from a Statement.Value by inspecting its type.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        private static func extractKeyComponent(
+            from value: CassandraClient.Statement.Value,
+            columnName: String
+        ) throws -> CassandraClient.KeyComponent {
+            switch value {
+            case .string(let v): return .string(v)
+            case .uuid(let v): return .uuid(v)
+            case .int32(let v): return .int32(v)
+            case .int64(let v): return .int64(v)
+            case .bytes(let v): return .data(Data(v))
+            case .date(let v): return .date(v)
+            default:
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Cannot extract key component for column '\(columnName)': unsupported value type for primary key"
+                )
+            }
+        }
+
         func execute(
             prepared: CassandraClient.PreparedStatement,
             parameters: [CassandraClient.Statement.Value] = [],
@@ -644,14 +783,19 @@ extension CassandraClient {
             do {
                 let statement: CassandraClient.Statement
                 if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                    try self.validateEncryptionBindings(
+                    let resolvedParameters = try self.resolveEncryptionContexts(
                         prepared: prepared,
                         parameters: parameters,
                         options: options
                     )
+                    try self.validateEncryptionBindings(
+                        prepared: prepared,
+                        parameters: resolvedParameters,
+                        options: options
+                    )
                     statement = try CassandraClient.Statement(
                         preparedRawPointer: prepared.bind(),
-                        parameters: parameters,
+                        parameters: resolvedParameters,
                         options: options,
                         _encryptor: self.encryptor
                     )
@@ -1031,14 +1175,19 @@ extension CassandraClient.Session {
     ) async throws -> CassandraClient.Rows {
         let statement: CassandraClient.Statement
         if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            try self.validateEncryptionBindings(
+            let resolvedParameters = try self.resolveEncryptionContexts(
                 prepared: prepared,
                 parameters: parameters,
                 options: options
             )
+            try self.validateEncryptionBindings(
+                prepared: prepared,
+                parameters: resolvedParameters,
+                options: options
+            )
             statement = try CassandraClient.Statement(
                 preparedRawPointer: prepared.bind(),
-                parameters: parameters,
+                parameters: resolvedParameters,
                 options: options,
                 _encryptor: self.encryptor
             )

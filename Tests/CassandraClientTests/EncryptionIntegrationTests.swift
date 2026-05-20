@@ -849,9 +849,433 @@ final class EncryptionIntegrationTests: XCTestCase {
         }
     }
 
+    // MARK: - Auto context inference tests (metadata-based)
+
+    /// Auto-inferred context: write with .encryptedString (no context) and read back successfully.
+    func testAutoContextInferenceBasic() async throws {
+        let tableName = "test_auto_ctx_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let userId = "user-auto"
+        let secretValue = "auto-secret"
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(secretValue)),
+            ],
+            options: options
+        )
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select user_id, secret from \(tableName) where user_id = ?"
+        )
+
+        let results: [UserWithSecret] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string(userId)],
+            options: options
+        )
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].user_id, userId)
+        XCTAssertEqual(results[0].secret.value, secretValue)
+    }
+
+    /// Auto-inferred context with composite primary key (partition + clustering).
+    func testAutoContextInferenceCompositeKey() async throws {
+        let tableName = "test_auto_ctx_comp_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run(
+                "create table \(tableName) (partition_id text, cluster_id int, secret blob, PRIMARY KEY (partition_id, cluster_id))"
+            ).wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [
+                .init(name: "partition_id", type: .string),
+                .init(name: "cluster_id", type: .int32),
+            ],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let partitionId = "part-1"
+        let clusterId: Int32 = 42
+        let secretValue = "composite-secret"
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (partition_id, cluster_id, secret) values (?, ?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string(partitionId),
+                .int32(clusterId),
+                .encryptedString(CassandraClient.Encrypted(secretValue)),
+            ],
+            options: options
+        )
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select partition_id, cluster_id, secret from \(tableName) where partition_id = ? and cluster_id = ?"
+        )
+
+        let results: [CompositeKeyUser] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string(partitionId), .int32(clusterId)],
+            options: options
+        )
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].secret.value, secretValue)
+    }
+
+    /// Auto-inferred context with multiple encrypted columns.
+    func testAutoContextInferenceMultipleEncryptedColumns() async throws {
+        let tableName = "test_auto_ctx_multi_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run(
+                "create table \(tableName) (user_id text primary key, secret_name blob, secret_age blob)"
+            ).wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret_name", "secret_age"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let userId = "user-multi"
+        let nameValue = "Alice"
+        let ageValue: Int32 = 30
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret_name, secret_age) values (?, ?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(nameValue)),
+                .encryptedInt32(CassandraClient.Encrypted(ageValue)),
+            ],
+            options: options
+        )
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select user_id, secret_name, secret_age from \(tableName) where user_id = ?"
+        )
+
+        let results: [UserWithMultipleSecrets] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string(userId)],
+            options: options
+        )
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].secret_name.value, nameValue)
+        XCTAssertEqual(results[0].secret_age.value, ageValue)
+    }
+
+    /// Mixed: one encrypted column with explicit context, another auto-inferred.
+    func testAutoContextInferenceMixedExplicitAndAuto() async throws {
+        let tableName = "test_auto_ctx_mixed_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run(
+                "create table \(tableName) (user_id text primary key, secret_name blob, secret_age blob)"
+            ).wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret_name", "secret_age"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let userId = "user-mixed"
+        let nameValue = "Alice"
+        let ageValue: Int32 = 30
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: .init(from: .string(userId))
+        )
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret_name, secret_age) values (?, ?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(nameValue), context: baseContext.forColumn("secret_name")),
+                .encryptedInt32(CassandraClient.Encrypted(ageValue)),
+            ],
+            options: options
+        )
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select user_id, secret_name, secret_age from \(tableName) where user_id = ?"
+        )
+
+        let results: [UserWithMultipleSecrets] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string(userId)],
+            options: options
+        )
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].secret_name.value, nameValue)
+        XCTAssertEqual(results[0].secret_age.value, ageValue)
+    }
+
+    /// Missing PK column in parameters should produce a clear error.
+    func testAutoContextInferenceErrorsOnMissingPKColumn() async throws {
+        let tableName = "test_auto_ctx_missing_pk_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run(
+                "create table \(tableName) (part_id text, clust_id int, secret blob, PRIMARY KEY (part_id, clust_id))"
+            ).wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [
+                .init(name: "part_id", type: .string),
+                .init(name: "clust_id", type: .int32),
+            ],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        // part_id is hardcoded in the query — not a bind parameter
+        let updateStmt = try await self.cassandraClient.prepare(
+            "update \(tableName) set secret = ? where part_id = 'fixed' and clust_id = ?"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        do {
+            _ = try await self.cassandraClient.execute(
+                prepared: updateStmt,
+                parameters: [
+                    .encryptedString(CassandraClient.Encrypted("value")),
+                    .int32(1),
+                ],
+                options: options
+            )
+            XCTFail("Expected error for missing PK column")
+        } catch let error as CassandraClient.Error {
+            let msg = error.description
+            XCTAssertTrue(msg.contains("part_id"), "Error should mention missing key column: \(msg)")
+        }
+    }
+
+    /// NULL PK value should produce a clear error.
+    func testAutoContextInferenceErrorsOnNullPKValue() async throws {
+        let tableName = "test_auto_ctx_null_pk_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        do {
+            _ = try await self.cassandraClient.execute(
+                prepared: insertStmt,
+                parameters: [
+                    .null,
+                    .encryptedString(CassandraClient.Encrypted("value")),
+                ],
+                options: options
+            )
+            XCTFail("Expected error for null PK value")
+        } catch let error as CassandraClient.Error {
+            let msg = error.description
+            XCTAssertTrue(msg.contains("user_id"), "Error should mention the key column: \(msg)")
+        }
+    }
+
+    /// Two rows with different PKs: each gets its own context and decrypts independently.
+    func testAutoContextInferenceDistinctKeysPerRow() async throws {
+        let tableName = "test_auto_ctx_distinct_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string("alice"),
+                .encryptedString(CassandraClient.Encrypted("alice-secret")),
+            ],
+            options: options
+        )
+
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string("bob"),
+                .encryptedString(CassandraClient.Encrypted("bob-secret")),
+            ],
+            options: options
+        )
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select user_id, secret from \(tableName) where user_id = ?"
+        )
+
+        let aliceResults: [UserWithSecret] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string("alice")],
+            options: options
+        )
+        XCTAssertEqual(aliceResults.count, 1)
+        XCTAssertEqual(aliceResults[0].secret.value, "alice-secret")
+
+        let bobResults: [UserWithSecret] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string("bob")],
+            options: options
+        )
+        XCTAssertEqual(bobResults.count, 1)
+        XCTAssertEqual(bobResults[0].secret.value, "bob-secret")
+    }
+
+    /// No encryptionTable in options — context-less encrypted value should error at bind time.
+    func testAutoContextInferenceErrorsWithoutEncryptionTable() async throws {
+        let tableName = "test_auto_ctx_no_table_\(DispatchTime.now().uptimeNanoseconds)"
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+
+        do {
+            _ = try await self.cassandraClient.execute(
+                prepared: insertStmt,
+                parameters: [
+                    .string("user-1"),
+                    .encryptedString(CassandraClient.Encrypted("value")),
+                ]
+            )
+            XCTFail("Expected error for context-less encrypted value without encryptionTable")
+        } catch let error as CassandraClient.Error {
+            let msg = error.description
+            XCTAssertTrue(msg.contains("no encryption context"), "Error should explain missing context: \(msg)")
+        }
+    }
+
 }
 
-// MARK: - Test model
+// MARK: - Test models
 
 struct UserWithSecret: Decodable {
     let user_id: String
@@ -862,4 +1286,10 @@ struct UserWithMultipleSecrets: Decodable {
     let user_id: String
     let secret_name: CassandraClient.Encrypted<String>
     let secret_age: CassandraClient.Encrypted<Int32>
+}
+
+struct CompositeKeyUser: Decodable {
+    let partition_id: String
+    let cluster_id: Int32
+    let secret: CassandraClient.Encrypted<String>
 }
