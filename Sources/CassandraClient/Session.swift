@@ -448,17 +448,23 @@ extension CassandraSession {
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
     ) -> EventLoopFuture<[T]> {
-        self.execute(
+        var effectiveOptions = options
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            if effectiveOptions.encryptionTable == nil {
+                effectiveOptions.encryptionTable = prepared.encryptionTable
+            }
+        }
+        return self.execute(
             prepared: prepared,
             parameters: parameters,
-            options: options,
+            options: effectiveOptions,
             on: eventLoop,
             logger: logger
         ).flatMapThrowing { rows in
             let result = try rows.map { row in
-                try T(from: self.makeDecoder(row: row, options: options))
+                try T(from: self.makeDecoder(row: row, options: effectiveOptions))
             }
-            self.logDecryptedRows(count: result.count, options: options, logger: logger)
+            self.logDecryptedRows(count: result.count, options: effectiveOptions, logger: logger)
             return result
         }
     }
@@ -634,7 +640,6 @@ extension CassandraClient {
             }
         }
 
-
         /// Resolve encryption contexts for parameters that have `context: nil` using driver schema metadata.
         /// Discovers PK columns from Cassandra's metadata cache rather than requiring EncryptionSchema registration.
         @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
@@ -643,7 +648,8 @@ extension CassandraClient {
             parameters: [CassandraClient.Statement.Value],
             options: CassandraClient.Statement.Options
         ) throws -> [CassandraClient.Statement.Value] {
-            guard let tableName = options.encryptionTable else { return parameters }
+            let tableName = options.encryptionTable ?? prepared.encryptionTable
+            guard let tableName else { return parameters }
 
             let needsResolution = parameters.contains { $0.isEncrypted && $0.encryptionContext == nil }
             guard needsResolution else { return parameters }
@@ -845,6 +851,26 @@ extension CassandraClient {
         ) -> EventLoopFuture<Void> {
             do {
                 var batch = try Batch(configuration: configuration)
+                if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                    batch.resolver = { [self] prepared, parameters, options in
+                        let resolvedParameters = try self.resolveEncryptionContexts(
+                            prepared: prepared,
+                            parameters: parameters,
+                            options: options
+                        )
+                        try self.validateEncryptionBindings(
+                            prepared: prepared,
+                            parameters: resolvedParameters,
+                            options: options
+                        )
+                        return try CassandraClient.Statement(
+                            preparedRawPointer: prepared.bind(),
+                            parameters: resolvedParameters,
+                            options: options,
+                            _encryptor: self.encryptor
+                        )
+                    }
+                }
                 try build(&batch)
                 return self.execute(batch: batch, on: eventLoop, logger: logger)
             } catch {
@@ -1033,16 +1059,22 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> [T] {
+        var effectiveOptions = options
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            if effectiveOptions.encryptionTable == nil {
+                effectiveOptions.encryptionTable = prepared.encryptionTable
+            }
+        }
         let rows = try await self.execute(
             prepared: prepared,
             parameters: parameters,
-            options: options,
+            options: effectiveOptions,
             logger: logger
         )
         let result = try rows.map { row in
-            try T(from: self.makeDecoder(row: row, options: options))
+            try T(from: self.makeDecoder(row: row, options: effectiveOptions))
         }
-        self.logDecryptedRows(count: result.count, options: options, logger: logger)
+        self.logDecryptedRows(count: result.count, options: effectiveOptions, logger: logger)
         return result
     }
 }
@@ -1146,6 +1178,26 @@ extension CassandraClient.Session {
         _ build: (inout CassandraClient.Batch) async throws -> Void
     ) async throws {
         var batch = try CassandraClient.Batch(configuration: configuration)
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            batch.resolver = { [self] prepared, parameters, options in
+                let resolvedParameters = try self.resolveEncryptionContexts(
+                    prepared: prepared,
+                    parameters: parameters,
+                    options: options
+                )
+                try self.validateEncryptionBindings(
+                    prepared: prepared,
+                    parameters: resolvedParameters,
+                    options: options
+                )
+                return try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    parameters: resolvedParameters,
+                    options: options,
+                    _encryptor: self.encryptor
+                )
+            }
+        }
         try await build(&batch)
         try await self.execute(batch: batch, logger: logger)
     }

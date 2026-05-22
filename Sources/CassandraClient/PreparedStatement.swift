@@ -20,6 +20,10 @@ extension CassandraClient {
         internal let rawPointer: OpaquePointer
         private let _parameterCount: Int
 
+        /// The table name for encryption context resolution. Set at prepare time to avoid
+        /// passing `options.encryptionTable` on every execute call.
+        public var encryptionTable: String?
+
         internal init(rawPointer: OpaquePointer) {
             self.rawPointer = rawPointer
             // Count parameters by iterating until we get an error from parameterName.

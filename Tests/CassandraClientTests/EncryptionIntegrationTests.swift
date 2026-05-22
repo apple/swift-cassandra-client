@@ -1273,9 +1273,194 @@ final class EncryptionIntegrationTests: XCTestCase {
         }
     }
 
-}
+    // MARK: - Batch + encryption tests
 
-// MARK: - Test models
+    /// Batch insert multiple rows with encrypted values, read back and verify each decrypts correctly.
+    func testBatchEncryptedPreparedStatements() async throws {
+        let tableName = "test_batch_enc_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+        insertStmt.encryptionTable = tableName
+
+        try await self.cassandraClient.batch { batch in
+            try batch.add(
+                prepared: insertStmt,
+                parameters: [
+                    .string("alice"),
+                    .encryptedString(CassandraClient.Encrypted("alice-secret")),
+                ]
+            )
+            try batch.add(
+                prepared: insertStmt,
+                parameters: [
+                    .string("bob"),
+                    .encryptedString(CassandraClient.Encrypted("bob-secret")),
+                ]
+            )
+            try batch.add(
+                prepared: insertStmt,
+                parameters: [
+                    .string("carol"),
+                    .encryptedString(CassandraClient.Encrypted("carol-secret")),
+                ]
+            )
+        }
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select user_id, secret from \(tableName) where user_id = ?"
+        )
+        selectStmt.encryptionTable = tableName
+
+        for (userId, expected) in [("alice", "alice-secret"), ("bob", "bob-secret"), ("carol", "carol-secret")] {
+            let results: [UserWithSecret] = try await self.cassandraClient.execute(
+                prepared: selectStmt,
+                parameters: [.string(userId)]
+            )
+            XCTAssertEqual(results.count, 1)
+            XCTAssertEqual(results[0].secret.value, expected)
+        }
+    }
+
+    /// Batch with composite key — each row gets its own encryption context based on its PK values.
+    func testBatchEncryptedCompositeKey() async throws {
+        let tableName = "test_batch_enc_comp_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run(
+                "create table \(tableName) (partition_id text, cluster_id int, secret blob, PRIMARY KEY (partition_id, cluster_id))"
+            ).wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [
+                .init(name: "partition_id", type: .string),
+                .init(name: "cluster_id", type: .int32),
+            ],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+        self.recreateClient()
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (partition_id, cluster_id, secret) values (?, ?, ?)"
+        )
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionTable = tableName
+
+        try await self.cassandraClient.batch { batch in
+            try batch.add(
+                prepared: insertStmt,
+                parameters: [
+                    .string("part-1"), .int32(1),
+                    .encryptedString(CassandraClient.Encrypted("secret-1-1")),
+                ],
+                options: options
+            )
+            try batch.add(
+                prepared: insertStmt,
+                parameters: [
+                    .string("part-1"), .int32(2),
+                    .encryptedString(CassandraClient.Encrypted("secret-1-2")),
+                ],
+                options: options
+            )
+            try batch.add(
+                prepared: insertStmt,
+                parameters: [
+                    .string("part-2"), .int32(1),
+                    .encryptedString(CassandraClient.Encrypted("secret-2-1")),
+                ],
+                options: options
+            )
+        }
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select partition_id, cluster_id, secret from \(tableName) where partition_id = ? and cluster_id = ?"
+        )
+
+        let r1: [CompositeKeyUser] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string("part-1"), .int32(1)],
+            options: options
+        )
+        XCTAssertEqual(r1.count, 1)
+        XCTAssertEqual(r1[0].secret.value, "secret-1-1")
+
+        let r2: [CompositeKeyUser] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string("part-1"), .int32(2)],
+            options: options
+        )
+        XCTAssertEqual(r2.count, 1)
+        XCTAssertEqual(r2[0].secret.value, "secret-1-2")
+
+        let r3: [CompositeKeyUser] = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string("part-2"), .int32(1)],
+            options: options
+        )
+        XCTAssertEqual(r3.count, 1)
+        XCTAssertEqual(r3[0].secret.value, "secret-2-1")
+    }
+
+    /// Batch with non-encrypted prepared statement — resolver skips resolution, works normally.
+    func testBatchPreparedNoEncryption() async throws {
+        let tableName = "test_batch_no_enc_\(DispatchTime.now().uptimeNanoseconds)"
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (id text primary key, value text)").wait()
+        }
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (id, value) values (?, ?)"
+        )
+
+        try await self.cassandraClient.batch { batch in
+            try batch.add(prepared: insertStmt, parameters: [.string("a"), .string("val-a")])
+            try batch.add(prepared: insertStmt, parameters: [.string("b"), .string("val-b")])
+        }
+
+        let selectStmt = try await self.cassandraClient.prepare(
+            "select id, value from \(tableName) where id = ?"
+        )
+
+        let rows = try await self.cassandraClient.execute(
+            prepared: selectStmt,
+            parameters: [.string("a")]
+        )
+        let rowArray = Array(rows)
+        XCTAssertEqual(rowArray.count, 1)
+        let value: String? = rowArray[0].column("value")
+        XCTAssertEqual(value, "val-a")
+    }
+
+}
 
 struct UserWithSecret: Decodable {
     let user_id: String

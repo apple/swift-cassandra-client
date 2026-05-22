@@ -83,7 +83,7 @@ extension CassandraSession {
         parameters: [CassandraClient.Statement.Value],
         options: CassandraClient.Statement.Options
     ) throws {
-        guard let tableName = options.encryptionTable else { return }
+        guard let tableName = options.encryptionTable ?? prepared.encryptionTable else { return }
         let schema = try self.resolveSchema(tableName: tableName)
 
         for i in 0..<parameters.count {
