@@ -670,51 +670,57 @@ extension CassandraClient {
                 table = tableName
             }
 
-            // Look up PK columns from driver schema metadata.
-            guard let schemaMeta = cass_session_get_schema_meta(self.rawPointer) else {
-                throw CassandraClient.Error.encryptionConfigError(
-                    "Cannot retrieve schema metadata from session"
-                )
-            }
-            defer { cass_schema_meta_free(schemaMeta) }
-
-            guard let keyspaceMeta = cass_schema_meta_keyspace_by_name(schemaMeta, keyspace) else {
-                throw CassandraClient.Error.encryptionConfigError(
-                    "Keyspace '\(keyspace)' not found in schema metadata"
-                )
-            }
-
-            guard let tableMeta = cass_keyspace_meta_table_by_name(keyspaceMeta, table) else {
-                throw CassandraClient.Error.encryptionConfigError(
-                    "Table '\(table)' not found in keyspace '\(keyspace)' schema metadata"
-                )
-            }
-
-            // Collect PK column names in order: partition keys first, then clustering keys.
-            var pkColumnNames: [String] = []
-
-            let partitionKeyCount = cass_table_meta_partition_key_count(tableMeta)
-            for i in 0..<partitionKeyCount {
-                guard let colMeta = cass_table_meta_partition_key(tableMeta, i) else { continue }
-                var namePtr: UnsafePointer<CChar>?
-                var nameLength = Int()
-                cass_column_meta_name(colMeta, &namePtr, &nameLength)
-                if let namePtr = namePtr {
-                    let name = String(cString: namePtr).prefix(nameLength)
-                    pkColumnNames.append(String(name))
+            let pkColumnNames: [String]
+            if let names = prepared.primaryKeyColumnNames {
+                pkColumnNames = names
+            } else {
+                guard let schemaMeta = cass_session_get_schema_meta(self.rawPointer) else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Cannot retrieve schema metadata from session"
+                    )
                 }
-            }
+                defer { cass_schema_meta_free(schemaMeta) }
 
-            let clusteringKeyCount = cass_table_meta_clustering_key_count(tableMeta)
-            for i in 0..<clusteringKeyCount {
-                guard let colMeta = cass_table_meta_clustering_key(tableMeta, i) else { continue }
-                var namePtr: UnsafePointer<CChar>?
-                var nameLength = Int()
-                cass_column_meta_name(colMeta, &namePtr, &nameLength)
-                if let namePtr = namePtr {
-                    let name = String(cString: namePtr).prefix(nameLength)
-                    pkColumnNames.append(String(name))
+                guard let keyspaceMeta = cass_schema_meta_keyspace_by_name(schemaMeta, keyspace) else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Keyspace '\(keyspace)' not found in schema metadata"
+                    )
                 }
+
+                guard let tableMeta = cass_keyspace_meta_table_by_name(keyspaceMeta, table) else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Table '\(table)' not found in keyspace '\(keyspace)' schema metadata"
+                    )
+                }
+
+                var names: [String] = []
+
+                let partitionKeyCount = cass_table_meta_partition_key_count(tableMeta)
+                for i in 0..<partitionKeyCount {
+                    guard let colMeta = cass_table_meta_partition_key(tableMeta, i) else { continue }
+                    var namePtr: UnsafePointer<CChar>?
+                    var nameLength = Int()
+                    cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                    if let namePtr = namePtr {
+                        let name = String(cString: namePtr).prefix(nameLength)
+                        names.append(String(name))
+                    }
+                }
+
+                let clusteringKeyCount = cass_table_meta_clustering_key_count(tableMeta)
+                for i in 0..<clusteringKeyCount {
+                    guard let colMeta = cass_table_meta_clustering_key(tableMeta, i) else { continue }
+                    var namePtr: UnsafePointer<CChar>?
+                    var nameLength = Int()
+                    cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                    if let namePtr = namePtr {
+                        let name = String(cString: namePtr).prefix(nameLength)
+                        names.append(String(name))
+                    }
+                }
+
+                prepared.primaryKeyColumnNames = names
+                pkColumnNames = names
             }
 
             // Build a map of parameter name → index for the prepared statement.

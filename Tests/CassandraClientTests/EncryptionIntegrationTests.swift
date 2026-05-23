@@ -1460,6 +1460,103 @@ final class EncryptionIntegrationTests: XCTestCase {
         XCTAssertEqual(value, "val-a")
     }
 
+    /// Batch mixing different prepared statements: two encrypted tables, one plaintext table.
+    func testBatchMixedEncryptedAndPlaintextTables() async throws {
+        let encTable1 = "test_batch_mix_enc1_\(DispatchTime.now().uptimeNanoseconds)"
+        let encTable2 = "test_batch_mix_enc2_\(DispatchTime.now().uptimeNanoseconds)"
+        let plainTable = "test_batch_mix_plain_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(encTable1) (user_id text primary key, secret blob)").wait()
+            try session.run("create table \(encTable2) (item_id text primary key, data blob)").wait()
+            try session.run("create table \(plainTable) (id text primary key, value text)").wait()
+        }
+
+        let schema1 = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: encTable1,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        let schema2 = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: encTable2,
+            keyColumns: [.init(name: "item_id", type: .string)],
+            encryptedColumns: ["data"]
+        )
+        self.configuration.registerEncryptionSchema(schema1)
+        self.configuration.registerEncryptionSchema(schema2)
+        self.recreateClient()
+
+        let encInsert1 = try await self.cassandraClient.prepare(
+            "insert into \(encTable1) (user_id, secret) values (?, ?)"
+        )
+        encInsert1.encryptionTable = encTable1
+
+        let encInsert2 = try await self.cassandraClient.prepare(
+            "insert into \(encTable2) (item_id, data) values (?, ?)"
+        )
+        encInsert2.encryptionTable = encTable2
+
+        let plainInsert = try await self.cassandraClient.prepare(
+            "insert into \(plainTable) (id, value) values (?, ?)"
+        )
+
+        try await self.cassandraClient.batch { batch in
+            try batch.add(prepared: encInsert1, parameters: [
+                .string("alice"),
+                .encryptedString(CassandraClient.Encrypted("alice-secret")),
+            ])
+            try batch.add(prepared: encInsert2, parameters: [
+                .string("item-42"),
+                .encryptedBytes(CassandraClient.Encrypted([0xDE, 0xAD])),
+            ])
+            try batch.add(prepared: plainInsert, parameters: [
+                .string("row-1"),
+                .string("plain-value"),
+            ])
+        }
+
+        let encSelect1 = try await self.cassandraClient.prepare(
+            "select user_id, secret from \(encTable1) where user_id = ?"
+        )
+        encSelect1.encryptionTable = encTable1
+
+        let aliceResults: [UserWithSecret] = try await self.cassandraClient.execute(
+            prepared: encSelect1,
+            parameters: [.string("alice")]
+        )
+        XCTAssertEqual(aliceResults.count, 1)
+        XCTAssertEqual(aliceResults[0].secret.value, "alice-secret")
+
+        let encSelect2 = try await self.cassandraClient.prepare(
+            "select item_id, data from \(encTable2) where item_id = ?"
+        )
+        encSelect2.encryptionTable = encTable2
+
+        let itemResults: [ItemWithData] = try await self.cassandraClient.execute(
+            prepared: encSelect2,
+            parameters: [.string("item-42")]
+        )
+        XCTAssertEqual(itemResults.count, 1)
+        XCTAssertEqual(itemResults[0].data.value, [0xDE, 0xAD])
+
+        let plainSelect = try await self.cassandraClient.prepare(
+            "select id, value from \(plainTable) where id = ?"
+        )
+        let plainRows = try await self.cassandraClient.execute(
+            prepared: plainSelect,
+            parameters: [.string("row-1")]
+        )
+        let rowArray = Array(plainRows)
+        XCTAssertEqual(rowArray.count, 1)
+        let plainValue: String? = rowArray[0].column("value")
+        XCTAssertEqual(plainValue, "plain-value")
+    }
+
 }
 
 struct UserWithSecret: Decodable {
@@ -1477,4 +1574,9 @@ struct CompositeKeyUser: Decodable {
     let partition_id: String
     let cluster_id: Int32
     let secret: CassandraClient.Encrypted<String>
+}
+
+struct ItemWithData: Decodable {
+    let item_id: String
+    let data: CassandraClient.Encrypted<[UInt8]>
 }

@@ -24,6 +24,10 @@ extension CassandraClient {
         /// passing `options.encryptionTable` on every execute call.
         public var encryptionTable: String?
 
+        /// PK column names (partition + clustering keys) for this statement's table.
+        /// Populated lazily on first encrypted execute to avoid repeated schema metadata lookups.
+        internal var primaryKeyColumnNames: [String]?
+
         internal init(rawPointer: OpaquePointer) {
             self.rawPointer = rawPointer
             // Count parameters by iterating until we get an error from parameterName.
