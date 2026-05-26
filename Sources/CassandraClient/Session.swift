@@ -83,6 +83,7 @@ public protocol CassandraSession {
     /// - Returns: A ``CassandraClient/PreparedStatement``.
     func prepare(
         _ query: String,
+        encryptionTable: String?,
         on eventLoop: EventLoop?,
         logger: Logger?
     ) -> EventLoopFuture<CassandraClient.PreparedStatement>
@@ -154,6 +155,7 @@ public protocol CassandraSession {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func prepare(
         _ query: String,
+        encryptionTable: String?,
         logger: Logger?
     ) async throws -> CassandraClient.PreparedStatement
 
@@ -393,10 +395,11 @@ extension CassandraSession {
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     public func prepare(
         _ query: String,
+        encryptionTable: String? = nil,
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
     ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
-        self.prepare(query, on: eventLoop, logger: logger)
+        self.prepare(query, encryptionTable: encryptionTable, on: eventLoop, logger: logger)
     }
 
     /// Execute a prepared statement with bound parameters.
@@ -626,6 +629,7 @@ extension CassandraClient {
 
         func prepare(
             _ query: String,
+            encryptionTable: String? = nil,
             on eventLoop: EventLoop?,
             logger: Logger? = .none
         ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
@@ -633,11 +637,95 @@ extension CassandraClient {
                 logger.debug("preparing: \(query)")
                 let promise = eventLoop.makePromise(of: CassandraClient.PreparedStatement.self)
                 let future = cass_session_prepare(self.rawPointer, query)
-                futureSetPreparedCallback(future!) { result in
-                    promise.completeWith(result)
+                futureSetPreparedCallback(future!) { [self] result in
+                    switch result {
+                    case .success(let rawPointer):
+                        do {
+                            let pkColumns: [String]
+                            if let tableName = encryptionTable {
+                                pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+                            } else {
+                                pkColumns = []
+                            }
+                            let prepared = CassandraClient.PreparedStatement(
+                                rawPointer: rawPointer,
+                                encryptionTable: encryptionTable,
+                                primaryKeyColumnNames: pkColumns
+                            )
+                            promise.succeed(prepared)
+                        } catch {
+                            promise.fail(error)
+                        }
+                    case .failure(let error):
+                        promise.fail(error)
+                    }
                 }
                 return promise.futureResult
             }
+        }
+
+        private func lookupPrimaryKeyColumnNames(tableName: String) throws -> [String] {
+            let keyspace: String
+            let table: String
+            if let dotIndex = tableName.firstIndex(of: ".") {
+                keyspace = String(tableName[tableName.startIndex..<dotIndex])
+                table = String(tableName[tableName.index(after: dotIndex)...])
+            } else {
+                guard let sessionKeyspace = self.keyspace else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "encryptionTable '\(tableName)' has no keyspace qualifier and session has no default keyspace"
+                    )
+                }
+                keyspace = sessionKeyspace
+                table = tableName
+            }
+
+            guard let schemaMeta = cass_session_get_schema_meta(self.rawPointer) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Cannot retrieve schema metadata from session"
+                )
+            }
+            defer { cass_schema_meta_free(schemaMeta) }
+
+            guard let keyspaceMeta = cass_schema_meta_keyspace_by_name(schemaMeta, keyspace) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Keyspace '\(keyspace)' not found in schema metadata"
+                )
+            }
+
+            guard let tableMeta = cass_keyspace_meta_table_by_name(keyspaceMeta, table) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Table '\(table)' not found in keyspace '\(keyspace)' schema metadata"
+                )
+            }
+
+            var names: [String] = []
+
+            let partitionKeyCount = cass_table_meta_partition_key_count(tableMeta)
+            for i in 0..<partitionKeyCount {
+                guard let colMeta = cass_table_meta_partition_key(tableMeta, i) else { continue }
+                var namePtr: UnsafePointer<CChar>?
+                var nameLength = Int()
+                cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                if let namePtr = namePtr {
+                    let name = String(cString: namePtr).prefix(nameLength)
+                    names.append(String(name))
+                }
+            }
+
+            let clusteringKeyCount = cass_table_meta_clustering_key_count(tableMeta)
+            for i in 0..<clusteringKeyCount {
+                guard let colMeta = cass_table_meta_clustering_key(tableMeta, i) else { continue }
+                var namePtr: UnsafePointer<CChar>?
+                var nameLength = Int()
+                cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                if let namePtr = namePtr {
+                    let name = String(cString: namePtr).prefix(nameLength)
+                    names.append(String(name))
+                }
+            }
+
+            return names
         }
 
         /// Resolve encryption contexts for parameters that have `context: nil` using driver schema metadata.
@@ -671,56 +759,10 @@ extension CassandraClient {
             }
 
             let pkColumnNames: [String]
-            if let names = prepared.primaryKeyColumnNames {
-                pkColumnNames = names
+            if !prepared.primaryKeyColumnNames.isEmpty {
+                pkColumnNames = prepared.primaryKeyColumnNames
             } else {
-                guard let schemaMeta = cass_session_get_schema_meta(self.rawPointer) else {
-                    throw CassandraClient.Error.encryptionConfigError(
-                        "Cannot retrieve schema metadata from session"
-                    )
-                }
-                defer { cass_schema_meta_free(schemaMeta) }
-
-                guard let keyspaceMeta = cass_schema_meta_keyspace_by_name(schemaMeta, keyspace) else {
-                    throw CassandraClient.Error.encryptionConfigError(
-                        "Keyspace '\(keyspace)' not found in schema metadata"
-                    )
-                }
-
-                guard let tableMeta = cass_keyspace_meta_table_by_name(keyspaceMeta, table) else {
-                    throw CassandraClient.Error.encryptionConfigError(
-                        "Table '\(table)' not found in keyspace '\(keyspace)' schema metadata"
-                    )
-                }
-
-                var names: [String] = []
-
-                let partitionKeyCount = cass_table_meta_partition_key_count(tableMeta)
-                for i in 0..<partitionKeyCount {
-                    guard let colMeta = cass_table_meta_partition_key(tableMeta, i) else { continue }
-                    var namePtr: UnsafePointer<CChar>?
-                    var nameLength = Int()
-                    cass_column_meta_name(colMeta, &namePtr, &nameLength)
-                    if let namePtr = namePtr {
-                        let name = String(cString: namePtr).prefix(nameLength)
-                        names.append(String(name))
-                    }
-                }
-
-                let clusteringKeyCount = cass_table_meta_clustering_key_count(tableMeta)
-                for i in 0..<clusteringKeyCount {
-                    guard let colMeta = cass_table_meta_clustering_key(tableMeta, i) else { continue }
-                    var namePtr: UnsafePointer<CChar>?
-                    var nameLength = Int()
-                    cass_column_meta_name(colMeta, &namePtr, &nameLength)
-                    if let namePtr = namePtr {
-                        let name = String(cString: namePtr).prefix(nameLength)
-                        names.append(String(name))
-                    }
-                }
-
-                prepared.primaryKeyColumnNames = names
-                pkColumnNames = names
+                pkColumnNames = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
             }
 
             // Build a map of parameter name → index for the prepared statement.
@@ -1041,9 +1083,10 @@ extension CassandraSession {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func prepare(
         _ query: String,
+        encryptionTable: String? = nil,
         logger: Logger? = .none
     ) async throws -> CassandraClient.PreparedStatement {
-        try await self.prepare(query, logger: logger)
+        try await self.prepare(query, encryptionTable: encryptionTable, logger: logger)
     }
 
     /// Execute a prepared statement with bound parameters.
@@ -1211,9 +1254,10 @@ extension CassandraClient.Session {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func prepare(
         _ query: String,
+        encryptionTable: String? = nil,
         logger: Logger? = .none
     ) async throws -> CassandraClient.PreparedStatement {
-        try await self.withConnection(logger: logger) { logger in
+        let preparedRawPointer: OpaquePointer = try await self.withConnection(logger: logger) { logger in
             logger.debug("preparing: \(query)")
             let future = cass_session_prepare(rawPointer, query)
             return try await withCheckedThrowingContinuation { continuation in
@@ -1222,6 +1266,17 @@ extension CassandraClient.Session {
                 }
             }
         }
+        let pkColumns: [String]
+        if let tableName = encryptionTable {
+            pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+        } else {
+            pkColumns = []
+        }
+        return CassandraClient.PreparedStatement(
+            rawPointer: preparedRawPointer,
+            encryptionTable: encryptionTable,
+            primaryKeyColumnNames: pkColumns
+        )
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -1333,15 +1388,15 @@ private func futureSetResultCallback(
 
 private func futureSetPreparedCallback(
     _ future: OpaquePointer,
-    completion: @escaping (Result<CassandraClient.PreparedStatement, Error>) -> Void
+    completion: @escaping (Result<OpaquePointer, Error>) -> Void
 ) {
     let closure = unmanagedRetainedClosure {
         DispatchQueue.global().async {
             let resultCode = cass_future_error_code(future)
-            let result: Result<CassandraClient.PreparedStatement, Error>
+            let result: Result<OpaquePointer, Error>
             if resultCode == CASS_OK {
                 let prepared = cass_future_get_prepared(future)!
-                result = .success(CassandraClient.PreparedStatement(rawPointer: prepared))
+                result = .success(prepared)
             } else {
                 result = .failure(CassandraClient.Error(future))
             }

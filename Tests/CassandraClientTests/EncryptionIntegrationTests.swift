@@ -1296,9 +1296,9 @@ final class EncryptionIntegrationTests: XCTestCase {
         self.recreateClient()
 
         let insertStmt = try await self.cassandraClient.prepare(
-            "insert into \(tableName) (user_id, secret) values (?, ?)"
+            "insert into \(tableName) (user_id, secret) values (?, ?)",
+            encryptionTable: tableName
         )
-        insertStmt.encryptionTable = tableName
 
         try await self.cassandraClient.batch { batch in
             try batch.add(
@@ -1325,9 +1325,9 @@ final class EncryptionIntegrationTests: XCTestCase {
         }
 
         let selectStmt = try await self.cassandraClient.prepare(
-            "select user_id, secret from \(tableName) where user_id = ?"
+            "select user_id, secret from \(tableName) where user_id = ?",
+            encryptionTable: tableName
         )
-        selectStmt.encryptionTable = tableName
 
         for (userId, expected) in [("alice", "alice-secret"), ("bob", "bob-secret"), ("carol", "carol-secret")] {
             let results: [UserWithSecret] = try await self.cassandraClient.execute(
@@ -1492,38 +1492,47 @@ final class EncryptionIntegrationTests: XCTestCase {
         self.recreateClient()
 
         let encInsert1 = try await self.cassandraClient.prepare(
-            "insert into \(encTable1) (user_id, secret) values (?, ?)"
+            "insert into \(encTable1) (user_id, secret) values (?, ?)",
+            encryptionTable: encTable1
         )
-        encInsert1.encryptionTable = encTable1
 
         let encInsert2 = try await self.cassandraClient.prepare(
-            "insert into \(encTable2) (item_id, data) values (?, ?)"
+            "insert into \(encTable2) (item_id, data) values (?, ?)",
+            encryptionTable: encTable2
         )
-        encInsert2.encryptionTable = encTable2
 
         let plainInsert = try await self.cassandraClient.prepare(
             "insert into \(plainTable) (id, value) values (?, ?)"
         )
 
         try await self.cassandraClient.batch { batch in
-            try batch.add(prepared: encInsert1, parameters: [
-                .string("alice"),
-                .encryptedString(CassandraClient.Encrypted("alice-secret")),
-            ])
-            try batch.add(prepared: encInsert2, parameters: [
-                .string("item-42"),
-                .encryptedBytes(CassandraClient.Encrypted([0xDE, 0xAD])),
-            ])
-            try batch.add(prepared: plainInsert, parameters: [
-                .string("row-1"),
-                .string("plain-value"),
-            ])
+            try batch.add(
+                prepared: encInsert1,
+                parameters: [
+                    .string("alice"),
+                    .encryptedString(CassandraClient.Encrypted("alice-secret")),
+                ]
+            )
+            try batch.add(
+                prepared: encInsert2,
+                parameters: [
+                    .string("item-42"),
+                    .encryptedBytes(CassandraClient.Encrypted([0xDE, 0xAD])),
+                ]
+            )
+            try batch.add(
+                prepared: plainInsert,
+                parameters: [
+                    .string("row-1"),
+                    .string("plain-value"),
+                ]
+            )
         }
 
         let encSelect1 = try await self.cassandraClient.prepare(
-            "select user_id, secret from \(encTable1) where user_id = ?"
+            "select user_id, secret from \(encTable1) where user_id = ?",
+            encryptionTable: encTable1
         )
-        encSelect1.encryptionTable = encTable1
 
         let aliceResults: [UserWithSecret] = try await self.cassandraClient.execute(
             prepared: encSelect1,
@@ -1533,9 +1542,9 @@ final class EncryptionIntegrationTests: XCTestCase {
         XCTAssertEqual(aliceResults[0].secret.value, "alice-secret")
 
         let encSelect2 = try await self.cassandraClient.prepare(
-            "select item_id, data from \(encTable2) where item_id = ?"
+            "select item_id, data from \(encTable2) where item_id = ?",
+            encryptionTable: encTable2
         )
-        encSelect2.encryptionTable = encTable2
 
         let itemResults: [ItemWithData] = try await self.cassandraClient.execute(
             prepared: encSelect2,

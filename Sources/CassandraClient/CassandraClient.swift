@@ -164,10 +164,11 @@ public class CassandraClient: CassandraSession {
     /// - Returns: A ``PreparedStatement``.
     public func prepare(
         _ query: String,
+        encryptionTable: String? = nil,
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
     ) -> EventLoopFuture<PreparedStatement> {
-        self.defaultSession.prepare(query, on: eventLoop, logger: logger)
+        self.defaultSession.prepare(query, encryptionTable: encryptionTable, on: eventLoop, logger: logger)
     }
 
     /// Execute a ``PreparedStatement`` with bound parameters using the default ``CassandraSession``.
@@ -315,9 +316,10 @@ public class CassandraClient: CassandraSession {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func prepare(
         _ query: String,
+        encryptionTable: String? = nil,
         logger: Logger? = .none
     ) async throws -> PreparedStatement {
-        try await self.defaultSession.prepare(query, logger: logger)
+        try await self.defaultSession.prepare(query, encryptionTable: encryptionTable, logger: logger)
     }
 
     /// Execute a ``PreparedStatement`` with bound parameters using the default ``CassandraSession``.
