@@ -900,7 +900,13 @@ extension CassandraClient {
             _ build: (inout Batch) throws -> Void
         ) -> EventLoopFuture<Void> {
             do {
-                let resolver: ((CassandraClient.PreparedStatement, [CassandraClient.Statement.Value], CassandraClient.Statement.Options) throws -> CassandraClient.Statement)?
+                let resolver:
+                    (
+                        (
+                            CassandraClient.PreparedStatement, [CassandraClient.Statement.Value],
+                            CassandraClient.Statement.Options
+                        ) throws -> CassandraClient.Statement
+                    )?
                 if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
                     resolver = { [self] prepared, parameters, options in
                         let resolvedParameters = try self.resolveEncryptionContexts(
@@ -1231,7 +1237,13 @@ extension CassandraClient.Session {
         logger: Logger? = .none,
         _ build: (inout CassandraClient.Batch) async throws -> Void
     ) async throws {
-        let resolver: ((CassandraClient.PreparedStatement, [CassandraClient.Statement.Value], CassandraClient.Statement.Options) throws -> CassandraClient.Statement)?
+        let resolver:
+            (
+                (
+                    CassandraClient.PreparedStatement, [CassandraClient.Statement.Value],
+                    CassandraClient.Statement.Options
+                ) throws -> CassandraClient.Statement
+            )?
         if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
             resolver = { [self] prepared, parameters, options in
                 let resolvedParameters = try self.resolveEncryptionContexts(
