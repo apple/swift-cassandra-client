@@ -77,6 +77,7 @@ public protocol CassandraSession {
     ///
     /// - Parameters:
     ///   - query: The CQL query string with `?` placeholders.
+    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
     ///   - eventLoop: The `EventLoop` to use. Optional.
     ///   - logger: The `Logger` to use. Optional.
     ///
@@ -149,6 +150,7 @@ public protocol CassandraSession {
     ///
     /// - Parameters:
     ///   - query: The CQL query string with `?` placeholders.
+    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: A ``CassandraClient/PreparedStatement``.
@@ -898,9 +900,9 @@ extension CassandraClient {
             _ build: (inout Batch) throws -> Void
         ) -> EventLoopFuture<Void> {
             do {
-                var batch = try Batch(configuration: configuration)
+                let resolver: ((CassandraClient.PreparedStatement, [CassandraClient.Statement.Value], CassandraClient.Statement.Options) throws -> CassandraClient.Statement)?
                 if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                    batch.resolver = { [self] prepared, parameters, options in
+                    resolver = { [self] prepared, parameters, options in
                         let resolvedParameters = try self.resolveEncryptionContexts(
                             prepared: prepared,
                             parameters: parameters,
@@ -918,7 +920,10 @@ extension CassandraClient {
                             _encryptor: self.encryptor
                         )
                     }
+                } else {
+                    resolver = nil
                 }
+                var batch = try Batch(configuration: configuration, resolver: resolver)
                 try build(&batch)
                 return self.execute(batch: batch, on: eventLoop, logger: logger)
             } catch {
@@ -1226,9 +1231,9 @@ extension CassandraClient.Session {
         logger: Logger? = .none,
         _ build: (inout CassandraClient.Batch) async throws -> Void
     ) async throws {
-        var batch = try CassandraClient.Batch(configuration: configuration)
+        let resolver: ((CassandraClient.PreparedStatement, [CassandraClient.Statement.Value], CassandraClient.Statement.Options) throws -> CassandraClient.Statement)?
         if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            batch.resolver = { [self] prepared, parameters, options in
+            resolver = { [self] prepared, parameters, options in
                 let resolvedParameters = try self.resolveEncryptionContexts(
                     prepared: prepared,
                     parameters: parameters,
@@ -1246,7 +1251,10 @@ extension CassandraClient.Session {
                     _encryptor: self.encryptor
                 )
             }
+        } else {
+            resolver = nil
         }
+        var batch = try CassandraClient.Batch(configuration: configuration, resolver: resolver)
         try await build(&batch)
         try await self.execute(batch: batch, logger: logger)
     }

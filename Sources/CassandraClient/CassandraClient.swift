@@ -158,6 +158,7 @@ public class CassandraClient: CassandraSession {
     ///
     /// - Parameters:
     ///   - query: The CQL query string with `?` placeholders.
+    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
     ///   - eventLoop: The `EventLoop` to use, or create a new one.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
@@ -310,6 +311,7 @@ public class CassandraClient: CassandraSession {
     ///
     /// - Parameters:
     ///   - query: The CQL query string with `?` placeholders.
+    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: A ``PreparedStatement``.

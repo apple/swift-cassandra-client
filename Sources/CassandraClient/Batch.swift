@@ -31,11 +31,14 @@ extension CassandraClient {
     /// A batch of statements to execute in Cassandra.
     public struct Batch: ~Copyable {
         internal let rawPointer: OpaquePointer
-        internal var resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)?
+        internal let resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)?
 
-        internal init(configuration: Configuration) throws {
+        internal init(
+            configuration: Configuration,
+            resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)? = nil
+        ) throws {
             self.rawPointer = cass_batch_new(configuration.type.rawValue)
-            self.resolver = nil
+            self.resolver = resolver
 
             if let consistency = configuration.consistency {
                 try checkResult {
