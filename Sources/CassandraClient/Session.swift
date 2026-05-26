@@ -345,7 +345,10 @@ final class CassFuture<T>: Sendable {
                 completion(result)
             }
         }
-        cass_future_set_callback(self.rawPointer, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
+        let error = cass_future_set_callback(self.rawPointer, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
+        if error == CASS_ERROR_LIB_CALLBACK_ALREADY_SET {
+            assertionFailure("setResultCallback called multiple times. Only the first callback will be registered")
+        }
     }
 
     private func result() -> Result<T, any Error> {
