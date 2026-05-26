@@ -70,6 +70,45 @@ public protocol CassandraSession {
         logger: Logger?
     ) -> EventLoopFuture<CassandraClient.PaginatedRows>
 
+    /// Prepare a CQL query for repeated execution.
+    ///
+    /// The server parses and validates the query once. The returned ``CassandraClient/PreparedStatement``
+    /// can then be bound with different parameters and executed multiple times without re-parsing.
+    ///
+    /// - Parameters:
+    ///   - query: The CQL query string with `?` placeholders.
+    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
+    ///   - eventLoop: The `EventLoop` to use. Optional.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: A ``CassandraClient/PreparedStatement``.
+    func prepare(
+        _ query: String,
+        encryptionTable: String?,
+        on eventLoop: EventLoop?,
+        logger: Logger?
+    ) -> EventLoopFuture<CassandraClient.PreparedStatement>
+
+    /// Execute a prepared statement with bound parameters.
+    ///
+    /// **All** rows are returned.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``CassandraClient/PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - eventLoop: The `EventLoop` to use. Optional.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/Rows``.
+    func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value],
+        options: CassandraClient.Statement.Options,
+        on eventLoop: EventLoop?,
+        logger: Logger?
+    ) -> EventLoopFuture<CassandraClient.Rows>
+
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -103,6 +142,41 @@ public protocol CassandraSession {
         logger: Logger?
     )
         async throws -> CassandraClient.PaginatedRows
+
+    /// Prepare a CQL query for repeated execution.
+    ///
+    /// The server parses and validates the query once. The returned ``CassandraClient/PreparedStatement``
+    /// can then be bound with different parameters and executed multiple times without re-parsing.
+    ///
+    /// - Parameters:
+    ///   - query: The CQL query string with `?` placeholders.
+    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: A ``CassandraClient/PreparedStatement``.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func prepare(
+        _ query: String,
+        encryptionTable: String?,
+        logger: Logger?
+    ) async throws -> CassandraClient.PreparedStatement
+
+    /// Execute a prepared statement with bound parameters.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``CassandraClient/PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - logger: The `Logger` to use. Optional.
+    ///
+    /// - Returns: The resulting ``CassandraClient/Rows``.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value],
+        options: CassandraClient.Statement.Options,
+        logger: Logger?
+    ) async throws -> CassandraClient.Rows
 
     /// Execute a batch of statements.
     ///
@@ -317,6 +391,88 @@ extension CassandraSession {
             return eventLoop.makeFailedFuture(error)
         }
     }
+
+    /// Prepare a CQL query for repeated execution.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    public func prepare(
+        _ query: String,
+        encryptionTable: String? = nil,
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
+        self.prepare(query, encryptionTable: encryptionTable, on: eventLoop, logger: logger)
+    }
+
+    /// Execute a prepared statement with bound parameters.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    public func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<CassandraClient.Rows> {
+        do {
+            let statement: CassandraClient.Statement
+            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                try self.validateEncryptionBindings(
+                    prepared: prepared,
+                    parameters: parameters,
+                    options: options
+                )
+                statement = try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    parameters: parameters,
+                    options: options,
+                    _encryptor: self.encryptor
+                )
+            } else {
+                statement = try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    parameters: parameters,
+                    options: options,
+                    _encryptor: nil
+                )
+            }
+            return self.execute(statement: statement, on: eventLoop, logger: logger)
+        } catch {
+            let eventLoop = eventLoop ?? eventLoopGroup.next()
+            return eventLoop.makeFailedFuture(error)
+        }
+    }
+
+    /// Execute a prepared statement and decode each row into a `Decodable` type.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    public func execute<T: Decodable>(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none
+    ) -> EventLoopFuture<[T]> {
+        var effectiveOptions = options
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            if effectiveOptions.encryptionTable == nil {
+                effectiveOptions.encryptionTable = prepared.encryptionTable
+            }
+        }
+        return self.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: effectiveOptions,
+            on: eventLoop,
+            logger: logger
+        ).flatMapThrowing { rows in
+            let result = try rows.map { row in
+                try T(from: self.makeDecoder(row: row, options: effectiveOptions))
+            }
+            self.logDecryptedRows(count: result.count, options: effectiveOptions, logger: logger)
+            return result
+        }
+    }
 }
 
 extension CassandraClient {
@@ -473,6 +629,247 @@ extension CassandraClient {
             )
         }
 
+        func prepare(
+            _ query: String,
+            encryptionTable: String? = nil,
+            on eventLoop: EventLoop?,
+            logger: Logger? = .none
+        ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
+            self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
+                logger.debug("preparing: \(query)")
+                let promise = eventLoop.makePromise(of: CassandraClient.PreparedStatement.self)
+                let future = cass_session_prepare(self.rawPointer, query)
+                futureSetPreparedCallback(future!) { [self] result in
+                    switch result {
+                    case .success(let rawPointer):
+                        do {
+                            let pkColumns: [String]
+                            if let tableName = encryptionTable {
+                                pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+                            } else {
+                                pkColumns = []
+                            }
+                            let prepared = CassandraClient.PreparedStatement(
+                                rawPointer: rawPointer,
+                                encryptionTable: encryptionTable,
+                                primaryKeyColumnNames: pkColumns
+                            )
+                            promise.succeed(prepared)
+                        } catch {
+                            promise.fail(error)
+                        }
+                    case .failure(let error):
+                        promise.fail(error)
+                    }
+                }
+                return promise.futureResult
+            }
+        }
+
+        private func lookupPrimaryKeyColumnNames(tableName: String) throws -> [String] {
+            let keyspace: String
+            let table: String
+            if let dotIndex = tableName.firstIndex(of: ".") {
+                keyspace = String(tableName[tableName.startIndex..<dotIndex])
+                table = String(tableName[tableName.index(after: dotIndex)...])
+            } else {
+                guard let sessionKeyspace = self.keyspace else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "encryptionTable '\(tableName)' has no keyspace qualifier and session has no default keyspace"
+                    )
+                }
+                keyspace = sessionKeyspace
+                table = tableName
+            }
+
+            guard let schemaMeta = cass_session_get_schema_meta(self.rawPointer) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Cannot retrieve schema metadata from session"
+                )
+            }
+            defer { cass_schema_meta_free(schemaMeta) }
+
+            guard let keyspaceMeta = cass_schema_meta_keyspace_by_name(schemaMeta, keyspace) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Keyspace '\(keyspace)' not found in schema metadata"
+                )
+            }
+
+            guard let tableMeta = cass_keyspace_meta_table_by_name(keyspaceMeta, table) else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Table '\(table)' not found in keyspace '\(keyspace)' schema metadata"
+                )
+            }
+
+            var names: [String] = []
+
+            let partitionKeyCount = cass_table_meta_partition_key_count(tableMeta)
+            for i in 0..<partitionKeyCount {
+                guard let colMeta = cass_table_meta_partition_key(tableMeta, i) else { continue }
+                var namePtr: UnsafePointer<CChar>?
+                var nameLength = Int()
+                cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                if let namePtr = namePtr {
+                    let name = String(cString: namePtr).prefix(nameLength)
+                    names.append(String(name))
+                }
+            }
+
+            let clusteringKeyCount = cass_table_meta_clustering_key_count(tableMeta)
+            for i in 0..<clusteringKeyCount {
+                guard let colMeta = cass_table_meta_clustering_key(tableMeta, i) else { continue }
+                var namePtr: UnsafePointer<CChar>?
+                var nameLength = Int()
+                cass_column_meta_name(colMeta, &namePtr, &nameLength)
+                if let namePtr = namePtr {
+                    let name = String(cString: namePtr).prefix(nameLength)
+                    names.append(String(name))
+                }
+            }
+
+            return names
+        }
+
+        /// Resolve encryption contexts for parameters that have `context: nil` using driver schema metadata.
+        /// Discovers PK columns from Cassandra's metadata cache rather than requiring EncryptionSchema registration.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        private func resolveEncryptionContexts(
+            prepared: CassandraClient.PreparedStatement,
+            parameters: [CassandraClient.Statement.Value],
+            options: CassandraClient.Statement.Options
+        ) throws -> [CassandraClient.Statement.Value] {
+            let tableName = options.encryptionTable ?? prepared.encryptionTable
+            guard let tableName else { return parameters }
+
+            let needsResolution = parameters.contains { $0.isEncrypted && $0.encryptionContext == nil }
+            guard needsResolution else { return parameters }
+
+            // Parse keyspace and table from encryptionTable option.
+            let keyspace: String
+            let table: String
+            if let dotIndex = tableName.firstIndex(of: ".") {
+                keyspace = String(tableName[tableName.startIndex..<dotIndex])
+                table = String(tableName[tableName.index(after: dotIndex)...])
+            } else {
+                guard let sessionKeyspace = self.keyspace else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "encryptionTable '\(tableName)' has no keyspace qualifier and session has no default keyspace"
+                    )
+                }
+                keyspace = sessionKeyspace
+                table = tableName
+            }
+
+            let pkColumnNames: [String]
+            if !prepared.primaryKeyColumnNames.isEmpty {
+                pkColumnNames = prepared.primaryKeyColumnNames
+            } else {
+                pkColumnNames = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+            }
+
+            // Build a map of parameter name → index for the prepared statement.
+            var paramIndexByName: [String: Int] = [:]
+            for i in 0..<parameters.count {
+                if let name = prepared.parameterName(at: i) {
+                    paramIndexByName[name] = i
+                }
+            }
+
+            // Extract PK values from parameters.
+            var keyComponents: [CassandraClient.KeyComponent] = []
+            for pkCol in pkColumnNames {
+                guard let paramIdx = paramIndexByName[pkCol] else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Cannot auto-infer encryption context: key column '\(pkCol)' is not present in the prepared statement parameters. Provide context manually."
+                    )
+                }
+                let component = try Self.extractKeyComponent(from: parameters[paramIdx], columnName: pkCol)
+                keyComponents.append(component)
+            }
+
+            let primaryKey = CassandraClient.PrimaryKey(from: keyComponents)
+            let baseContext = CassandraClient.EncryptionContext.Base(
+                keyspace: keyspace,
+                table: table,
+                primaryKey: primaryKey
+            )
+
+            // Replace context-less encrypted values with context-resolved ones.
+            var resolved = parameters
+            for i in 0..<resolved.count {
+                guard resolved[i].isEncrypted, resolved[i].encryptionContext == nil else { continue }
+                guard let columnName = prepared.parameterName(at: i) else {
+                    throw CassandraClient.Error.encryptionConfigError(
+                        "Cannot auto-infer encryption context: no column name for parameter at index \(i)"
+                    )
+                }
+                resolved[i] = resolved[i].withContext(baseContext.forColumn(columnName))
+            }
+
+            return resolved
+        }
+
+        /// Extract a KeyComponent from a Statement.Value by inspecting its type.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        private static func extractKeyComponent(
+            from value: CassandraClient.Statement.Value,
+            columnName: String
+        ) throws -> CassandraClient.KeyComponent {
+            switch value {
+            case .string(let v): return .string(v)
+            case .uuid(let v): return .uuid(v)
+            case .int32(let v): return .int32(v)
+            case .int64(let v): return .int64(v)
+            case .bytes(let v): return .data(Data(v))
+            case .date(let v): return .date(v)
+            default:
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Cannot extract key component for column '\(columnName)': unsupported value type for primary key"
+                )
+            }
+        }
+
+        func execute(
+            prepared: CassandraClient.PreparedStatement,
+            parameters: [CassandraClient.Statement.Value] = [],
+            options: CassandraClient.Statement.Options = .init(),
+            on eventLoop: EventLoop? = .none,
+            logger: Logger? = .none
+        ) -> EventLoopFuture<CassandraClient.Rows> {
+            do {
+                let statement: CassandraClient.Statement
+                if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                    let resolvedParameters = try self.resolveEncryptionContexts(
+                        prepared: prepared,
+                        parameters: parameters,
+                        options: options
+                    )
+                    try self.validateEncryptionBindings(
+                        prepared: prepared,
+                        parameters: resolvedParameters,
+                        options: options
+                    )
+                    statement = try CassandraClient.Statement(
+                        preparedRawPointer: prepared.bind(),
+                        parameters: resolvedParameters,
+                        options: options,
+                        _encryptor: self.encryptor
+                    )
+                } else {
+                    statement = try CassandraClient.Statement(
+                        preparedRawPointer: prepared.bind(),
+                        parameters: parameters,
+                        options: options,
+                        _encryptor: nil
+                    )
+                }
+                return self.execute(statement: statement, on: eventLoop, logger: logger)
+            } catch {
+                let eventLoop = eventLoop ?? self.eventLoopGroup.next()
+                return eventLoop.makeFailedFuture(error)
+            }
+        }
+
         func execute(
             batch: consuming Batch,
             on eventLoop: EventLoop?,
@@ -503,7 +900,36 @@ extension CassandraClient {
             _ build: (inout Batch) throws -> Void
         ) -> EventLoopFuture<Void> {
             do {
-                var batch = try Batch(configuration: configuration)
+                let resolver:
+                    (
+                        (
+                            CassandraClient.PreparedStatement, [CassandraClient.Statement.Value],
+                            CassandraClient.Statement.Options
+                        ) throws -> CassandraClient.Statement
+                    )?
+                if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                    resolver = { [self] prepared, parameters, options in
+                        let resolvedParameters = try self.resolveEncryptionContexts(
+                            prepared: prepared,
+                            parameters: parameters,
+                            options: options
+                        )
+                        try self.validateEncryptionBindings(
+                            prepared: prepared,
+                            parameters: resolvedParameters,
+                            options: options
+                        )
+                        return try CassandraClient.Statement(
+                            preparedRawPointer: prepared.bind(),
+                            parameters: resolvedParameters,
+                            options: options,
+                            _encryptor: self.encryptor
+                        )
+                    }
+                } else {
+                    resolver = nil
+                }
+                var batch = try Batch(configuration: configuration, resolver: resolver)
                 try build(&batch)
                 return self.execute(batch: batch, on: eventLoop, logger: logger)
             } catch {
@@ -663,6 +1089,54 @@ extension CassandraSession {
         }
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
+
+    /// Prepare a CQL query for repeated execution.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func prepare(
+        _ query: String,
+        encryptionTable: String? = nil,
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.PreparedStatement {
+        try await self.prepare(query, encryptionTable: encryptionTable, logger: logger)
+    }
+
+    /// Execute a prepared statement with bound parameters.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.Rows {
+        try await self.execute(prepared: prepared, parameters: parameters, options: options, logger: logger)
+    }
+
+    /// Execute a prepared statement and decode each row into a `Decodable` type.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func execute<T: Decodable>(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none
+    ) async throws -> [T] {
+        var effectiveOptions = options
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            if effectiveOptions.encryptionTable == nil {
+                effectiveOptions.encryptionTable = prepared.encryptionTable
+            }
+        }
+        let rows = try await self.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: effectiveOptions,
+            logger: logger
+        )
+        let result = try rows.map { row in
+            try T(from: self.makeDecoder(row: row, options: effectiveOptions))
+        }
+        self.logDecryptedRows(count: result.count, options: effectiveOptions, logger: logger)
+        return result
+    }
 }
 
 extension CassandraClient.Session {
@@ -763,9 +1237,102 @@ extension CassandraClient.Session {
         logger: Logger? = .none,
         _ build: (inout CassandraClient.Batch) async throws -> Void
     ) async throws {
-        var batch = try CassandraClient.Batch(configuration: configuration)
+        let resolver:
+            (
+                (
+                    CassandraClient.PreparedStatement, [CassandraClient.Statement.Value],
+                    CassandraClient.Statement.Options
+                ) throws -> CassandraClient.Statement
+            )?
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            resolver = { [self] prepared, parameters, options in
+                let resolvedParameters = try self.resolveEncryptionContexts(
+                    prepared: prepared,
+                    parameters: parameters,
+                    options: options
+                )
+                try self.validateEncryptionBindings(
+                    prepared: prepared,
+                    parameters: resolvedParameters,
+                    options: options
+                )
+                return try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    parameters: resolvedParameters,
+                    options: options,
+                    _encryptor: self.encryptor
+                )
+            }
+        } else {
+            resolver = nil
+        }
+        var batch = try CassandraClient.Batch(configuration: configuration, resolver: resolver)
         try await build(&batch)
         try await self.execute(batch: batch, logger: logger)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func prepare(
+        _ query: String,
+        encryptionTable: String? = nil,
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.PreparedStatement {
+        let preparedRawPointer: OpaquePointer = try await self.withConnection(logger: logger) { logger in
+            logger.debug("preparing: \(query)")
+            let future = cass_session_prepare(rawPointer, query)
+            return try await withCheckedThrowingContinuation { continuation in
+                futureSetPreparedCallback(future!) { result in
+                    continuation.resume(with: result)
+                }
+            }
+        }
+        let pkColumns: [String]
+        if let tableName = encryptionTable {
+            pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+        } else {
+            pkColumns = []
+        }
+        return CassandraClient.PreparedStatement(
+            rawPointer: preparedRawPointer,
+            encryptionTable: encryptionTable,
+            primaryKeyColumnNames: pkColumns
+        )
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func execute(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none
+    ) async throws -> CassandraClient.Rows {
+        let statement: CassandraClient.Statement
+        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+            let resolvedParameters = try self.resolveEncryptionContexts(
+                prepared: prepared,
+                parameters: parameters,
+                options: options
+            )
+            try self.validateEncryptionBindings(
+                prepared: prepared,
+                parameters: resolvedParameters,
+                options: options
+            )
+            statement = try CassandraClient.Statement(
+                preparedRawPointer: prepared.bind(),
+                parameters: resolvedParameters,
+                options: options,
+                _encryptor: self.encryptor
+            )
+        } else {
+            statement = try CassandraClient.Statement(
+                preparedRawPointer: prepared.bind(),
+                parameters: parameters,
+                options: options,
+                _encryptor: nil
+            )
+        }
+        return try await self.execute(statement: statement, logger: logger)
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -832,6 +1399,27 @@ private func futureSetResultCallback(
             let result: Result<CassandraClient.Rows, Error> =
                 resultCode == CASS_OK
                 ? .success(CassandraClient.Rows(future)) : .failure(CassandraClient.Error(future))
+            cass_future_free(future)
+            completion(result)
+        }
+    }
+    cass_future_set_callback(future, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
+}
+
+private func futureSetPreparedCallback(
+    _ future: OpaquePointer,
+    completion: @escaping (Result<OpaquePointer, Error>) -> Void
+) {
+    let closure = unmanagedRetainedClosure {
+        DispatchQueue.global().async {
+            let resultCode = cass_future_error_code(future)
+            let result: Result<OpaquePointer, Error>
+            if resultCode == CASS_OK {
+                let prepared = cass_future_get_prepared(future)!
+                result = .success(prepared)
+            } else {
+                result = .failure(CassandraClient.Error(future))
+            }
             cass_future_free(future)
             completion(result)
         }

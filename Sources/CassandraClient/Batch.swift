@@ -31,9 +31,14 @@ extension CassandraClient {
     /// A batch of statements to execute in Cassandra.
     public struct Batch: ~Copyable {
         internal let rawPointer: OpaquePointer
+        internal let resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)?
 
-        internal init(configuration: Configuration) throws {
+        internal init(
+            configuration: Configuration,
+            resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)? = nil
+        ) throws {
             self.rawPointer = cass_batch_new(configuration.type.rawValue)
+            self.resolver = resolver
 
             if let consistency = configuration.consistency {
                 try checkResult {
@@ -77,8 +82,28 @@ extension CassandraClient {
             cass_batch_free(self.rawPointer)
         }
 
-        /// Add a statement to this batch.
+        /// Add a raw statement to this batch. Use this for non-prepared CQL statements only.
+        /// For prepared statements, use ``add(prepared:parameters:options:)`` instead.
         public mutating func add(statement: Statement) throws {
+            try checkResult {
+                cass_batch_add_statement(self.rawPointer, statement.rawPointer)
+            }
+        }
+
+        /// Add a prepared statement with parameters to this batch.
+        /// Handles encryption context resolution automatically when encryption is configured.
+        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
+        public mutating func add(
+            prepared: PreparedStatement,
+            parameters: [Statement.Value],
+            options: Statement.Options = .init()
+        ) throws {
+            guard let resolver = self.resolver else {
+                throw CassandraClient.Error.encryptionConfigError(
+                    "Batch resolver not configured — use session.batch { } to get automatic encryption support"
+                )
+            }
+            let statement = try resolver(prepared, parameters, options)
             try checkResult {
                 cass_batch_add_statement(self.rawPointer, statement.rawPointer)
             }
