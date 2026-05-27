@@ -43,6 +43,22 @@ extension CassandraClient {
             try self.bindParameters()
         }
 
+        /// Internal init for prepared statements. Takes a pre-bound `CassStatement*` from `cass_prepared_bind()`.
+        internal init(
+            preparedRawPointer: OpaquePointer,
+            parameters: [Value],
+            options: Options,
+            _encryptor: AnyObject?
+        ) throws {
+            self.query = "(prepared)"
+            self.parameters = parameters
+            self.options = options
+            self._encryptor = _encryptor
+            self.rawPointer = preparedRawPointer
+
+            try self.bindParameters()
+        }
+
         private func bindParameters() throws {
             for (index, parameter) in parameters.enumerated() {
                 let result: CassError
@@ -95,18 +111,33 @@ extension CassandraClient {
                         buffer.count
                     )
                 case .encryptedString(let wrapped, let context):
+                    guard let context = context else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Encrypted value at index \(index) has no encryption context. Use prepared statement execution with encryptionTable option, or provide context manually."
+                        )
+                    }
                     result = try self.bindEncrypted(
                         Data(wrapped.value.utf8),
                         context: context,
                         at: index
                     )
                 case .encryptedBytes(let wrapped, let context):
+                    guard let context = context else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Encrypted value at index \(index) has no encryption context. Use prepared statement execution with encryptionTable option, or provide context manually."
+                        )
+                    }
                     result = try self.bindEncrypted(
                         Data(wrapped.value),
                         context: context,
                         at: index
                     )
                 case .encryptedInt32(let wrapped, let context):
+                    guard let context = context else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Encrypted value at index \(index) has no encryption context. Use prepared statement execution with encryptionTable option, or provide context manually."
+                        )
+                    }
                     var bigEndian = wrapped.value.bigEndian
                     result = try self.bindEncrypted(
                         Data(bytes: &bigEndian, count: 4),
@@ -114,6 +145,11 @@ extension CassandraClient {
                         at: index
                     )
                 case .encryptedInt64(let wrapped, let context):
+                    guard let context = context else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Encrypted value at index \(index) has no encryption context. Use prepared statement execution with encryptionTable option, or provide context manually."
+                        )
+                    }
                     var bigEndian = wrapped.value.bigEndian
                     result = try self.bindEncrypted(
                         Data(bytes: &bigEndian, count: 8),
@@ -121,6 +157,11 @@ extension CassandraClient {
                         at: index
                     )
                 case .encryptedDouble(let wrapped, let context):
+                    guard let context = context else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Encrypted value at index \(index) has no encryption context. Use prepared statement execution with encryptionTable option, or provide context manually."
+                        )
+                    }
                     var bits = wrapped.value.bitPattern.bigEndian
                     result = try self.bindEncrypted(
                         Data(bytes: &bits, count: 8),
@@ -128,6 +169,11 @@ extension CassandraClient {
                         at: index
                     )
                 case .encryptedUUID(let wrapped, let context):
+                    guard let context = context else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Encrypted value at index \(index) has no encryption context. Use prepared statement execution with encryptionTable option, or provide context manually."
+                        )
+                    }
                     let u = wrapped.value.uuid
                     let plaintext = Data([
                         u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
@@ -139,6 +185,11 @@ extension CassandraClient {
                         at: index
                     )
                 case .encryptedDate(let wrapped, let context):
+                    guard let context = context else {
+                        throw CassandraClient.Error.encryptionConfigError(
+                            "Encrypted value at index \(index) has no encryption context. Use prepared statement execution with encryptionTable option, or provide context manually."
+                        )
+                    }
                     var bigEndian = Int64(wrapped.value.timeIntervalSince1970 * 1000).bigEndian
                     result = try self.bindEncrypted(
                         Data(bytes: &bigEndian, count: 8),
@@ -287,13 +338,13 @@ extension CassandraClient {
             case bytes([UInt8])
             case bytesUnsafe(UnsafeBufferPointer<UInt8>)
 
-            case encryptedString(Encrypted<String>, context: EncryptionContext)
-            case encryptedBytes(Encrypted<[UInt8]>, context: EncryptionContext)
-            case encryptedInt32(Encrypted<Int32>, context: EncryptionContext)
-            case encryptedInt64(Encrypted<Int64>, context: EncryptionContext)
-            case encryptedDouble(Encrypted<Double>, context: EncryptionContext)
-            case encryptedUUID(Encrypted<Foundation.UUID>, context: EncryptionContext)
-            case encryptedDate(Encrypted<Foundation.Date>, context: EncryptionContext)
+            case encryptedString(Encrypted<String>, context: EncryptionContext? = nil)
+            case encryptedBytes(Encrypted<[UInt8]>, context: EncryptionContext? = nil)
+            case encryptedInt32(Encrypted<Int32>, context: EncryptionContext? = nil)
+            case encryptedInt64(Encrypted<Int64>, context: EncryptionContext? = nil)
+            case encryptedDouble(Encrypted<Double>, context: EncryptionContext? = nil)
+            case encryptedUUID(Encrypted<Foundation.UUID>, context: EncryptionContext? = nil)
+            case encryptedDate(Encrypted<Foundation.Date>, context: EncryptionContext? = nil)
 
             case int8Array([Int8])
             case int16Array([Int16])
@@ -395,9 +446,39 @@ extension CassandraClient {
                     .encryptedDouble(_, let ctx),
                     .encryptedUUID(_, let ctx),
                     .encryptedDate(_, let ctx):
-                    return ctx.column
+                    return ctx?.column
                 default:
                     return nil
+                }
+            }
+
+            /// The encryption context, if this is an encrypted value with an explicit context.
+            internal var encryptionContext: CassandraClient.EncryptionContext? {
+                switch self {
+                case .encryptedString(_, let ctx),
+                    .encryptedBytes(_, let ctx),
+                    .encryptedInt32(_, let ctx),
+                    .encryptedInt64(_, let ctx),
+                    .encryptedDouble(_, let ctx),
+                    .encryptedUUID(_, let ctx),
+                    .encryptedDate(_, let ctx):
+                    return ctx
+                default:
+                    return nil
+                }
+            }
+
+            /// Returns a copy of this value with the given encryption context applied.
+            internal func withContext(_ context: CassandraClient.EncryptionContext) -> Self {
+                switch self {
+                case .encryptedString(let v, _): return .encryptedString(v, context: context)
+                case .encryptedBytes(let v, _): return .encryptedBytes(v, context: context)
+                case .encryptedInt32(let v, _): return .encryptedInt32(v, context: context)
+                case .encryptedInt64(let v, _): return .encryptedInt64(v, context: context)
+                case .encryptedDouble(let v, _): return .encryptedDouble(v, context: context)
+                case .encryptedUUID(let v, _): return .encryptedUUID(v, context: context)
+                case .encryptedDate(let v, _): return .encryptedDate(v, context: context)
+                default: return self
                 }
             }
         }
