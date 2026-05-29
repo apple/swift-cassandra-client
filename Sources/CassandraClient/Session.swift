@@ -475,6 +475,164 @@ extension CassandraSession {
     }
 }
 
+final class CassFuture<T>: Sendable {
+    /// This can be nonisolated because the docs state that a CassFuture is thread-safe.
+    /// See Sources/CDataStaxDriver/datastax-cpp-driver/topics/README.md
+    private nonisolated(unsafe) let rawPointer: OpaquePointer
+    /// Extracts the value pointer from the completed future. This keeps the choice of C
+    /// extraction API (`cass_future_get_result` vs `cass_future_get_prepared`) out of the
+    /// mapper, which only ever sees the already-extracted value — never the future itself.
+    private let extract: @Sendable (OpaquePointer) -> OpaquePointer?
+    private let mapper: @Sendable (OpaquePointer?) -> T
+
+    private init(
+        rawPointer: OpaquePointer,
+        extract: @escaping @Sendable (OpaquePointer) -> OpaquePointer?,
+        mapper: @escaping @Sendable (OpaquePointer?) -> T
+    ) {
+        self.rawPointer = rawPointer
+        self.extract = extract
+        self.mapper = mapper
+    }
+
+    func asNIOFuture(eventLoop: any EventLoop) -> EventLoopFuture<T> {
+        let promise = eventLoop.makePromise(of: T.self)
+        self.setResultCallback { result in
+            promise.completeWith(result)
+        }
+        return promise.futureResult
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func await() async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            setResultCallback { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    func syncWait() throws -> T {
+        var result: Result<T, any Error>?
+        let semaphore = DispatchSemaphore(value: 0)
+        self.setResultCallback {
+            result = $0
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return try result!.get()
+    }
+
+    private func setResultCallback(
+        completion: @escaping (Result<T, any Error>) -> Void
+    ) {
+        let closure = unmanagedRetainedClosure {
+            DispatchQueue.global().async {
+                let result = self.result()
+                cass_future_free(self.rawPointer)
+                completion(result)
+            }
+        }
+        let error = cass_future_set_callback(
+            self.rawPointer,
+            { _, data in callAndReleaseUnmanagedClosure(data!) },
+            closure
+        )
+        if error == CASS_ERROR_LIB_CALLBACK_ALREADY_SET {
+            assertionFailure("setResultCallback called multiple times. Only the first callback will be registered")
+        }
+    }
+
+    private func result() -> Result<T, any Error> {
+        let resultCode = cass_future_error_code(self.rawPointer)
+        if resultCode == CASS_OK {
+            return .success(self.mapper(self.extract(self.rawPointer)))
+        } else {
+            var messageRaw: UnsafePointer<CChar>?
+            var messageLength = Int()
+            cass_future_error_message(self.rawPointer, &messageRaw, &messageLength)
+            let message = messageRaw.map { String(cString: $0) }
+            let error = CassandraClient.Error(resultCode, message: message)
+            return .failure(error)
+        }
+    }
+}
+
+extension CassFuture {
+    /// Wraps a future whose value is a query result (extracted via `cass_future_get_result`).
+    convenience init(rawPointer: OpaquePointer, mapper: @escaping @Sendable (OpaquePointer?) -> T) {
+        self.init(rawPointer: rawPointer, extract: { cass_future_get_result($0) }, mapper: mapper)
+    }
+}
+
+extension CassFuture where T == OpaquePointer {
+    /// Wraps a future whose value is a prepared statement (extracted via `cass_future_get_prepared`).
+    convenience init(preparedFrom rawPointer: OpaquePointer) {
+        self.init(rawPointer: rawPointer, extract: { cass_future_get_prepared($0) }, mapper: { $0! })
+    }
+}
+
+extension CassFuture where T == Void {
+    convenience init(rawPointer: OpaquePointer) {
+        self.init(rawPointer: rawPointer, extract: { _ in nil }, mapper: { _ in })
+    }
+}
+
+struct CassSession: Sendable, ~Copyable {
+    /// This can be nonisolated because the docs state that a CassSession is thread-safe.
+    /// See Sources/CDataStaxDriver/datastax-cpp-driver/topics/README.md
+    private nonisolated(unsafe) let rawPointer: OpaquePointer
+
+    init() {
+        self.rawPointer = cass_session_new()
+    }
+
+    deinit {
+        cass_session_free(self.rawPointer)
+    }
+
+    func connect(cluster: Cluster, keyspace: String?) -> CassFuture<Void> {
+        let futurePointer =
+            if let keyspace {
+                cass_session_connect_keyspace(self.rawPointer, cluster.rawPointer, keyspace)
+            } else {
+                cass_session_connect(self.rawPointer, cluster.rawPointer)
+            }
+        return CassFuture(rawPointer: futurePointer!)
+    }
+
+    func prepare(query: String) -> CassFuture<OpaquePointer> {
+        let futurePointer = cass_session_prepare(self.rawPointer, query)
+        return CassFuture(preparedFrom: futurePointer!)
+    }
+
+    func execute(statement: CassandraClient.Statement) -> CassFuture<CassandraClient.Rows> {
+        let futurePointer = cass_session_execute(self.rawPointer, statement.rawPointer)
+        return CassFuture(rawPointer: futurePointer!, mapper: { CassandraClient.Rows($0!) })
+    }
+
+    func execute(batch: consuming CassandraClient.Batch) -> CassFuture<Void> {
+        let futurePointer = cass_session_execute_batch(self.rawPointer, batch.rawPointer)
+        return CassFuture(rawPointer: futurePointer!)
+    }
+
+    func getMetrics() -> CassandraMetrics {
+        var metrics = CDataStaxDriver.CassMetrics()
+        cass_session_get_metrics(self.rawPointer, &metrics)
+        return CassandraMetrics(metrics: metrics)
+    }
+
+    func getSchemaMeta() -> OpaquePointer? {
+        cass_session_get_schema_meta(self.rawPointer)
+    }
+
+    func close() -> CassFuture<Void> {
+        let futurePointer = cass_session_close(self.rawPointer)
+        return CassFuture(rawPointer: futurePointer!)
+    }
+
+}
+
 extension CassandraClient {
     internal final class Session: CassandraSession {
         private let eventLoopGroupContainer: EventLoopGroupContainer
@@ -501,7 +659,7 @@ extension CassandraClient {
         private var state = State.idle
         private let lock = Lock()
 
-        private let rawPointer: OpaquePointer
+        private let underlying: CassSession
 
         private enum State {
             case idle
@@ -519,7 +677,7 @@ extension CassandraClient {
             self.configuration = configuration
             self.logger = logger
             self.eventLoopGroupContainer = eventLoopGroupContainer
-            self.rawPointer = cass_session_new()
+            self.underlying = .init()
         }
 
         deinit {
@@ -528,7 +686,6 @@ extension CassandraClient {
                     "Session not shut down before the deinit. Please call session.shutdown() when no longer needed."
                 )
             }
-            cass_session_free(self.rawPointer)
         }
 
         func shutdown() throws {
@@ -601,12 +758,8 @@ extension CassandraClient {
             self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("executing: \(statement.query)")
                 logger.trace("\(statement.parameters)")
-                let promise = eventLoop.makePromise(of: Rows.self)
-                let future = cass_session_execute(self.rawPointer, statement.rawPointer)
-                futureSetResultCallback(future!) { result in
-                    promise.completeWith(result)
-                }
-                return promise.futureResult
+                let future = self.underlying.execute(statement: statement)
+                return future.asNIOFuture(eventLoop: eventLoop)
             }
         }
 
@@ -637,32 +790,21 @@ extension CassandraClient {
         ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
             self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("preparing: \(query)")
-                let promise = eventLoop.makePromise(of: CassandraClient.PreparedStatement.self)
-                let future = cass_session_prepare(self.rawPointer, query)
-                futureSetPreparedCallback(future!) { [self] result in
-                    switch result {
-                    case .success(let rawPointer):
-                        do {
-                            let pkColumns: [String]
-                            if let tableName = encryptionTable {
-                                pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
-                            } else {
-                                pkColumns = []
-                            }
-                            let prepared = CassandraClient.PreparedStatement(
-                                rawPointer: rawPointer,
-                                encryptionTable: encryptionTable,
-                                primaryKeyColumnNames: pkColumns
-                            )
-                            promise.succeed(prepared)
-                        } catch {
-                            promise.fail(error)
-                        }
-                    case .failure(let error):
-                        promise.fail(error)
+                let future = self.underlying.prepare(query: query)
+                return future.asNIOFuture(eventLoop: eventLoop).flatMapThrowing { rawPointer in
+                    let pkColumns: [String]
+                    if let tableName = encryptionTable {
+                        pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+                    } else {
+                        pkColumns = []
                     }
+                    let prepared = CassandraClient.PreparedStatement(
+                        rawPointer: rawPointer,
+                        encryptionTable: encryptionTable,
+                        primaryKeyColumnNames: pkColumns
+                    )
+                    return prepared
                 }
-                return promise.futureResult
             }
         }
 
@@ -682,7 +824,7 @@ extension CassandraClient {
                 table = tableName
             }
 
-            guard let schemaMeta = cass_session_get_schema_meta(self.rawPointer) else {
+            guard let schemaMeta = self.underlying.getSchemaMeta() else {
                 throw CassandraClient.Error.encryptionConfigError(
                     "Cannot retrieve schema metadata from session"
                 )
@@ -875,14 +1017,12 @@ extension CassandraClient {
             on eventLoop: EventLoop?,
             logger: Logger?
         ) -> EventLoopFuture<Void> {
-            self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
+            // Use optionalBatch to prove to compiler that we only take it once
+            var optionalBatch: CassandraClient.Batch? = batch
+            return self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("executing batch")
-                let promise = eventLoop.makePromise(of: Void.self)
-                let future = cass_session_execute_batch(self.rawPointer, batch.rawPointer)
-                futureSetCallback(future!) { result in
-                    promise.completeWith(result)
-                }
-                return promise.futureResult
+                let future = self.underlying.execute(batch: optionalBatch.take()!)
+                return future.asNIOFuture(eventLoop: eventLoop)
             }
         }
 
@@ -943,43 +1083,18 @@ extension CassandraClient {
 
             return self.configuration.makeCluster(on: eventLoop)
                 .flatMap { cluster in
-                    let promise = eventLoop.makePromise(of: Void.self)
-
-                    let future: OpaquePointer
-                    if let keyspace = self.configuration.keyspace {
-                        future = cass_session_connect_keyspace(self.rawPointer, cluster.rawPointer, keyspace)
-                    } else {
-                        future = cass_session_connect(self.rawPointer, cluster.rawPointer)
-                    }
-
-                    futureSetCallback(future) { result in
-                        promise.completeWith(result)
-                    }
-
-                    return promise.futureResult
+                    let future = self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
+                    return future.asNIOFuture(eventLoop: eventLoop)
                 }
         }
 
         private func disconnect() throws {
-            var error: Swift.Error?
-            let semaphore = DispatchSemaphore(value: 0)
-            let future = cass_session_close(rawPointer)
-            futureSetCallback(future!) { result in
-                defer { semaphore.signal() }
-                if case .failure(let e) = result {
-                    error = e
-                }
-            }
-            semaphore.wait()
-            if let error = error {
-                throw error
-            }
+            let future = self.underlying.close()
+            try future.syncWait()
         }
 
         func getMetrics() -> CassandraMetrics {
-            var metrics = CDataStaxDriver.CassMetrics()
-            cass_session_get_metrics(self.rawPointer, &metrics)
-            return CassandraMetrics(metrics: metrics)
+            self.underlying.getMetrics()
         }
 
         private struct ConnectionTask {
@@ -1190,12 +1305,8 @@ extension CassandraClient.Session {
         try await self.withConnection(logger: logger) { logger in
             logger.debug("executing: \(statement.query)")
             logger.trace("\(statement.parameters)")
-            let future = cass_session_execute(rawPointer, statement.rawPointer)
-            return try await withCheckedThrowingContinuation { continuation in
-                futureSetResultCallback(future!) { result in
-                    continuation.resume(with: result)
-                }
-            }
+            let future = self.underlying.execute(statement: statement)
+            return try await future.await()
         }
     }
 
@@ -1214,14 +1325,12 @@ extension CassandraClient.Session {
         batch: consuming CassandraClient.Batch,
         logger: Logger?
     ) async throws {
+        // Use optionalBatch to prove to compiler that we only take it once
+        var optionalBatch: CassandraClient.Batch? = batch
         try await self.withConnection(logger: logger) { logger in
             logger.debug("executing batch")
-            let future = cass_session_execute_batch(rawPointer, batch.rawPointer)
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Swift.Error>) in
-                futureSetCallback(future!) { result in
-                    continuation.resume(with: result)
-                }
-            }
+            let future = self.underlying.execute(batch: optionalBatch.take()!)
+            try await future.await()
         }
     }
 
@@ -1279,12 +1388,7 @@ extension CassandraClient.Session {
     ) async throws -> CassandraClient.PreparedStatement {
         let preparedRawPointer: OpaquePointer = try await self.withConnection(logger: logger) { logger in
             logger.debug("preparing: \(query)")
-            let future = cass_session_prepare(rawPointer, query)
-            return try await withCheckedThrowingContinuation { continuation in
-                futureSetPreparedCallback(future!) { result in
-                    continuation.resume(with: result)
-                }
-            }
+            return try await self.underlying.prepare(query: query).await()
         }
         let pkColumns: [String]
         if let tableName = encryptionTable {
@@ -1341,19 +1445,8 @@ extension CassandraClient.Session {
             logger.debug("connecting to: \(self.configuration)")
 
             let cluster = try await self.configuration.makeCluster()
-
-            let future: OpaquePointer
-            if let keyspace = self.configuration.keyspace {
-                future = cass_session_connect_keyspace(self.rawPointer, cluster.rawPointer, keyspace)
-            } else {
-                future = cass_session_connect(self.rawPointer, cluster.rawPointer)
-            }
-
-            try await withCheckedThrowingContinuation { continuation in
-                futureSetCallback(future) { result in
-                    continuation.resume(with: result)
-                }
-            }
+            let future = self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
+            return try await future.await()
         }
     }
 }
@@ -1371,60 +1464,6 @@ private func callAndReleaseUnmanagedClosure(_ opaque: UnsafeRawPointer) {
     let unmanaged = Unmanaged<Box<() -> Void>>.fromOpaque(opaque)
     let closure = unmanaged.takeRetainedValue()
     closure.value()
-}
-
-private func futureSetCallback(
-    _ future: OpaquePointer,
-    completion: @escaping (Result<Void, Error>) -> Void
-) {
-    let closure = unmanagedRetainedClosure {
-        DispatchQueue.global().async {
-            let resultCode = cass_future_error_code(future)
-            let result: Result<Void, Error> =
-                resultCode == CASS_OK ? .success(()) : .failure(CassandraClient.Error(future))
-            cass_future_free(future)
-            completion(result)
-        }
-    }
-    cass_future_set_callback(future, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
-}
-
-private func futureSetResultCallback(
-    _ future: OpaquePointer,
-    completion: @escaping (Result<CassandraClient.Rows, Error>) -> Void
-) {
-    let closure = unmanagedRetainedClosure {
-        DispatchQueue.global().async {
-            let resultCode = cass_future_error_code(future)
-            let result: Result<CassandraClient.Rows, Error> =
-                resultCode == CASS_OK
-                ? .success(CassandraClient.Rows(future)) : .failure(CassandraClient.Error(future))
-            cass_future_free(future)
-            completion(result)
-        }
-    }
-    cass_future_set_callback(future, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
-}
-
-private func futureSetPreparedCallback(
-    _ future: OpaquePointer,
-    completion: @escaping (Result<OpaquePointer, Error>) -> Void
-) {
-    let closure = unmanagedRetainedClosure {
-        DispatchQueue.global().async {
-            let resultCode = cass_future_error_code(future)
-            let result: Result<OpaquePointer, Error>
-            if resultCode == CASS_OK {
-                let prepared = cass_future_get_prepared(future)!
-                result = .success(prepared)
-            } else {
-                result = .failure(CassandraClient.Error(future))
-            }
-            cass_future_free(future)
-            completion(result)
-        }
-    }
-    cass_future_set_callback(future, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
 }
 
 private final class Box<T> {
