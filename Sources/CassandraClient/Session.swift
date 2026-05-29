@@ -523,7 +523,7 @@ final class CassFuture<T>: Sendable {
         return try result!.get()
     }
 
-    func setResultCallback(
+    private func setResultCallback(
         completion: @escaping (Result<T, any Error>) -> Void
     ) {
         let closure = unmanagedRetainedClosure {
@@ -790,32 +790,21 @@ extension CassandraClient {
         ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
             self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("preparing: \(query)")
-                let promise = eventLoop.makePromise(of: CassandraClient.PreparedStatement.self)
                 let future = self.underlying.prepare(query: query)
-                future.setResultCallback { [self] result in
-                    switch result {
-                    case .success(let rawPointer):
-                        do {
-                            let pkColumns: [String]
-                            if let tableName = encryptionTable {
-                                pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
-                            } else {
-                                pkColumns = []
-                            }
-                            let prepared = CassandraClient.PreparedStatement(
-                                rawPointer: rawPointer,
-                                encryptionTable: encryptionTable,
-                                primaryKeyColumnNames: pkColumns
-                            )
-                            promise.succeed(prepared)
-                        } catch {
-                            promise.fail(error)
-                        }
-                    case .failure(let error):
-                        promise.fail(error)
+                return future.asNIOFuture(eventLoop: eventLoop).flatMapThrowing { rawPointer in
+                    let pkColumns: [String]
+                    if let tableName = encryptionTable {
+                        pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+                    } else {
+                        pkColumns = []
                     }
+                    let prepared = CassandraClient.PreparedStatement(
+                        rawPointer: rawPointer,
+                        encryptionTable: encryptionTable,
+                        primaryKeyColumnNames: pkColumns
+                    )
+                    return prepared
                 }
-                return promise.futureResult
             }
         }
 
