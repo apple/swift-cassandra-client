@@ -479,10 +479,19 @@ final class CassFuture<T>: Sendable {
     /// This can be nonisolated because the docs state that a CassFuture is thread-safe.
     /// See Sources/CDataStaxDriver/datastax-cpp-driver/topics/README.md
     private nonisolated(unsafe) let rawPointer: OpaquePointer
+    /// Extracts the value pointer from the completed future. This keeps the choice of C
+    /// extraction API (`cass_future_get_result` vs `cass_future_get_prepared`) out of the
+    /// mapper, which only ever sees the already-extracted value — never the future itself.
+    private let extract: @Sendable (OpaquePointer) -> OpaquePointer?
     private let mapper: @Sendable (OpaquePointer?) -> T
 
-    init(rawPointer: OpaquePointer, mapper: @escaping @Sendable (OpaquePointer?) -> T) {
+    private init(
+        rawPointer: OpaquePointer,
+        extract: @escaping @Sendable (OpaquePointer) -> OpaquePointer?,
+        mapper: @escaping @Sendable (OpaquePointer?) -> T
+    ) {
         self.rawPointer = rawPointer
+        self.extract = extract
         self.mapper = mapper
     }
 
@@ -524,7 +533,11 @@ final class CassFuture<T>: Sendable {
                 completion(result)
             }
         }
-        let error = cass_future_set_callback(self.rawPointer, { _, data in callAndReleaseUnmanagedClosure(data!) }, closure)
+        let error = cass_future_set_callback(
+            self.rawPointer,
+            { _, data in callAndReleaseUnmanagedClosure(data!) },
+            closure
+        )
         if error == CASS_ERROR_LIB_CALLBACK_ALREADY_SET {
             assertionFailure("setResultCallback called multiple times. Only the first callback will be registered")
         }
@@ -533,8 +546,7 @@ final class CassFuture<T>: Sendable {
     private func result() -> Result<T, any Error> {
         let resultCode = cass_future_error_code(self.rawPointer)
         if resultCode == CASS_OK {
-            let resultPointer = cass_future_get_result(self.rawPointer)
-            return .success(self.mapper(resultPointer))
+            return .success(self.mapper(self.extract(self.rawPointer)))
         } else {
             var messageRaw: UnsafePointer<CChar>?
             var messageLength = Int()
@@ -546,9 +558,23 @@ final class CassFuture<T>: Sendable {
     }
 }
 
+extension CassFuture {
+    /// Wraps a future whose value is a query result (extracted via `cass_future_get_result`).
+    convenience init(rawPointer: OpaquePointer, mapper: @escaping @Sendable (OpaquePointer?) -> T) {
+        self.init(rawPointer: rawPointer, extract: { cass_future_get_result($0) }, mapper: mapper)
+    }
+}
+
+extension CassFuture where T == OpaquePointer {
+    /// Wraps a future whose value is a prepared statement (extracted via `cass_future_get_prepared`).
+    convenience init(preparedFrom rawPointer: OpaquePointer) {
+        self.init(rawPointer: rawPointer, extract: { cass_future_get_prepared($0) }, mapper: { $0! })
+    }
+}
+
 extension CassFuture where T == Void {
     convenience init(rawPointer: OpaquePointer) {
-        self.init(rawPointer: rawPointer, mapper: { _ in })
+        self.init(rawPointer: rawPointer, extract: { _ in nil }, mapper: { _ in })
     }
 }
 
@@ -577,7 +603,7 @@ struct CassSession: Sendable, ~Copyable {
 
     func prepare(query: String) -> CassFuture<OpaquePointer> {
         let futurePointer = cass_session_prepare(self.rawPointer, query)
-        return CassFuture(rawPointer: futurePointer!, mapper: { cass_future_get_prepared($0!) })
+        return CassFuture(preparedFrom: futurePointer!)
     }
 
     func execute(statement: CassandraClient.Statement) -> CassFuture<CassandraClient.Rows> {
