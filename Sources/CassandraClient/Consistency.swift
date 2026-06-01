@@ -16,7 +16,7 @@ internal import CDataStaxDriver
 
 extension CassandraClient {
     /// Consistency levels
-    public enum Consistency: Hashable {
+    public enum Consistency: Sendable, Hashable {
         case any
         case one
         case two
@@ -58,7 +58,7 @@ extension CassandraClient {
     }
 
     /// Serial consistency levels
-    public enum SerialConsistency: Hashable {
+    public enum SerialConsistency: Sendable, Hashable {
         case serial
         case localSerial
 

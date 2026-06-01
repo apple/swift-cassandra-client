@@ -16,8 +16,10 @@ internal import CDataStaxDriver
 
 extension CassandraClient {
     /// A server-side prepared statement that can be efficiently executed multiple times with different parameters.
-    public final class PreparedStatement: @unchecked Sendable {
-        internal let rawPointer: OpaquePointer
+    public final class PreparedStatement: Sendable {
+        /// A pointer to CassPrepared. The docs state " A prepared statement is read-only and it is thread-safe to concurrently bind new statements".
+        /// Therefore, this field is `nonisolated(unsafe)`
+        nonisolated(unsafe) let rawPointer: OpaquePointer
         private let _parameterCount: Int
 
         /// The table name for encryption context resolution.

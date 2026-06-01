@@ -21,7 +21,7 @@ import NIOConcurrencyHelpers
 import NIOCore  // for async-await bridge
 
 /// API for executing statements against Cassandra.
-public protocol CassandraSession {
+@preconcurrency public protocol CassandraSession: Sendable {
     var eventLoopGroup: EventLoopGroup { get }
 
     /// Encryptor for transparent column encryption.
