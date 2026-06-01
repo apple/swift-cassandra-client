@@ -701,6 +701,23 @@ extension CassandraClient {
             }
         }
 
+        private func handleConnectionSucceeded() throws {
+            try self._state.withLockedValue { state in
+                switch state {
+                case .connectingFuture, .connecting:
+                    state = .connected
+                case .disconnected:
+                    // Shut down while connecting, stay disconnected
+                    throw Error.disconnected
+                case .idle, .connected:
+                    // Unreachable: exactly one request moves `.idle` -> connecting and is
+                    // the sole caller here, so the state is always a connecting state or
+                    // `.disconnected`.
+                    assertionFailure("handleConnectionSucceeded called in unexpected state \(state)")
+                }
+            }
+        }
+
         /// What `withConnection` should do after inspecting the connection state.
         private enum SyncConnectionAction {
             /// We started the connection; await it, then mark the session connected.
@@ -743,9 +760,13 @@ extension CassandraClient {
 
             switch action {
             case .startedConnecting(let future):
-                return future.flatMap { _ in
-                    self._state.withLockedValue { $0 = .connected }
-                    return body(eventLoop, logger)
+                return future.flatMap { _ -> EventLoopFuture<Result> in
+                    do {
+                        try self.handleConnectionSucceeded()
+                        return body(eventLoop, logger)
+                    } catch {
+                        return eventLoop.makeFailedFuture(error)
+                    }
                 }
             case .awaitConnectingFuture(let future):
                 return future.flatMap { _ in
@@ -1317,7 +1338,7 @@ extension CassandraClient.Session {
         switch action {
         case .startedConnecting(let task):
             try await task.task.value
-            self._state.withLockedValue { $0 = .connected }
+            try self.handleConnectionSucceeded()
         case .awaitConnecting(let task):
             try await task.task.value
         case .awaitConnectingFuture(let future):
