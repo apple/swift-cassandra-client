@@ -656,8 +656,7 @@ extension CassandraClient {
 
         private let configuration: Configuration
         private let logger: Logger
-        private var state = State.idle
-        private let lock = Lock()
+        private let _state = NIOLockedValueBox(State.idle)
 
         private let underlying: CassSession
 
@@ -681,7 +680,7 @@ extension CassandraClient {
         }
 
         deinit {
-            guard case .disconnected = (self.lock.withLock { self.state }) else {
+            guard case .disconnected = (self._state.withLockedValue { $0 }) else {
                 preconditionFailure(
                     "Session not shut down before the deinit. Please call session.shutdown() when no longer needed."
                 )
@@ -689,17 +688,31 @@ extension CassandraClient {
         }
 
         func shutdown() throws {
-            self.lock.lock()
-            defer {
-                self.state = .disconnected
-                self.lock.unlock()
+            try self._state.withLockedValue { state in
+                defer {
+                    state = .disconnected
+                }
+                switch state {
+                case .connected:
+                    try self.disconnect()
+                default:
+                    break
+                }
             }
-            switch self.state {
-            case .connected:
-                try self.disconnect()
-            default:
-                break
-            }
+        }
+
+        /// What `withConnection` should do after inspecting the connection state.
+        private enum SyncConnectionAction {
+            /// We started the connection; await it, then mark the session connected.
+            case startedConnecting(EventLoopFuture<Void>)
+            /// Someone else started the connection as a future; just await it.
+            case awaitConnectingFuture(EventLoopFuture<Void>)
+            /// Someone else started the connection as a task; just await it.
+            case awaitConnecting(ConnectionTask)
+            /// Already connected.
+            case ready
+            /// Session has been shut down.
+            case disconnected
         }
 
         /// Ensure the session is connected, then invoke `body` on the given event loop.
@@ -711,25 +724,34 @@ extension CassandraClient {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
             let logger = logger ?? self.logger
 
-            self.lock.lock()
-            switch self.state {
-            case .idle:
-                let future = self.connect(on: eventLoop, logger: logger)
-                self.state = .connectingFuture(future)
-                self.lock.unlock()
+            let action: SyncConnectionAction = self._state.withLockedValue { state in
+                switch state {
+                case .idle:
+                    let future = self.connect(on: eventLoop, logger: logger)
+                    state = .connectingFuture(future)
+                    return .startedConnecting(future)
+                case .connectingFuture(let future):
+                    return .awaitConnectingFuture(future)
+                case .connecting(let task):
+                    return .awaitConnecting(task)
+                case .connected:
+                    return .ready
+                case .disconnected:
+                    return .disconnected
+                }
+            }
+
+            switch action {
+            case .startedConnecting(let future):
                 return future.flatMap { _ in
-                    self.lock.withLock {
-                        self.state = .connected
-                    }
+                    self._state.withLockedValue { $0 = .connected }
                     return body(eventLoop, logger)
                 }
-            case .connectingFuture(let future):
-                self.lock.unlock()
+            case .awaitConnectingFuture(let future):
                 return future.flatMap { _ in
                     body(eventLoop, logger)
                 }
-            case .connecting(let task):
-                self.lock.unlock()
+            case .awaitConnecting(let task):
                 let promise = eventLoop.makePromise(of: Result.self)
                 if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
                     promise.completeWithTask {
@@ -738,11 +760,9 @@ extension CassandraClient {
                     }
                 }
                 return promise.futureResult
-            case .connected:
-                self.lock.unlock()
+            case .ready:
                 return body(eventLoop, logger)
             case .disconnected:
-                self.lock.unlock()
                 if self.eventLoopGroupContainer.managed {
                     preconditionFailure("client is disconnected")
                 }
@@ -1097,7 +1117,7 @@ extension CassandraClient {
             self.underlying.getMetrics()
         }
 
-        private struct ConnectionTask {
+        fileprivate struct ConnectionTask {
             private let _task: Any
 
             @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -1255,6 +1275,20 @@ extension CassandraSession {
 }
 
 extension CassandraClient.Session {
+    /// What `withConnection should do after inspecting the connection state
+    private enum AsyncConnectionAction {
+        /// We started the connection; await it, then mark the session connected.
+        case startedConnecting(ConnectionTask)
+        /// Someone else started the connection as a task; just await it.
+        case awaitConnecting(ConnectionTask)
+        /// Someone else started the connection as a future; just await it.
+        case awaitConnectingFuture(EventLoopFuture<Void>)
+        /// Already connected.
+        case ready
+        /// Session has been shut down.
+        case disconnected
+    }
+
     /// Ensure the session is connected, then invoke `body`.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     private func withConnection<T>(
@@ -1263,36 +1297,40 @@ extension CassandraClient.Session {
     ) async throws -> T {
         let logger = logger ?? self.logger
 
-        lock.lock()
-        switch state {
-        case .idle:
-            let task = self.connect(logger: logger)
-            state = .connecting(ConnectionTask(task))
-            lock.unlock()
-
-            try await task.value
-            lock.withLock {
-                self.state = .connected
+        let action: AsyncConnectionAction = self._state.withLockedValue { state in
+            switch state {
+            case .idle:
+                let connectionTask = ConnectionTask(self.connect(logger: logger))
+                state = .connecting(connectionTask)
+                return .startedConnecting(connectionTask)
+            case .connecting(let task):
+                return .awaitConnecting(task)
+            case .connectingFuture(let future):
+                return .awaitConnectingFuture(future)
+            case .connected:
+                return .ready
+            case .disconnected:
+                return .disconnected
             }
-            return try await body(logger)
-        case .connectingFuture(let future):
-            lock.unlock()
-            try await future.get()
-            return try await body(logger)
-        case .connecting(let task):
-            lock.unlock()
+        }
+
+        switch action {
+        case .startedConnecting(let task):
             try await task.task.value
-            return try await body(logger)
-        case .connected:
-            lock.unlock()
-            return try await body(logger)
+            self._state.withLockedValue { $0 = .connected }
+        case .awaitConnecting(let task):
+            try await task.task.value
+        case .awaitConnectingFuture(let future):
+            try await future.get()
+        case .ready:
+            break
         case .disconnected:
-            lock.unlock()
             if eventLoopGroupContainer.managed {
                 preconditionFailure("client is disconnected")
             }
             throw CassandraClient.Error.disconnected
         }
+        return try await body(logger)
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
