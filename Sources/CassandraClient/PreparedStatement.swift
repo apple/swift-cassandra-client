@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import CDataStaxDriver
+internal import CDataStaxDriver
 
 extension CassandraClient {
     /// A server-side prepared statement that can be efficiently executed multiple times with different parameters.

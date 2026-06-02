@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import CDataStaxDriver
+internal import CDataStaxDriver
 import NIO
 
 // TODO: add more config option per C++ cluster impl
