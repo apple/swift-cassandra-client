@@ -1,4 +1,4 @@
-// swift-tools-version:5.10
+// swift-tools-version:6.1
 
 import PackageDescription
 
@@ -101,9 +101,11 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio", .upToNextMajor(from: "2.41.1")),
-        .package(url: "https://github.com/apple/swift-nio-ssl", exact: "2.34.0"),
+        .package(url: "https://github.com/apple/swift-nio-ssl", exact: "2.36.0"),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.0.0")),
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
+        .package(url: "https://github.com/apple/swift-metrics", .upToNextMajor(from: "2.0.0")),
     ],
     targets: [
         .target(
@@ -162,10 +164,21 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Logging", package: "swift-log"),
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "Metrics", package: "swift-metrics"),
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
             ]
         ),
 
-        .testTarget(name: "CassandraClientTests", dependencies: ["CassandraClient"]),
+        .testTarget(
+            name: "CassandraClientTests",
+            dependencies: ["CassandraClient", "CDataStaxDriver"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
     ],
     cxxLanguageStandard: .cxx17
 )
