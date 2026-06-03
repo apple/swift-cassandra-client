@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 import Atomics
-@_implementationOnly import CDataStaxDriver
+internal import CDataStaxDriver
 import Logging
 import NIO
 import NIOConcurrencyHelpers

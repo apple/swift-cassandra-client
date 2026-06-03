@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import CDataStaxDriver
+internal import CDataStaxDriver
 import Foundation  // for date and uuid
 
 extension CassandraClient {

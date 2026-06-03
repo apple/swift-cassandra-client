@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import CDataStaxDriver
+internal import CDataStaxDriver
 import Foundation
 
 extension CassandraClient.Column {

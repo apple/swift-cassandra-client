@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import CDataStaxDriver
+internal import CDataStaxDriver
 import Dispatch
 import Foundation
 import Logging

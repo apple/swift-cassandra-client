@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import CDataStaxDriver
+internal import CDataStaxDriver
 
 /// ``CassandraClient`` metrics.
 public struct CassandraMetrics: Codable {
