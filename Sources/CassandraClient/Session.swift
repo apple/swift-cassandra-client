@@ -634,7 +634,7 @@ struct CassSession: Sendable, ~Copyable {
 }
 
 extension CassandraClient {
-    internal final class Session: CassandraSession {
+    internal final class Session: CassandraSession, Sendable {
         private let eventLoopGroupContainer: EventLoopGroupContainer
         public var eventLoopGroup: EventLoopGroup {
             self.eventLoopGroupContainer.value
