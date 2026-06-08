@@ -311,7 +311,7 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none,
-        transform: @escaping (CassandraClient.Row) -> T?
+        transform: @escaping @Sendable (CassandraClient.Row) -> T?
     ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map {
             rows in
@@ -322,7 +322,7 @@ extension CassandraSession {
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func query<T: Decodable>(
+    public func query<T: Decodable & Sendable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
@@ -446,7 +446,7 @@ extension CassandraSession {
     /// Execute a prepared statement and decode each row into a `Decodable` type.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func execute<T: Decodable>(
+    public func execute<T: Decodable & Sendable>(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
@@ -459,17 +459,18 @@ extension CassandraSession {
                 effectiveOptions.encryptionTable = prepared.encryptionTable
             }
         }
+        let finalOptions = effectiveOptions
         return self.execute(
             prepared: prepared,
             parameters: parameters,
-            options: effectiveOptions,
+            options: finalOptions,
             on: eventLoop,
             logger: logger
         ).flatMapThrowing { rows in
             let result = try rows.map { row in
-                try T(from: self.makeDecoder(row: row, options: effectiveOptions))
+                try T(from: self.makeDecoder(row: row, options: finalOptions))
             }
-            self.logDecryptedRows(count: result.count, options: effectiveOptions, logger: logger)
+            self.logDecryptedRows(count: result.count, options: finalOptions, logger: logger)
             return result
         }
     }
