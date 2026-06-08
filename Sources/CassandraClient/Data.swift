@@ -647,6 +647,39 @@ extension CassandraClient.Row {
     }
 }
 
+// MARK: - Decimal
+
+extension CassandraClient.Column {
+    /// Get column value as `Foundation.Decimal`.
+    public var decimal: Foundation.Decimal? {
+        decimalValue(from: self.rawPointer)
+    }
+}
+
+/// Read a DECIMAL value from any `CassValue` pointer (a column, or a collection element).
+private func decimalValue(from pointer: OpaquePointer?) -> Foundation.Decimal? {
+    var varint: UnsafePointer<UInt8>?
+    var varintSize = 0
+    var scale: Int32 = 0
+    guard cass_value_get_decimal(pointer, &varint, &varintSize, &scale) == CASS_OK, let varint = varint else {
+        return nil
+    }
+    let bytes = Array(UnsafeBufferPointer(start: varint, count: varintSize))
+    return CassandraClient.varintToDecimal(varint: bytes, scale: scale)
+}
+
+extension CassandraClient.Row {
+    /// Get column value as `Foundation.Decimal`.
+    public func column(_ name: String) -> Foundation.Decimal? {
+        self.column(name)?.decimal
+    }
+
+    /// Get column value as `Foundation.Decimal`.
+    public func column(_ index: Int) -> Foundation.Decimal? {
+        self.column(index)?.decimal
+    }
+}
+
 // MARK: - Unsafe bytes
 
 extension CassandraClient.Column {
@@ -701,6 +734,11 @@ extension CassandraClient.Column {
         self.toArray(type: String.self)
     }
 
+    /// Get column value as `[Foundation.Decimal]`.
+    public var decimalArray: [Foundation.Decimal]? {
+        self.toArray(type: Foundation.Decimal.self)
+    }
+
     private func toArray<T>(type: T.Type) -> [T]? {
         guard cass_value_is_null(self.rawPointer) == cass_false else {
             return nil
@@ -743,6 +781,8 @@ extension CassandraClient.Column {
                 value = error == CASS_OK ? v as? T : nil
             case is String.Type:
                 value = valuePointer.flatMap { toString(cassValue: $0) as? T }
+            case is Foundation.Decimal.Type:
+                value = decimalValue(from: valuePointer) as? T
             default:
                 value = nil
             }
@@ -825,6 +865,16 @@ extension CassandraClient.Row {
     /// Get column value as `[String]`.
     public func column(_ index: Int) -> [String]? {
         self.column(index)?.stringArray
+    }
+
+    /// Get column value as `[Foundation.Decimal]`.
+    public func column(_ name: String) -> [Foundation.Decimal]? {
+        self.column(name)?.decimalArray
+    }
+
+    /// Get column value as `[Foundation.Decimal]`.
+    public func column(_ index: Int) -> [Foundation.Decimal]? {
+        self.column(index)?.decimalArray
     }
 }
 
