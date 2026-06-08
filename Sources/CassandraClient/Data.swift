@@ -196,6 +196,9 @@ extension CassandraClient {
         // Used to make sure the row isn't freed while a reference to one
         // of its columns still exists
         private let parent: Row
+        // For sub-values (UDT fields, collection/map values), the driver returns a pointer that
+        // lives inside the iterator it came from. Retaining the iterator keeps that pointer valid.
+        private let iterator: CassIteratorBox?
 
         internal init?(row: Row, index: Int) {
             guard let rawPointer = cass_row_get_column(row.rawPointer, index) else {
@@ -203,6 +206,7 @@ extension CassandraClient {
             }
             self.rawPointer = rawPointer
             self.parent = row
+            self.iterator = nil
         }
 
         internal init?(row: Row, name: String) {
@@ -211,10 +215,33 @@ extension CassandraClient {
             }
             self.rawPointer = rawPointer
             self.parent = row
+            self.iterator = nil
+        }
+
+        /// Wrap a sub-value (UDT field, collection element, or map value). Retains the originating
+        /// `Row` so the result data stays alive, and the `iterator` whose internal value it points to.
+        internal init(rawPointer: OpaquePointer, parent: Row, iterator: CassIteratorBox) {
+            self.rawPointer = rawPointer
+            self.parent = parent
+            self.iterator = iterator
         }
 
         func isNull() -> Bool {
             cass_value_is_null(self.rawPointer) == cass_true
+        }
+    }
+
+    /// Owns a `CassIterator` and frees it on deinit, keeping the values it yields alive while a
+    /// ``Column`` derived from it is in use.
+    internal final class CassIteratorBox {
+        let rawPointer: OpaquePointer
+
+        init(_ rawPointer: OpaquePointer) {
+            self.rawPointer = rawPointer
+        }
+
+        deinit {
+            cass_iterator_free(self.rawPointer)
         }
     }
 
@@ -753,6 +780,181 @@ extension CassandraClient.Column {
         }
 
         return array
+    }
+}
+
+// MARK: - UDT
+
+extension CassandraClient.Column {
+    /// Access a field of a UDT column by name, as a ``CassandraClient/Column``.
+    ///
+    /// Returns `nil` if the column is null, not a UDT, or has no field with that name.
+    /// The returned column exposes the usual scalar getters, e.g. `column.field("a")?.string`.
+    public func field(_ name: String) -> CassandraClient.Column? {
+        guard cass_value_is_null(self.rawPointer) == cass_false else {
+            return nil
+        }
+        guard let iterator = cass_iterator_fields_from_user_type(self.rawPointer) else {
+            return nil
+        }
+        let box = CassandraClient.CassIteratorBox(iterator)
+
+        while cass_iterator_next(iterator) == cass_true {
+            var fieldNamePointer: UnsafePointer<CChar>?
+            var fieldNameSize = 0
+            guard
+                cass_iterator_get_user_type_field_name(iterator, &fieldNamePointer, &fieldNameSize) == CASS_OK,
+                let fieldNamePointer = fieldNamePointer
+            else {
+                continue
+            }
+            let fieldName = UnsafeBufferPointer(start: fieldNamePointer, count: fieldNameSize)
+                .withMemoryRebound(to: UInt8.self) { String(decoding: $0, as: UTF8.self) }
+            guard fieldName == name, let valuePointer = cass_iterator_get_user_type_field_value(iterator)
+            else {
+                continue
+            }
+            return CassandraClient.Column(rawPointer: valuePointer, parent: self.parent, iterator: box)
+        }
+        return nil
+    }
+
+    /// Get a `list<udt>` / `set<udt>` column as an array of UDT ``CassandraClient/Column`` elements.
+    public var udtArray: [CassandraClient.Column]? {
+        guard cass_value_is_null(self.rawPointer) == cass_false else {
+            return nil
+        }
+        let count = self.collectionCount()
+        var elements: [CassandraClient.Column] = []
+        elements.reserveCapacity(count)
+        for index in 0..<count {
+            guard let column = self.collectionElement(at: index) else {
+                return nil
+            }
+            elements.append(column)
+        }
+        return elements
+    }
+
+    /// Get a `map<K, udt>` column as a dictionary of keys to UDT ``CassandraClient/Column`` values.
+    public func udtMap<K: Hashable>(keyType _: K.Type) -> [K: CassandraClient.Column]? {
+        guard cass_value_is_null(self.rawPointer) == cass_false else {
+            return nil
+        }
+        var map: [K: CassandraClient.Column] = [:]
+        for index in 0..<self.mapCount() {
+            guard let entry: (key: K, value: CassandraClient.Column) = self.mapEntry(at: index) else {
+                continue
+            }
+            map[entry.key] = entry.value
+        }
+        return map.isEmpty ? nil : map
+    }
+
+    /// Get a `map<text, udt>` column.
+    public var stringUDTMap: [String: CassandraClient.Column]? {
+        self.udtMap(keyType: String.self)
+    }
+
+    /// Get a `map<int, udt>` column.
+    public var int32UDTMap: [Int32: CassandraClient.Column]? {
+        self.udtMap(keyType: Int32.self)
+    }
+
+    /// Get a `map<uuid, udt>` column.
+    public var uuidUDTMap: [Foundation.UUID: CassandraClient.Column]? {
+        self.udtMap(keyType: Foundation.UUID.self)
+    }
+
+    private func collectionCount() -> Int {
+        guard let iterator = cass_iterator_from_collection(self.rawPointer) else {
+            return 0
+        }
+        defer { cass_iterator_free(iterator) }
+        var count = 0
+        while cass_iterator_next(iterator) == cass_true {
+            count += 1
+        }
+        return count
+    }
+
+    // Each element gets its own iterator positioned at its value, since the driver invalidates an
+    // iterator's value when it advances. Collections are small, so the repeated scan is acceptable.
+    private func collectionElement(at index: Int) -> CassandraClient.Column? {
+        guard let iterator = cass_iterator_from_collection(self.rawPointer) else {
+            return nil
+        }
+        let box = CassandraClient.CassIteratorBox(iterator)
+        var position = 0
+        while cass_iterator_next(iterator) == cass_true {
+            if position == index {
+                guard let value = cass_iterator_get_value(iterator) else { return nil }
+                return CassandraClient.Column(rawPointer: value, parent: self.parent, iterator: box)
+            }
+            position += 1
+        }
+        return nil
+    }
+
+    private func mapCount() -> Int {
+        guard let iterator = cass_iterator_from_map(self.rawPointer) else {
+            return 0
+        }
+        defer { cass_iterator_free(iterator) }
+        var count = 0
+        while cass_iterator_next(iterator) == cass_true {
+            count += 1
+        }
+        return count
+    }
+
+    private func mapEntry<K>(at index: Int) -> (key: K, value: CassandraClient.Column)? {
+        guard let iterator = cass_iterator_from_map(self.rawPointer) else {
+            return nil
+        }
+        let box = CassandraClient.CassIteratorBox(iterator)
+        var position = 0
+        while cass_iterator_next(iterator) == cass_true {
+            if position == index {
+                guard let key = self.extractUDTMapKey(cass_iterator_get_map_key(iterator), as: K.self),
+                    let value = cass_iterator_get_map_value(iterator)
+                else {
+                    return nil
+                }
+                return (key, CassandraClient.Column(rawPointer: value, parent: self.parent, iterator: box))
+            }
+            position += 1
+        }
+        return nil
+    }
+
+    private func extractUDTMapKey<K>(_ pointer: OpaquePointer?, as type: K.Type) -> K? {
+        guard let pointer = pointer else {
+            return nil
+        }
+        switch type {
+        case is String.Type:
+            return toString(cassValue: pointer) as? K
+        case is Int32.Type:
+            var value: Int32 = 0
+            return cass_value_get_int32(pointer, &value) == CASS_OK ? value as? K : nil
+        case is Foundation.UUID.Type:
+            var value = CassUuid()
+            return cass_value_get_uuid(pointer, &value) == CASS_OK ? value.uuid() as? K : nil
+        default:
+            return nil
+        }
+    }
+
+    /// Whether this column's value is a UDT.
+    public var valueIsUDT: Bool {
+        cass_value_type(self.rawPointer) == CASS_VALUE_TYPE_UDT
+    }
+
+    /// Whether this column's value is a list or set.
+    public var valueIsList: Bool {
+        let type = cass_value_type(self.rawPointer)
+        return type == CASS_VALUE_TYPE_LIST || type == CASS_VALUE_TYPE_SET
     }
 }
 
