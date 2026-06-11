@@ -220,7 +220,7 @@ extension CassandraClient {
 
     /// A reusable page token that can be used by `Statement` to resume querying
     /// at a specific position.
-    public struct OpaquePagingStateToken: PagingStateToken {
+    public struct OpaquePagingStateToken: PagingStateToken, Sendable {
         let token: [UInt8]
 
         public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
@@ -452,7 +452,7 @@ extension CassandraClient.Row {
 // MARK: - UUID
 
 /// Time-based UUID (version 1).
-public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertible {
+public struct TimeBasedUUID: Sendable, Codable, Hashable, Equatable, CustomStringConvertible {
     private let underlying: Foundation.UUID
 
     internal var uuid: uuid_t {
@@ -478,10 +478,11 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
     /// Wrapper around `CassUuidGen` for generating time-based UUID.
     ///
     /// - SeeAlso: https://docs.datastax.com/en/developer/cpp-driver/2.15/topics/basics/uuids/
-    private class UUIDGenerator {
+    private final class UUIDGenerator: Sendable {
         static let instance = UUIDGenerator()
 
-        let rawPointer: OpaquePointer
+        // Docs state "Instances of the UUID generator object are thread-safe to generate UUIDs."
+        nonisolated(unsafe) let rawPointer: OpaquePointer
 
         init() {
             self.rawPointer = cass_uuid_gen_new()

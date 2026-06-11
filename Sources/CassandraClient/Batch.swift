@@ -17,7 +17,7 @@ import Foundation
 
 extension CassandraClient {
     /// The type of a batch operation.
-    public struct BatchType: Equatable {
+    public struct BatchType: Sendable, Equatable {
         let rawValue: CassBatchType
 
         /// All statements are applied atomically with a write to the batch log.
@@ -110,7 +110,7 @@ extension CassandraClient {
         }
 
         /// Batch configuration options.
-        public struct Configuration {
+        public struct Configuration: Sendable {
             /// The batch type. Defaults to `.logged`.
             public var type: CassandraClient.BatchType = .logged
             /// The batch's consistency level.

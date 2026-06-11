@@ -43,7 +43,7 @@ extension CassandraClient {
         internal var contextString: String { "\(self.keyspace).\(self.table).\(self.column)" }
 
         /// Base context without a column name. Use ``forColumn(_:)`` to produce a full ``EncryptionContext``.
-        public struct Base {
+        public struct Base: Sendable {
             public let keyspace: String
             public let table: String
             public let primaryKey: PrimaryKey

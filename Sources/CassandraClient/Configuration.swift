@@ -18,12 +18,13 @@ import NIO
 // TODO: add more config option per C++ cluster impl
 extension CassandraClient {
     /// Configuration for the ``CassandraClient``.
-    public struct Configuration: CustomStringConvertible {
+    public struct Configuration: Sendable, CustomStringConvertible {
         public typealias ContactPoints = [String]
 
         /// Provides the initial `ContactPoints` of the Cassandra cluster.
         /// This can be a subset since each Cassandra instance is capable of discovering its peers.
-        public var contactPointsProvider: (@escaping (Result<ContactPoints, Swift.Error>) -> Void) -> Void
+        public var contactPointsProvider:
+            @Sendable (@escaping @Sendable (Result<ContactPoints, Swift.Error>) -> Void) -> Void
 
         public var port: Int32
         public var protocolVersion: ProtocolVersion
@@ -55,7 +56,7 @@ extension CassandraClient {
             set { self._encryptor = newValue }
         }
 
-        private var _encryptor: AnyObject?
+        private var _encryptor: (any Sendable)?
 
         /// Registered encryption schemas.
         @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
@@ -64,7 +65,7 @@ extension CassandraClient {
             set { self._encryptionSchemas = newValue }
         }
 
-        private var _encryptionSchemas: Any = [String: EncryptionSchema]()
+        private var _encryptionSchemas: any Sendable = [String: EncryptionSchema]()
 
         /// Register an encryption schema for automatic context building during decoding.
         @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
@@ -85,15 +86,15 @@ extension CassandraClient {
         public var loadBalancingStrategy: LoadBalancingStrategy?
 
         /// A struct representing the load balancing strategy.
-        public struct LoadBalancingStrategy: Hashable {
+        public struct LoadBalancingStrategy: Sendable, Hashable {
             enum Backing: Hashable {
                 case roundRobin(RoundRobin)
                 case dataCenterAware(DataCenterAware)
             }
-            public struct RoundRobin: Hashable {
+            public struct RoundRobin: Sendable, Hashable {
                 public init() {}
             }
-            public struct DataCenterAware: Hashable {
+            public struct DataCenterAware: Sendable, Hashable {
                 /// Sets the local data center name for DC-aware routing policy.
                 /// When set, a DC-aware load balancing policy will be used that prioritizes hosts from this data center.
                 public var localDataCenter: String?
@@ -123,17 +124,17 @@ extension CassandraClient {
 
         }
 
-        public enum SpeculativeExecutionPolicy: Hashable {
+        public enum SpeculativeExecutionPolicy: Sendable, Hashable {
             case constant(delayInMillseconds: Int64, maxExecutions: Int32)
             case disabled
         }
 
-        public enum PrepareStrategy: Hashable {
+        public enum PrepareStrategy: Sendable, Hashable {
             case allHosts
             case upOrAddHost
         }
 
-        public enum ProtocolVersion: Int32 {
+        public enum ProtocolVersion: Int32, Sendable {
             case v1 = 1
             case v2 = 2
             case v3 = 3
@@ -141,9 +142,9 @@ extension CassandraClient {
             case v5 = 5
         }
 
-        public init(
+        @preconcurrency public init(
             contactPointsProvider:
-                @escaping (@escaping (Result<ContactPoints, Swift.Error>) -> Void) ->
+                @escaping @Sendable (@escaping @Sendable (Result<ContactPoints, Swift.Error>) -> Void) ->
                 Void,
             port: Int32,
             protocolVersion: ProtocolVersion
@@ -158,11 +159,14 @@ extension CassandraClient {
             self.contactPointsProvider { result in
                 switch result {
                 case .success(let contactPoints):
-                    do {
-                        let cluster = try self.makeCluster(contactPoints: contactPoints)
-                        clusterPromise.succeed(cluster)
-                    } catch {
-                        clusterPromise.fail(error)
+                    // cluster is not Sendable, so it needs to be created on the eventloop
+                    eventLoop.execute {
+                        do {
+                            let cluster = try self.makeCluster(contactPoints: contactPoints)
+                            clusterPromise.assumeIsolated().succeed(cluster)
+                        } catch {
+                            clusterPromise.fail(error)
+                        }
                     }
                 case .failure(let error):
                     clusterPromise.fail(error)
@@ -415,7 +419,7 @@ internal final class Cluster {
 
     func setLoadBalancingStrategy(_ strategy: CassandraClient.Configuration.LoadBalancingStrategy) throws {
         switch strategy.backing {
-        case .roundRobin(let roundRobin):
+        case .roundRobin:
             cass_cluster_set_load_balance_round_robin(self.rawPointer)
         case .dataCenterAware(let dataCenterAware):
             cass_cluster_set_load_balance_dc_aware(
@@ -450,14 +454,14 @@ internal final class Cluster {
 // MARK: - SSL
 
 extension CassandraClient.Configuration {
-    public struct SSL {
+    public struct SSL: Sendable {
         public var trustedCertificates: [String]?
         public var verifyFlag: VerifyFlag = .default
         public var cert: String?
         public var privateKey: (key: String, password: String)?
 
         /// Verification performed on the peer's certificate.
-        public enum VerifyFlag {
+        public enum VerifyFlag: Sendable {
             /// Use DataStax driver's default, which is .peerCert
             case `default`
 
