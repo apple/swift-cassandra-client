@@ -1149,8 +1149,9 @@ extension CassandraClient {
             self.underlying.getMetrics()
         }
 
-        fileprivate struct ConnectionTask {
-            private let _task: Any
+        fileprivate struct ConnectionTask: Sendable {
+            // `_task` only ever holds a Sendable `Task`, erased to `Any` for availability — safe to treat as Sendable.
+            nonisolated(unsafe) private let _task: Any
 
             @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
             var task: Task<Void, Swift.Error> {
