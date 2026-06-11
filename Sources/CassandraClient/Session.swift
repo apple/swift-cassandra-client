@@ -665,6 +665,7 @@ extension CassandraClient {
             case connectingFuture(EventLoopFuture<Void>)
             case connecting(ConnectionTask)
             case connected
+            case disconnectingFuture(EventLoopFuture<Void>)
             case disconnected
         }
 
@@ -688,15 +689,45 @@ extension CassandraClient {
         }
 
         func shutdown() throws {
-            try self._state.withLockedValue { state in
-                defer {
-                    state = .disconnected
-                }
+            enum Action {
+                case alreadyShut
+                case disconnectThenMarkShut(EventLoopPromise<Void>)
+                case wait(EventLoopFuture<Void>)
+            }
+            let action: Action = self._state.withLockedValue { state in
                 switch state {
                 case .connected:
-                    try self.disconnect()
-                default:
-                    break
+                    let el = self.eventLoopGroup.next()
+                    let promise = el.makePromise(of: Void.self)
+                    state = .disconnectingFuture(promise.futureResult)
+                    return .disconnectThenMarkShut(promise)
+                case .disconnectingFuture(let existing):
+                    return .wait(existing)
+                case .idle, .connecting, .connectingFuture, .disconnected:
+                    state = .disconnected
+                    return .alreadyShut
+                }
+            }
+            switch action {
+            case .alreadyShut:
+                return
+            case .wait(let future):
+                try future.wait()
+            case .disconnectThenMarkShut(let promise):
+                let future = self.underlying.close()
+                do {
+                    try future.syncWait()
+                    promise.succeed()
+                } catch {
+                    promise.fail(error)
+                }
+                self._state.withLockedValue { state in
+                    switch state {
+                    case .disconnectingFuture:
+                        state = .disconnected
+                    default:
+                        preconditionFailure("State changed from disconnecting to not disconnecting unexpectedly")
+                    }
                 }
             }
         }
@@ -736,7 +767,7 @@ extension CassandraClient {
                     return .awaitConnecting(task)
                 case .connected:
                     return .ready
-                case .disconnected:
+                case .disconnected, .disconnectingFuture:
                     return .disconnected
                 }
             }
@@ -1309,7 +1340,7 @@ extension CassandraClient.Session {
                 return .awaitConnectingFuture(future)
             case .connected:
                 return .ready
-            case .disconnected:
+            case .disconnected, .disconnectingFuture:
                 return .disconnected
             }
         }
