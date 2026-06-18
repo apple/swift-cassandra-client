@@ -878,6 +878,7 @@ final class Tests: XCTestCase {
             let col18: [Float32]
             let col19: [Double]
             let col20: [String]
+            let col21: [UUID]
             let doesNotExist: Bool?
         }
 
@@ -907,6 +908,7 @@ final class Tests: XCTestCase {
                     Double.random(in: Double(Int64.min)...Double(Int64.max))
                 },
                 col20: (0...Int.random(in: 1...3)).map { _ in UUID().uuidString },
+                col21: (0...Int.random(in: 1...3)).map { _ in UUID() },
                 doesNotExist: nil
             )
         }
@@ -937,7 +939,8 @@ final class Tests: XCTestCase {
                 col17 list<bigint>,
                 col18 list<float>,
                 col19 list<double>,
-                col20 list<text>
+                col20 list<text>,
+                col21 list<uuid>
                 );
                 """
             ).wait()
@@ -966,14 +969,15 @@ final class Tests: XCTestCase {
                 .float32Array(model.col18),
                 .doubleArray(model.col19),
                 .stringArray(model.col20),
+                .uuidArray(model.col21),
             ]
             futures.append(
                 self.cassandraClient.run(
                     """
                     insert into \(tableName)
-                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20)
+                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21)
                     values
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters: parameters
                 )
@@ -1013,6 +1017,7 @@ final class Tests: XCTestCase {
             XCTAssertEqual(item.col18, data[index].col18, "results should match")
             XCTAssertEqual(item.col19, data[index].col19, "results should match")
             XCTAssertEqual(item.col20, data[index].col20, "results should match")
+            XCTAssertEqual(item.col21, data[index].col21, "results should match")
         }
     }
 
@@ -1071,6 +1076,7 @@ final class Tests: XCTestCase {
                 col21 list<float>,
                 col22 list<double>,
                 col23 list<text>,
+                col24 list<uuid>,
                 )
                 """
             ).wait()
@@ -1107,6 +1113,7 @@ final class Tests: XCTestCase {
                 Double.random(in: Double(Int64.min)...Double(Int64.max))
             }
             let textList = (0...Int.random(in: 1...3)).map { _ in UUID().uuidString }
+            let uuidList = (0...Int.random(in: 1...3)).map { _ in UUID() }
 
             let parameters: [CassandraClient.Statement.Value] = [
                 .int8(index),  // tinyint
@@ -1132,15 +1139,16 @@ final class Tests: XCTestCase {
                 .float32Array(float32List),  // list<float>
                 .doubleArray(doubleList),  // list<double>
                 .stringArray(textList),  // list<text>
+                .uuidArray(uuidList),  // list<uuid>
             ]
 
             XCTAssertNoThrow(
                 try self.cassandraClient.run(
                     """
                     insert into \(tableName)
-                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23)
+                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23, col24)
                     values
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters: parameters
                 ).wait()
@@ -1182,6 +1190,7 @@ final class Tests: XCTestCase {
             XCTAssertEqual(row.column("col21"), float32List, "expected value to match")
             XCTAssertEqual(row.column("col22"), doubleList, "expected value to match")
             XCTAssertEqual(row.column("col23"), textList, "expected value to match")
+            XCTAssertEqual(row.column("col24"), uuidList, "expected value to match")
         }
     }
 
