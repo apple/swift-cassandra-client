@@ -311,7 +311,7 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none,
-        transform: @escaping @Sendable (CassandraClient.Row) -> T?
+        transform: @escaping (CassandraClient.Row) -> T?
     ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map {
             rows in
@@ -322,8 +322,7 @@ extension CassandraSession {
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    @preconcurrency
-    public func query<T: Decodable & Sendable>(
+    public func query<T: Decodable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
@@ -447,8 +446,7 @@ extension CassandraSession {
     /// Execute a prepared statement and decode each row into a `Decodable` type.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    @preconcurrency
-    public func execute<T: Decodable & Sendable>(
+    public func execute<T: Decodable>(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
