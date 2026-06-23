@@ -208,7 +208,8 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The decoded rows.
-    public func execute<T: Decodable>(
+    @preconcurrency
+    public func execute<T: Decodable & Sendable>(
         prepared: PreparedStatement,
         parameters: [Statement.Value] = [],
         options: Statement.Options = .init(),

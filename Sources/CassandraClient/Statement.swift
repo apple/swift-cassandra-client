@@ -483,25 +483,25 @@ extension CassandraClient {
             }
         }
 
-        public struct Options: CustomStringConvertible {
+        public struct Options: Sendable, CustomStringConvertible {
             /// Sets the statement's consistency level. Default is `.localOne`.
             public var consistency: CassandraClient.Consistency?
             /// Sets the statement's request timeout in milliseconds. Default is `CASS_UINT64_MAX`
             public var requestTimeout: UInt64?
 
             /// Type-erased backing store for ``encryptionContextBuilder``.
-            private var _encryptionContextBuilder: Any?
+            private var _encryptionContextBuilder: (any Sendable)?
 
             /// Closure that extracts encryption context from each row during Codable decoding.
             @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionContextBuilder:
                 (
-                    (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
+                    @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 )?
             {
                 get {
                     self._encryptionContextBuilder
-                        as? (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
+                        as? @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 }
                 set { self._encryptionContextBuilder = newValue }
             }
