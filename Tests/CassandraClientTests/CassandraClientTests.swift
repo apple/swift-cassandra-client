@@ -317,6 +317,203 @@ final class Tests: XCTestCase {
         XCTAssertEqual(id1.int32, id2.int32)
     }
 
+    /// Exhaustion edge (EventLoopFuture API): once every page has been consumed,
+    /// `hasMorePages` reads `false` and a further `nextPage()` fails with
+    /// `CassandraClient.Error.rowsExhausted`.
+    func testPaginationExhaustion() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
+
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+        let count = Int.random(in: 100...200)
+        var futures = [EventLoopFuture<Void>]()
+        for index in 0..<count {
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                    options: options
+                )
+            )
+        }
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
+        XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
+
+        // Page size chosen so the result spans many pages.
+        let paginatedRows = try self.cassandraClient.query(
+            "select id, data from \(tableName);",
+            pageSize: Int32(10)
+        ).wait()
+
+        // Consume every page, counting rows so the assertion is independent of page count.
+        var total = 0
+        while paginatedRows.hasMorePages {
+            let page = try paginatedRows.nextPage().wait()
+            total += Array(page).count
+        }
+        XCTAssertEqual(total, count, "all rows should be returned across pages")
+        XCTAssertFalse(paginatedRows.hasMorePages, "hasMorePages should be false once exhausted")
+
+        // One more page request past the end must throw rowsExhausted.
+        XCTAssertThrowsError(try paginatedRows.nextPage().wait()) { error in
+            XCTAssertEqual(
+                error as? CassandraClient.Error,
+                .rowsExhausted,
+                "expected rowsExhausted, got \(error)"
+            )
+        }
+        // The exhausted flag must not flip back to true after the failed request.
+        XCTAssertFalse(paginatedRows.hasMorePages, "hasMorePages should stay false after rowsExhausted")
+    }
+
+    /// Exhaustion edge (async API): the `async`/`await` `nextPage()` path is separate code from the
+    /// EventLoopFuture path, so it gets its own exhaustion assertion.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testPaginationExhaustionAsync() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
+
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+        let count = Int.random(in: 100...200)
+        var futures = [EventLoopFuture<Void>]()
+        for index in 0..<count {
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                    options: options
+                )
+            )
+        }
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
+        XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
+
+        runAsyncAndWaitFor(
+            {
+                let paginatedRows = try await self.cassandraClient.query(
+                    "select id, data from \(tableName);",
+                    pageSize: Int32(10)
+                )
+
+                var total = 0
+                while paginatedRows.hasMorePages {
+                    let page = try await paginatedRows.nextPage()
+                    total += Array(page).count
+                }
+                XCTAssertEqual(total, count, "all rows should be returned across pages")
+                XCTAssertFalse(paginatedRows.hasMorePages, "hasMorePages should be false once exhausted")
+
+                do {
+                    _ = try await paginatedRows.nextPage()
+                    XCTFail("expected rowsExhausted, but nextPage() returned")
+                } catch let error as CassandraClient.Error where error == .rowsExhausted {
+                    // expected
+                } catch {
+                    XCTFail("expected rowsExhausted, got \(error)")
+                }
+                XCTAssertFalse(
+                    paginatedRows.hasMorePages,
+                    "hasMorePages should stay false after rowsExhausted"
+                )
+            },
+            30.0
+        )
+    }
+
+    /// `PaginatedRows` is `Sendable` (PR4) specifically so it can be created on one execution context
+    /// and consumed on another. This verifies that capability: the result is built from a query and
+    /// then fully iterated inside a detached task on a different executor. Single-consumer, so it
+    /// respects the documented usage contract — it just moves the one consumer off the creating context.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testPaginatedRowsCrossThreadHandoff() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
+
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+        let count = Int.random(in: 500...1000)
+        var futures = [EventLoopFuture<Void>]()
+        for index in 0..<count {
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                    options: options
+                )
+            )
+        }
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
+        XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
+
+        runAsyncAndWaitFor(
+            {
+                let paginatedRows = try await self.cassandraClient.query(
+                    "select id, data from \(tableName);",
+                    pageSize: Int32(100)
+                )
+
+                // Move the Sendable PaginatedRows to a detached task (a different executor) and consume
+                // it entirely there. This only compiles because PaginatedRows is Sendable.
+                let ids = try await Task.detached { () -> [Int32] in
+                    var collected: [Int32] = []
+                    for try await row in paginatedRows {
+                        if let id = row.column(0)?.int32 { collected.append(id) }
+                    }
+                    return collected
+                }.value
+
+                XCTAssertEqual(ids.count, count, "all rows should be returned after cross-thread handoff")
+                for (index, id) in ids.sorted().enumerated() {
+                    XCTAssertEqual(id, Int32(index), "row values should be intact after handoff")
+                }
+            },
+            30.0
+        )
+    }
+
+    /// Empty result edge: a query that matches no rows should iterate to nothing, report
+    /// `hasMorePages == false` once consumed, and throw `rowsExhausted` on a further `nextPage()`.
+    func testPaginationEmptyResult() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
+
+        // No inserts — the table is empty.
+        let paginatedRows = try self.cassandraClient.query(
+            "select id, data from \(tableName);",
+            pageSize: Int32(10)
+        ).wait()
+
+        var total = 0
+        while paginatedRows.hasMorePages {
+            let page = try paginatedRows.nextPage().wait()
+            total += Array(page).count
+        }
+        XCTAssertEqual(total, 0, "empty table should yield no rows")
+        XCTAssertFalse(paginatedRows.hasMorePages, "hasMorePages should be false for an empty result")
+
+        XCTAssertThrowsError(try paginatedRows.nextPage().wait()) { error in
+            XCTAssertEqual(
+                error as? CassandraClient.Error,
+                .rowsExhausted,
+                "expected rowsExhausted, got \(error)"
+            )
+        }
+    }
+
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testQueryAsyncIterator() throws {
         runAsyncAndWaitFor(
