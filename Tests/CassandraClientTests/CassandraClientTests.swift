@@ -482,6 +482,137 @@ final class Tests: XCTestCase {
         )
     }
 
+    /// Concurrency safety: a `Statement` wraps a `CassStatement*` that is **not** thread-safe, so two
+    /// overlapping `nextPage()` calls on one `PaginatedRows` would read/write it concurrently and race.
+    /// The in-flight guard rejects the overlapping call instead.
+    ///
+    /// This assertion is **deterministic**: the EventLoopFuture `nextPage()` claims the in-flight slot
+    /// synchronously (under the lock) *before* it returns the fetch future, so a second call issued
+    /// before the first completes is rejected immediately with `concurrentPaginationUnsupported` — no
+    /// reliance on thread timing. (Run the suite under TSan to additionally prove no data race:
+    /// `swift test --sanitize=thread`.)
+    func testConcurrentNextPageRejected() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
+
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+        let count = Int.random(in: 100...200)
+        var futures = [EventLoopFuture<Void>]()
+        for index in 0..<count {
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                    options: options
+                )
+            )
+        }
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
+        XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
+
+        // Page size chosen so the result spans many pages (so there is always a next page to fetch).
+        let paginatedRows = try self.cassandraClient.query(
+            "select id, data from \(tableName);",
+            pageSize: Int32(10)
+        ).wait()
+
+        // Issue a second nextPage() before the first completes. The guard is claimed synchronously,
+        // so the second is rejected deterministically.
+        let first = paginatedRows.nextPage()
+        let second = paginatedRows.nextPage()
+
+        XCTAssertThrowsError(try second.wait()) { error in
+            XCTAssertEqual(
+                error as? CassandraClient.Error,
+                .concurrentPaginationUnsupported,
+                "an overlapping nextPage() must be rejected, got \(error)"
+            )
+        }
+        // The legitimately in-flight first call still succeeds.
+        XCTAssertNoThrow(try first.wait())
+
+        // Once the in-flight fetch completes the guard is released, so sequential pagination resumes.
+        XCTAssertNoThrow(try paginatedRows.nextPage().wait())
+    }
+
+    /// Async-path deterministic rejection. The async `nextPage()` claims the in-flight slot
+    /// synchronously under the lock before its first `await`, and that first await — `session.execute`
+    /// over the network — always suspends (a Cassandra round-trip can't complete synchronously). So when
+    /// two calls are launched concurrently, the one that claims first suspends in the network await while
+    /// the other reaches its synchronous claim and is rejected. The lock serializes the two claims, and
+    /// the network await is far slower than task dispatch, so exactly one call fails with
+    /// `concurrentPaginationUnsupported` and the other returns a valid page.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testConcurrentNextPageAsyncRejected() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        XCTAssertNoThrow(
+            try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+                .wait()
+        )
+
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+        let count = Int.random(in: 100...200)
+        var futures = [EventLoopFuture<Void>]()
+        for index in 0..<count {
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                    options: options
+                )
+            )
+        }
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
+        XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
+
+        runAsyncAndWaitFor(
+            {
+                let paginatedRows = try await self.cassandraClient.query(
+                    "select id, data from \(tableName);",
+                    pageSize: Int32(10)
+                )
+
+                // Launch two overlapping nextPage() calls.
+                async let first = paginatedRows.nextPage()
+                async let second = paginatedRows.nextPage()
+
+                var outcomes: [Result<Int, Error>] = []
+                do { outcomes.append(.success(Array(try await first).count)) } catch {
+                    outcomes.append(.failure(error))
+                }
+                do { outcomes.append(.success(Array(try await second).count)) } catch {
+                    outcomes.append(.failure(error))
+                }
+
+                let failures = outcomes.compactMap { result -> Error? in
+                    if case .failure(let error) = result { return error }
+                    return nil
+                }
+                let successes = outcomes.compactMap { try? $0.get() }
+
+                XCTAssertEqual(failures.count, 1, "exactly one overlapping nextPage() must be rejected")
+                XCTAssertEqual(
+                    failures.first as? CassandraClient.Error,
+                    .concurrentPaginationUnsupported,
+                    "the rejected call must fail with concurrentPaginationUnsupported, got \(String(describing: failures.first))"
+                )
+                XCTAssertEqual(successes.count, 1, "exactly one call must succeed")
+                if let winningPage = successes.first {
+                    XCTAssertTrue(
+                        (1...10).contains(winningPage),
+                        "the winning page must be valid (1...pageSize rows), got \(winningPage)"
+                    )
+                }
+            },
+            30.0
+        )
+    }
+
     /// Empty result edge: a query that matches no rows should iterate to nothing, report
     /// `hasMorePages == false` once consumed, and throw `rowsExhausted` on a further `nextPage()`.
     func testPaginationEmptyResult() throws {

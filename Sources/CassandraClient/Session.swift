@@ -64,7 +64,7 @@ import NIOCore  // for async-await bridge
     ///
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
     func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         pageSize: Int32,
         on eventLoop: EventLoop?,
         logger: Logger?
@@ -137,7 +137,7 @@ import NIOCore  // for async-await bridge
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         pageSize: Int32,
         logger: Logger?
     )
@@ -374,7 +374,7 @@ extension CassandraSession {
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     public func query(
         _ query: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
@@ -819,7 +819,7 @@ extension CassandraClient {
         }
 
         func execute(
-            statement: Statement,
+            statement: sending Statement,
             pageSize: Int32,
             on eventLoop: EventLoop?,
             logger: Logger? = .none
@@ -1247,7 +1247,7 @@ extension CassandraSession {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query(
         _ query: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
@@ -1386,7 +1386,7 @@ extension CassandraClient.Session {
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         pageSize: Int32,
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
