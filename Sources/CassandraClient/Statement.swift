@@ -548,6 +548,10 @@ extension CassandraClient {
     }
 }
 
+// `Statement` is intentionally not `Sendable`; see the type's documentation.
+@available(*, unavailable)
+extension CassandraClient.Statement: Sendable {}
+
 private func checkResult(body: () -> CassError) throws {
     let result = body()
     guard result == CASS_OK else {
