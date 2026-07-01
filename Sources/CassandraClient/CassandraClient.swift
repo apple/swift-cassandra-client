@@ -141,7 +141,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///
     /// - Returns: The ``PaginatedRows``.
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         pageSize: Int32,
         on eventLoop: EventLoop?,
         logger: Logger? = .none
@@ -410,7 +410,7 @@ extension CassandraClient {
     /// - Returns: The ``PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         pageSize: Int32,
         logger: Logger? = .none
     ) async throws
