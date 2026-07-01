@@ -213,7 +213,7 @@ extension CassandraClient {
             self.parent = row
         }
 
-        func isNull() -> Bool {
+        public func isNull() -> Bool {
             cass_value_is_null(self.rawPointer) == cass_true
         }
     }
