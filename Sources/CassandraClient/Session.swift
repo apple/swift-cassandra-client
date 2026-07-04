@@ -372,12 +372,41 @@ extension CassandraSession {
             line: line
         )
         .flatMapThrowing { rows in
-                let result = try rows.map { row in
-                    try T(from: self.makeDecoder(row: row, options: options))
-                }
-                self.logDecryptedRows(count: result.count, options: options, logger: logger)
-                return result
+            let result = try rows.map { row in
+                try T(from: self.makeDecoder(row: row, options: options))
             }
+            self.logDecryptedRows(count: result.count, options: options, logger: logger)
+            return result
+        }
+    }
+
+    /// Query small data-sets that fit into memory, decoding each row into `model`.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `session.query("select ...", withModelType: Model.self)`.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    @preconcurrency
+    public func query<T: Decodable & Sendable>(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none,
+        withModelType model: T.Type,
+        file: String = #fileID,
+        line: UInt = #line
+    ) -> EventLoopFuture<[T]> {
+        self.query(
+            query,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger,
+            file: file,
+            line: line
+        )
     }
 
     /// Query large data-sets where using an interator helps control memory usage.
@@ -1247,6 +1276,24 @@ extension CassandraSession {
         return result
     }
 
+    /// Query small data-sets that fit into memory, decoding each row into `model`.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await session.query("select ...", withModelType: Model.self)`.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func query<T: Decodable>(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none,
+        withModelType model: T.Type,
+        file: String = #fileID,
+        line: UInt = #line
+    ) async throws -> [T] {
+        try await self.query(query, parameters: parameters, options: options, logger: logger, file: file, line: line)
+    }
+
     /// Query large data-sets where using an interator helps control memory usage.
     ///
     /// - Important:
@@ -1316,6 +1363,34 @@ extension CassandraSession {
         return paginatedRows.map { row in
             try T(from: self.makeDecoder(row: row, options: options))
         }
+    }
+
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`,
+    /// decoding each row into `model` as pages are fetched.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await session.query("select ...", pageSize: 100, withModelType: Model.self)`.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func query<T: Decodable>(
+        _ query: String,
+        parameters: sending [CassandraClient.Statement.Value] = [],
+        pageSize: Int32,
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none,
+        withModelType model: T.Type,
+        file: String = #fileID,
+        line: UInt = #line
+    ) async throws -> AsyncThrowingMapSequence<CassandraClient.PaginatedRows, T> {
+        try await self.query(
+            query,
+            parameters: parameters,
+            pageSize: pageSize,
+            options: options,
+            logger: logger,
+            file: file,
+            line: line
+        )
     }
 
     /// Prepare a CQL query for repeated execution.
