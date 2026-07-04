@@ -233,9 +233,6 @@ extension CassandraClient {
             context: EncryptionContext,
             at index: Int
         ) throws -> CassError {
-            guard #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) else {
-                throw CassandraClient.Error.encryptionError("Encryption requires macOS 15.0+")
-            }
             guard let encryptor = self.encryptor else {
                 throw CassandraClient.Error.encryptionConfigError(
                     "Encryptor required but not set in Configuration"

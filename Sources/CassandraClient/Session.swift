@@ -1188,12 +1188,7 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.Rows {
-        let statement: CassandraClient.Statement
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-        } else {
-            statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
-        }
+        let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, logger: logger)
     }
 
@@ -1206,12 +1201,7 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
-        let statement: CassandraClient.Statement
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-        } else {
-            statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
-        }
+        let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
 
@@ -1245,10 +1235,8 @@ extension CassandraSession {
         logger: Logger? = .none
     ) async throws -> [T] {
         var effectiveOptions = options
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            if effectiveOptions.encryptionTable == nil {
-                effectiveOptions.encryptionTable = prepared.encryptionTable
-            }
+        if effectiveOptions.encryptionTable == nil {
+            effectiveOptions.encryptionTable = prepared.encryptionTable
         }
         let rows = try await self.execute(
             prepared: prepared,
