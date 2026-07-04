@@ -177,7 +177,6 @@ extension CassandraClient.Encrypted: Sendable where T: Sendable {}
 extension CassandraClient {
     /// Internal cache for derived column keys and storage for root key material.
     /// Not thread-safe on its own — the `Encryptor` that owns it must hold a lock.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     struct KeysHolder {
         private var rootKeys: [String: Data]
         let salt: Data
@@ -247,7 +246,6 @@ extension CassandraClient {
 
 extension CassandraClient {
     /// Handles column-level encryption and decryption using AES-GCM with HKDF-derived keys.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     public final class Encryptor {
         static let envelopeVersion: UInt8 = 0x02
         /// AES-GCM with a per-row DEK derived deterministically via HKDF from the column KEK and primary key.
@@ -656,7 +654,6 @@ extension CassandraClient {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Encryptor: Sendable {}
 
 // MARK: - KeyColumnType

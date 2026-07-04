@@ -27,7 +27,6 @@ extension CassandraClient {
         }
 
         /// Create a decoder with encryption support for decoding `Encrypted<T>` fields.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         init(row: Row, encryptor: Encryptor, rowContext: EncryptionContext.Base) {
             self.row = row
             self.userInfo[.cassandraEncryptor] = encryptor

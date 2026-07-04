@@ -92,7 +92,6 @@ extension CassandraClient {
 
         /// Add a prepared statement with parameters to this batch.
         /// Handles encryption context resolution automatically when encryption is configured.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public mutating func add(
             prepared: PreparedStatement,
             parameters: [Statement.Value],
