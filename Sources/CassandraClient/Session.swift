@@ -206,6 +206,21 @@ import NIOCore  // for async-await bridge
 
 private let encryptionLogger = Logger(label: "cassandra.encryption")
 
+/// Attaches the CQL query text and call-site location to a `CassandraClient.Error`, leaving other error
+/// types untouched. This is what lets failures like "Invalid amount of bind variables" be traced back
+/// to the query and call site that caused them.
+private func annotateCassandraError(
+    _ error: any Swift.Error,
+    query: String,
+    file: String,
+    line: UInt
+) -> any Swift.Error {
+    guard let cassandraError = error as? CassandraClient.Error else {
+        return error
+    }
+    return cassandraError.annotated(query: query, file: file, line: line)
+}
+
 extension CassandraSession {
     private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger?) {
         if count > 0, options.hasEncryptionOptions {
@@ -292,9 +307,19 @@ extension CassandraSession {
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) -> EventLoopFuture<Void> {
-        self.query(command, parameters: parameters, options: options, on: eventLoop, logger: logger).map { _ in () }
+        self.query(
+            command,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger,
+            file: file,
+            line: line
+        ).map { _ in () }
     }
 
     /// Query small data-sets that fit into memory. Only use this when it is safe to buffer the entire data-set into memory.
@@ -307,10 +332,19 @@ extension CassandraSession {
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line,
         transform: @escaping @Sendable (CassandraClient.Row) -> T?
     ) -> EventLoopFuture<[T]> {
-        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map {
-            rows in
+        self.query(
+            query,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger,
+            file: file,
+            line: line
+        ).map { rows in
             rows.compactMap(transform)
         }
     }
@@ -324,10 +358,20 @@ extension CassandraSession {
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) -> EventLoopFuture<[T]> {
-        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger)
-            .flatMapThrowing { rows in
+        self.query(
+            query,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger,
+            file: file,
+            line: line
+        )
+        .flatMapThrowing { rows in
                 let result = try rows.map { row in
                     try T(from: self.makeDecoder(row: row, options: options))
                 }
@@ -348,14 +392,19 @@ extension CassandraSession {
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) -> EventLoopFuture<CassandraClient.Rows> {
+        let fallbackLoop = eventLoop ?? self.eventLoopGroup.next()
         do {
             let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
             return self.execute(statement: statement, on: eventLoop, logger: logger)
+                .flatMapError { error in
+                    fallbackLoop.makeFailedFuture(annotateCassandraError(error, query: query, file: file, line: line))
+                }
         } catch {
-            let eventLoop = eventLoop ?? eventLoopGroup.next()
-            return eventLoop.makeFailedFuture(error)
+            return fallbackLoop.makeFailedFuture(annotateCassandraError(error, query: query, file: file, line: line))
         }
     }
 
@@ -368,14 +417,19 @@ extension CassandraSession {
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
+        let fallbackLoop = eventLoop ?? self.eventLoopGroup.next()
         do {
             let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
+                .flatMapError { error in
+                    fallbackLoop.makeFailedFuture(annotateCassandraError(error, query: query, file: file, line: line))
+                }
         } catch {
-            let eventLoop = eventLoop ?? eventLoopGroup.next()
-            return eventLoop.makeFailedFuture(error)
+            return fallbackLoop.makeFailedFuture(annotateCassandraError(error, query: query, file: file, line: line))
         }
     }
 
@@ -1132,9 +1186,18 @@ extension CassandraSession {
         _ command: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) async throws {
-        _ = try await self.query(command, parameters: parameters, options: options, logger: logger)
+        _ = try await self.query(
+            command,
+            parameters: parameters,
+            options: options,
+            logger: logger,
+            file: file,
+            line: line
+        )
     }
 
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
@@ -1144,13 +1207,17 @@ extension CassandraSession {
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line,
         transform: @escaping (CassandraClient.Row) -> T?
     ) async throws -> [T] {
         let rows = try await self.query(
             query,
             parameters: parameters,
             options: options,
-            logger: logger
+            logger: logger,
+            file: file,
+            line: line
         )
         return rows.compactMap(transform)
     }
@@ -1161,13 +1228,17 @@ extension CassandraSession {
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) async throws -> [T] {
         let rows = try await self.query(
             query,
             parameters: parameters,
             options: options,
-            logger: logger
+            logger: logger,
+            file: file,
+            line: line
         )
         let result = try rows.map { row in
             try T(from: self.makeDecoder(row: row, options: options))
@@ -1186,10 +1257,16 @@ extension CassandraSession {
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) async throws -> CassandraClient.Rows {
-        let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-        return try await self.execute(statement: statement, logger: logger)
+        do {
+            let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+            return try await self.execute(statement: statement, logger: logger)
+        } catch {
+            throw annotateCassandraError(error, query: query, file: file, line: line)
+        }
     }
 
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
@@ -1199,10 +1276,16 @@ extension CassandraSession {
         parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger? = .none,
+        file: String = #fileID,
+        line: UInt = #line
     ) async throws -> CassandraClient.PaginatedRows {
-        let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-        return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
+        do {
+            let statement = try self.makeStatement(query: query, parameters: parameters, options: options)
+            return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
+        } catch {
+            throw annotateCassandraError(error, query: query, file: file, line: line)
+        }
     }
 
     /// Prepare a CQL query for repeated execution.
