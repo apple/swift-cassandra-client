@@ -120,7 +120,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///
     /// - Returns: The resulting ``Rows``.
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         on eventLoop: EventLoop?,
         logger: Logger? = .none
     )
@@ -184,7 +184,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     /// - Returns: The resulting ``Rows``.
     public func execute(
         prepared: PreparedStatement,
-        parameters: [Statement.Value] = [],
+        parameters: sending [Statement.Value] = [],
         options: Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -211,7 +211,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     @preconcurrency
     public func execute<T: Decodable & Sendable>(
         prepared: PreparedStatement,
-        parameters: [Statement.Value] = [],
+        parameters: sending [Statement.Value] = [],
         options: Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none

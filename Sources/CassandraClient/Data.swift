@@ -52,8 +52,10 @@ public protocol PagingStateToken: ContiguousBytes {}
 
 extension CassandraClient {
     /// Resulting row(s) of a Cassandra query. Data are returned all at once.
-    public final class Rows: Sequence {
-        internal let rawPointer: OpaquePointer
+    public final class Rows: Sequence, Sendable {
+        /// This can be `nonisolated(unsafe)` because the docs state a result is read-only and "thread-safe to read or iterate over concurrently".
+        /// See Sources/CDataStaxDriver/datastax-cpp-driver/include/cassandra.h
+        nonisolated(unsafe) internal let rawPointer: OpaquePointer
 
         internal init(_ resultRawPointer: OpaquePointer) {
             self.rawPointer = resultRawPointer

@@ -17,6 +17,9 @@ import Foundation  // for date and uuid
 
 extension CassandraClient {
     /// A prepared statement to run in a Cassandra database.
+    ///
+    /// Not `Sendable`: a `Statement` must not be used concurrently, or reused/mutated until a prior
+    /// `execute` has completed (the driver reads it asynchronously while the request is in flight).
     public final class Statement: CustomStringConvertible {
         internal let query: String
         internal let parameters: [Value]
@@ -544,6 +547,10 @@ extension CassandraClient {
         }
     }
 }
+
+// `Statement` is intentionally not `Sendable`; see the type's documentation.
+@available(*, unavailable)
+extension CassandraClient.Statement: Sendable {}
 
 private func checkResult(body: () -> CassError) throws {
     let result = body()
