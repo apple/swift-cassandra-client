@@ -96,6 +96,11 @@ do {
 
 let package = Package(
     name: "swift-cassandra-client",
+    platforms: [
+        .macOS(.v15),
+        .iOS(.v18),
+        .visionOS(.v2),
+    ],
     products: [
         .library(name: "CassandraClient", targets: ["CassandraClient"])
     ],

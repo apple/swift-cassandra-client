@@ -625,7 +625,6 @@ extension CassandraClient.Column {
         return error == CASS_OK ? Array(UnsafeBufferPointer(start: value, count: size)) : nil
     }
 
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     func decryptedData(
         encryptor: CassandraClient.Encryptor,
         context: CassandraClient.EncryptionContext
@@ -832,7 +831,6 @@ extension CassandraClient.Row {
 
 // MARK: - Encrypted
 
-@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Column {
     /// Decrypt column and return as `String`.
     public func decryptedString(
@@ -932,7 +930,6 @@ extension CassandraClient.Column {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Row {
     /// Decrypt column by name and return as `String`.
     public func decryptedString(
