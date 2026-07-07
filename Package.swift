@@ -166,9 +166,6 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Metrics", package: "swift-metrics"),
-            ],
-            swiftSettings: [
-                .swiftLanguageMode(.v5)
             ]
         ),
 

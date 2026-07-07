@@ -46,7 +46,7 @@ import NIOCore  // for async-await bridge
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
     func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         on eventLoop: EventLoop?,
         logger: Logger?
     )
@@ -64,7 +64,7 @@ import NIOCore  // for async-await bridge
     ///
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
     func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         pageSize: Int32,
         on eventLoop: EventLoop?,
         logger: Logger?
@@ -103,7 +103,7 @@ import NIOCore  // for async-await bridge
     /// - Returns: The resulting ``CassandraClient/Rows``.
     func execute(
         prepared: CassandraClient.PreparedStatement,
-        parameters: [CassandraClient.Statement.Value],
+        parameters: sending [CassandraClient.Statement.Value],
         options: CassandraClient.Statement.Options,
         on eventLoop: EventLoop?,
         logger: Logger?
@@ -137,7 +137,7 @@ import NIOCore  // for async-await bridge
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         pageSize: Int32,
         logger: Logger?
     )
@@ -251,7 +251,7 @@ extension CassandraSession {
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
     internal func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         logger: Logger? = .none
     )
         -> EventLoopFuture<CassandraClient.Rows>
@@ -315,7 +315,7 @@ extension CassandraSession {
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     public func run(
         _ command: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -326,13 +326,14 @@ extension CassandraSession {
     /// Query small data-sets that fit into memory. Only use this when it is safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    @preconcurrency
     public func query<T>(
         _ query: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none,
-        transform: @escaping (CassandraClient.Row) -> T?
+        transform: @escaping @Sendable (CassandraClient.Row) -> T?
     ) -> EventLoopFuture<[T]> {
         self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map {
             rows in
@@ -343,9 +344,10 @@ extension CassandraSession {
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func query<T: Decodable>(
+    @preconcurrency
+    public func query<T: Decodable & Sendable>(
         _ query: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -369,7 +371,7 @@ extension CassandraSession {
     ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
     public func query(
         _ query: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -393,7 +395,7 @@ extension CassandraSession {
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     public func query(
         _ query: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
@@ -430,7 +432,7 @@ extension CassandraSession {
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     public func execute(
         prepared: CassandraClient.PreparedStatement,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -467,9 +469,10 @@ extension CassandraSession {
     /// Execute a prepared statement and decode each row into a `Decodable` type.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func execute<T: Decodable>(
+    @preconcurrency
+    public func execute<T: Decodable & Sendable>(
         prepared: CassandraClient.PreparedStatement,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -480,17 +483,18 @@ extension CassandraSession {
                 effectiveOptions.encryptionTable = prepared.encryptionTable
             }
         }
+        let finalOptions = effectiveOptions
         return self.execute(
             prepared: prepared,
             parameters: parameters,
-            options: effectiveOptions,
+            options: finalOptions,
             on: eventLoop,
             logger: logger
         ).flatMapThrowing { rows in
             let result = try rows.map { row in
-                try T(from: self.makeDecoder(row: row, options: effectiveOptions))
+                try T(from: self.makeDecoder(row: row, options: finalOptions))
             }
-            self.logDecryptedRows(count: result.count, options: effectiveOptions, logger: logger)
+            self.logDecryptedRows(count: result.count, options: finalOptions, logger: logger)
             return result
         }
     }
@@ -516,7 +520,7 @@ final class CassFuture<T>: Sendable {
         self.mapper = mapper
     }
 
-    func asNIOFuture(eventLoop: any EventLoop) -> EventLoopFuture<T> {
+    func asNIOFuture(eventLoop: any EventLoop) -> EventLoopFuture<T> where T: Sendable {
         let promise = eventLoop.makePromise(of: T.self)
         self.complete(to: promise)
         return promise.futureResult
@@ -529,7 +533,7 @@ final class CassFuture<T>: Sendable {
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func await() async throws -> T {
+    func await() async throws -> T where T: Sendable {
         try await withCheckedThrowingContinuation { continuation in
             setResultCallback { result in
                 continuation.resume(with: result)
@@ -538,19 +542,19 @@ final class CassFuture<T>: Sendable {
     }
 
     @available(*, noasync, message: "Can block indefinitely, prefer await()", renamed: "await()")
-    func syncWait() throws -> T {
-        var result: Result<T, any Error>?
+    func syncWait() throws -> T where T: Sendable {
+        let resultBox = NIOLockedValueBox<Result<T, any Error>?>(nil)
         let semaphore = DispatchSemaphore(value: 0)
-        self.setResultCallback {
-            result = $0
+        self.setResultCallback { result in
+            resultBox.withLockedValue { $0 = result }
             semaphore.signal()
         }
         semaphore.wait()
-        return try result!.get()
+        return try resultBox.withLockedValue { $0! }.get()
     }
 
     private func setResultCallback(
-        completion: @escaping (Result<T, any Error>) -> Void
+        completion: @escaping @Sendable (Result<T, any Error>) -> Void
     ) {
         let closure = unmanagedRetainedClosure {
             DispatchQueue.global().async {
@@ -591,10 +595,14 @@ extension CassFuture {
     }
 }
 
-extension CassFuture where T == OpaquePointer {
+extension CassFuture where T == CassPrepared {
     /// Wraps a future whose value is a prepared statement (extracted via `cass_future_get_prepared`).
     convenience init(preparedFrom rawPointer: OpaquePointer) {
-        self.init(rawPointer: rawPointer, extract: { cass_future_get_prepared($0) }, mapper: { $0! })
+        self.init(
+            rawPointer: rawPointer,
+            extract: { cass_future_get_prepared($0) },
+            mapper: { CassPrepared(rawPointer: $0!) }
+        )
     }
 }
 
@@ -602,6 +610,13 @@ extension CassFuture where T == Void {
     convenience init(rawPointer: OpaquePointer) {
         self.init(rawPointer: rawPointer, extract: { _ in nil }, mapper: { _ in })
     }
+}
+
+/// A `Sendable` wrapper around a `CassPrepared*` pointer. The docs state a prepared statement is
+/// read-only and "thread-safe to concurrently bind", so the pointer is safe to cross concurrency boundaries.
+/// See Sources/CDataStaxDriver/datastax-cpp-driver/include/cassandra.h
+struct CassPrepared: Sendable {
+    nonisolated(unsafe) let rawPointer: OpaquePointer
 }
 
 struct CassSession: Sendable, ~Copyable {
@@ -627,7 +642,7 @@ struct CassSession: Sendable, ~Copyable {
         return CassFuture(rawPointer: futurePointer!)
     }
 
-    func prepare(query: String) -> CassFuture<OpaquePointer> {
+    func prepare(query: String) -> CassFuture<CassPrepared> {
         let futurePointer = cass_session_prepare(self.rawPointer, query)
         return CassFuture(preparedFrom: futurePointer!)
     }
@@ -824,10 +839,10 @@ extension CassandraClient {
         }
 
         /// Ensure the session is connected, then invoke `body` on the given event loop.
-        private func withConnection<Result>(
+        private func withConnection<Result: Sendable>(
             on eventLoop: EventLoop?,
             logger: Logger?,
-            _ body: @escaping (EventLoop, Logger) -> EventLoopFuture<Result>
+            _ body: @escaping @Sendable (EventLoop, Logger) -> EventLoopFuture<Result>
         ) -> EventLoopFuture<Result> {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
             let logger = logger ?? self.logger
@@ -879,11 +894,14 @@ extension CassandraClient {
         }
 
         func execute(
-            statement: Statement,
+            statement: sending Statement,
             on eventLoop: EventLoop?,
             logger: Logger? = .none
         ) -> EventLoopFuture<Rows> {
-            self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
+            // `statement` is `sending`: the caller has transferred sole ownership, so capturing it
+            // into the `@Sendable` body is safe even though `Statement` isn't `Sendable`.
+            nonisolated(unsafe) let statement = statement
+            return self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("executing: \(statement.query)")
                 logger.trace("\(statement.parameters)")
                 let future = self.underlying.execute(statement: statement)
@@ -892,7 +910,7 @@ extension CassandraClient {
         }
 
         func execute(
-            statement: Statement,
+            statement: sending Statement,
             pageSize: Int32,
             on eventLoop: EventLoop?,
             logger: Logger? = .none
@@ -919,7 +937,7 @@ extension CassandraClient {
             self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("preparing: \(query)")
                 let future = self.underlying.prepare(query: query)
-                return future.asNIOFuture(eventLoop: eventLoop).flatMapThrowing { rawPointer in
+                return future.asNIOFuture(eventLoop: eventLoop).flatMapThrowing { prepared in
                     let pkColumns: [String]
                     if let tableName = encryptionTable {
                         pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
@@ -927,7 +945,7 @@ extension CassandraClient {
                         pkColumns = []
                     }
                     let prepared = CassandraClient.PreparedStatement(
-                        rawPointer: rawPointer,
+                        rawPointer: prepared.rawPointer,
                         encryptionTable: encryptionTable,
                         primaryKeyColumnNames: pkColumns
                     )
@@ -1101,7 +1119,7 @@ extension CassandraClient {
 
         func execute(
             prepared: CassandraClient.PreparedStatement,
-            parameters: [CassandraClient.Statement.Value] = [],
+            parameters: sending [CassandraClient.Statement.Value] = [],
             options: CassandraClient.Statement.Options = .init(),
             on eventLoop: EventLoop? = .none,
             logger: Logger? = .none
@@ -1145,8 +1163,9 @@ extension CassandraClient {
             on eventLoop: EventLoop?,
             logger: Logger?
         ) -> EventLoopFuture<Void> {
-            // Use optionalBatch to prove to compiler that we only take it once
-            var optionalBatch: CassandraClient.Batch? = batch
+            // `Batch` is `~Copyable`; `optionalBatch` consumes it exactly once via `take()`. `consuming`
+            // + move-only means the caller can't retain it, so the `nonisolated(unsafe)` capture is safe.
+            nonisolated(unsafe) var optionalBatch: CassandraClient.Batch? = batch
             return self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("executing batch")
                 let future = self.underlying.execute(batch: optionalBatch.take()!)
@@ -1226,8 +1245,9 @@ extension CassandraClient {
             self.underlying.getMetrics()
         }
 
-        fileprivate struct ConnectionTask {
-            private let _task: Any
+        fileprivate struct ConnectionTask: Sendable {
+            // `_task` only ever holds a `Task<Void, Error>`, erased to `any Sendable` for availability.
+            private let _task: any Sendable
 
             @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
             var task: Task<Void, Swift.Error> {
@@ -1320,7 +1340,7 @@ extension CassandraSession {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query(
         _ query: String,
-        parameters: [CassandraClient.Statement.Value] = [],
+        parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
         logger: Logger? = .none
@@ -1442,6 +1462,9 @@ extension CassandraClient.Session {
         return try await body(logger)
     }
 
+    // Unlike the EventLoopFuture variant, `statement` need not be `sending`: it's non-Sendable, so
+    // the compiler already blocks running two executes over one statement concurrently, and this
+    // preserves the safe execute-await-reuse pattern.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
         statement: CassandraClient.Statement,
@@ -1459,7 +1482,7 @@ extension CassandraClient.Session {
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
-        statement: CassandraClient.Statement,
+        statement: sending CassandraClient.Statement,
         pageSize: Int32,
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
@@ -1533,7 +1556,7 @@ extension CassandraClient.Session {
         encryptionTable: String? = nil,
         logger: Logger? = .none
     ) async throws -> CassandraClient.PreparedStatement {
-        let preparedRawPointer: OpaquePointer = try await self.withConnection(logger: logger) { logger in
+        let prepared: CassPrepared = try await self.withConnection(logger: logger) { logger in
             logger.debug("preparing: \(query)")
             return try await self.underlying.prepare(query: query).await()
         }
@@ -1544,7 +1567,7 @@ extension CassandraClient.Session {
             pkColumns = []
         }
         return CassandraClient.PreparedStatement(
-            rawPointer: preparedRawPointer,
+            rawPointer: prepared.rawPointer,
             encryptionTable: encryptionTable,
             primaryKeyColumnNames: pkColumns
         )

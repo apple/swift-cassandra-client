@@ -20,6 +20,7 @@ extension CassandraClient {
         private enum Code: Equatable {
             case rowsExhausted
             case disconnected
+            case concurrentPaginationUnsupported
 
             // lib errors
             case badParams(String)
@@ -227,6 +228,9 @@ extension CassandraClient {
                 return "Rows exhausted"
             case .disconnected:
                 return "Disconnected"
+            case .concurrentPaginationUnsupported:
+                return
+                    "Concurrent pagination is not supported: another nextPage() call is in flight on this PaginatedRows. Pagination must be driven sequentially."
             case .badParams(let description):
                 return "Bad parameters: \(description)"
             case .noStreams(let description):
@@ -362,6 +366,8 @@ extension CassandraClient {
                 return "Rows exhausted"
             case .disconnected:
                 return "Disconnected"
+            case .concurrentPaginationUnsupported:
+                return "Concurrent pagination unsupported"
             case .badParams:
                 return "Bad parameters"
             case .noStreams:
@@ -493,6 +499,10 @@ extension CassandraClient {
 
         /// All rows for a query result have been consumed.
         public static let rowsExhausted = Error(code: .rowsExhausted)
+
+        /// A `nextPage()` call was made while another was still in flight on the same
+        /// `PaginatedRows`. Pagination must be driven sequentially (one page at a time).
+        public static let concurrentPaginationUnsupported = Error(code: .concurrentPaginationUnsupported)
 
         /// Unexpected client connection state.
         public static let disconnected = Error(code: .disconnected)

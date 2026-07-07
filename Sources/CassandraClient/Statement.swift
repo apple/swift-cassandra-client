@@ -17,6 +17,9 @@ import Foundation  // for date and uuid
 
 extension CassandraClient {
     /// A prepared statement to run in a Cassandra database.
+    ///
+    /// Not `Sendable`: a `Statement` must not be used concurrently, or reused/mutated until a prior
+    /// `execute` has completed (the driver reads it asynchronously while the request is in flight).
     public final class Statement: CustomStringConvertible {
         internal let query: String
         internal let parameters: [Value]
@@ -483,25 +486,25 @@ extension CassandraClient {
             }
         }
 
-        public struct Options: CustomStringConvertible {
+        public struct Options: Sendable, CustomStringConvertible {
             /// Sets the statement's consistency level. Default is `.localOne`.
             public var consistency: CassandraClient.Consistency?
             /// Sets the statement's request timeout in milliseconds. Default is `CASS_UINT64_MAX`
             public var requestTimeout: UInt64?
 
             /// Type-erased backing store for ``encryptionContextBuilder``.
-            private var _encryptionContextBuilder: Any?
+            private var _encryptionContextBuilder: (any Sendable)?
 
             /// Closure that extracts encryption context from each row during Codable decoding.
             @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionContextBuilder:
                 (
-                    (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
+                    @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 )?
             {
                 get {
                     self._encryptionContextBuilder
-                        as? (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
+                        as? @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 }
                 set { self._encryptionContextBuilder = newValue }
             }
@@ -544,6 +547,10 @@ extension CassandraClient {
         }
     }
 }
+
+// `Statement` is intentionally not `Sendable`; see the type's documentation.
+@available(*, unavailable)
+extension CassandraClient.Statement: Sendable {}
 
 private func checkResult(body: () -> CassError) throws {
     let result = body()

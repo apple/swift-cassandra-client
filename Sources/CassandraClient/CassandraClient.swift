@@ -148,7 +148,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///
     /// - Returns: The resulting ``Rows``.
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         on eventLoop: EventLoop?,
         logger: Logger? = .none
     )
@@ -169,7 +169,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///
     /// - Returns: The ``PaginatedRows``.
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         pageSize: Int32,
         on eventLoop: EventLoop?,
         logger: Logger? = .none
@@ -212,7 +212,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     /// - Returns: The resulting ``Rows``.
     public func execute(
         prepared: PreparedStatement,
-        parameters: [Statement.Value] = [],
+        parameters: sending [Statement.Value] = [],
         options: Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -236,9 +236,10 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The decoded rows.
-    public func execute<T: Decodable>(
+    @preconcurrency
+    public func execute<T: Decodable & Sendable>(
         prepared: PreparedStatement,
-        parameters: [Statement.Value] = [],
+        parameters: sending [Statement.Value] = [],
         options: Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -437,7 +438,7 @@ extension CassandraClient {
     /// - Returns: The ``PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         pageSize: Int32,
         logger: Logger? = .none
     ) async throws
