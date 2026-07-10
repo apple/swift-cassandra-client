@@ -40,8 +40,12 @@ public final class CassandraClient: CassandraSession, Sendable {
         self.configuration.keyspace
     }
 
+    public var requestLoggingEnabled: Bool {
+        self.configuration.requestLoggingEnabled
+    }
+
     private let configuration: Configuration
-    private let logger: Logger
+    public let logger: Logger
     private let defaultSession: Session
     private let isShutdown = ManagedAtomic<Bool>(false)
 
