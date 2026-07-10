@@ -50,25 +50,12 @@ extension CassandraClient {
         public var compact: Bool?
 
         /// Encryptor for transparent column encryption.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        public var encryptor: Encryptor? {
-            get { self._encryptor as? Encryptor }
-            set { self._encryptor = newValue }
-        }
-
-        private var _encryptor: (any Sendable)?
+        public var encryptor: Encryptor?
 
         /// Registered encryption schemas.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        public var encryptionSchemas: [String: EncryptionSchema] {
-            get { self._encryptionSchemas as! [String: EncryptionSchema] }
-            set { self._encryptionSchemas = newValue }
-        }
-
-        private var _encryptionSchemas: any Sendable = [String: EncryptionSchema]()
+        public var encryptionSchemas: [String: EncryptionSchema] = [:]
 
         /// Register an encryption schema for automatic context building during decoding.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public mutating func registerEncryptionSchema(_ schema: EncryptionSchema) {
             var schemas = self.encryptionSchemas
             schemas[schema.registryKey] = schema

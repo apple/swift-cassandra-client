@@ -94,8 +94,31 @@ extension CassandraClient {
 
         private var code: Code
 
+        /// The CQL query text that caused this error, if it was captured at the call site.
+        public var query: String?
+
+        /// The source file of the call site that triggered this error, if captured.
+        public var file: String?
+
+        /// The source line of the call site that triggered this error, if captured.
+        public var line: UInt?
+
         private init(code: Code) {
             self.code = code
+        }
+
+        public static func == (lhs: Error, rhs: Error) -> Bool {
+            lhs.code == rhs.code
+        }
+
+        /// Returns a copy of this error annotated with the CQL query text and call-site location.
+        /// Existing annotations are preserved rather than overwritten, so the innermost call site wins.
+        func annotated(query: String, file: String, line: UInt) -> Error {
+            var copy = self
+            copy.query = copy.query ?? query
+            copy.file = copy.file ?? file
+            copy.line = copy.line ?? line
+            return copy
         }
 
         init(_ error: CassError, message: String? = .none) {
@@ -223,6 +246,17 @@ extension CassandraClient {
         }
 
         public var description: String {
+            var result = self.message
+            if let query = self.query {
+                result += " [query: \(query)]"
+            }
+            if let file = self.file, let line = self.line {
+                result += " [\(file):\(line)]"
+            }
+            return result
+        }
+
+        private var message: String {
             switch self.code {
             case .rowsExhausted:
                 return "Rows exhausted"
