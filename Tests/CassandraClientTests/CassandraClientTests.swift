@@ -1027,7 +1027,7 @@ final class Tests: XCTestCase {
             let int32 = Int32.random(in: Int32.min...Int32.max)
             let int64 = Int64.random(in: Int64.min...Int64.max)
             // let varint = // FIXME: implement varint
-            // let decimal = // FIXME: implement decimal
+            let decimal = Decimal(sign: .plus, exponent: -3, significand: Decimal(Int.random(in: 0...999_999_999)))
             let float32 = Float32.random(in: Float(Int32.min)...Float(Int32.max))
             let double = Double.random(in: Double(Int64.min)...Double(Int64.max))
             let text = UUID().uuidString
@@ -1060,7 +1060,7 @@ final class Tests: XCTestCase {
                 .int32(int32),  // int
                 .int64(int64),  // bigint
                 .null,  // varint
-                .null,  // decimal
+                .decimal(decimal),  // decimal
                 .float32(float32),  // float
                 .double(double),  // double
                 .string(text),  // text
@@ -1100,7 +1100,7 @@ final class Tests: XCTestCase {
             XCTAssertEqual(row.column("col3"), int32, "expected value to match")
             XCTAssertEqual(row.column("col4"), int64, "expected value to match")
             // XCTAssertEqual(row.column("col5"), varint, "expected value to match")
-            // XCTAssertEqual(row.column("col6"), decimal, "expected value to match")
+            XCTAssertEqual(row.column("col6"), decimal, "expected value to match")
             XCTAssertEqual(row.column("col7"), float32, "expected value to match")
             XCTAssertEqual(row.column("col8"), double, "expected value to match")
             XCTAssertEqual(row.column("col9"), text, "expected value to match")

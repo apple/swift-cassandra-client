@@ -113,6 +113,8 @@ extension CassandraClient {
                         buffer.baseAddress,
                         buffer.count
                     )
+                case .decimal(let value):
+                    result = self.bindDecimal(value, at: index)
                 case .encryptedString(let wrapped, let context):
                     guard let context = context else {
                         throw CassandraClient.Error.encryptionConfigError(
@@ -213,6 +215,8 @@ extension CassandraClient {
                     result = try self.bindArray(array, at: index)
                 case .stringArray(let array):
                     result = try self.bindArray(array, at: index)
+                case .decimalArray(let array):
+                    result = try self.bindArray(array, at: index)
                 default:
                     result = try self.bindMapCases(parameter, index)
                 }
@@ -278,6 +282,11 @@ extension CassandraClient {
                     appendResult = cass_collection_append_double(collection, value)
                 case let value as String:
                     appendResult = cass_collection_append_string(collection, value)
+                case let value as Foundation.Decimal:
+                    let (varint, scale) = CassandraClient.decimalToVarint(value)
+                    appendResult = varint.withUnsafeBufferPointer { buffer in
+                        cass_collection_append_decimal(collection, buffer.baseAddress, buffer.count, scale)
+                    }
                 default:
                     throw CassandraClient.Error.badParams("Array of \(T.self) is not supported")
                 }
@@ -287,6 +296,14 @@ extension CassandraClient {
                 }
             }
             return cass_statement_bind_collection(self.rawPointer, index, collection)
+        }
+
+        private func bindDecimal(_ value: Foundation.Decimal, at index: Int) -> CassError {
+            let (varint, scale) = CassandraClient.decimalToVarint(value)
+            let this = self
+            return varint.withUnsafeBufferPointer { buffer in
+                cass_statement_bind_decimal(this.rawPointer, index, buffer.baseAddress, buffer.count, scale)
+            }
         }
 
         func setPagingSize(_ pagingSize: Int32) throws {
@@ -340,6 +357,7 @@ extension CassandraClient {
             case rawTimestamp(millisecondsSinceEpoch: Int64)
             case bytes([UInt8])
             case bytesUnsafe(UnsafeBufferPointer<UInt8>)
+            case decimal(Foundation.Decimal)
 
             case encryptedString(Encrypted<String>, context: EncryptionContext? = nil)
             case encryptedBytes(Encrypted<[UInt8]>, context: EncryptionContext? = nil)
@@ -356,6 +374,7 @@ extension CassandraClient {
             case float32Array([Float32])
             case doubleArray([Double])
             case stringArray([String])
+            case decimalArray([Foundation.Decimal])
 
             case int8Int8Map([Int8: Int8])
             case int8Int16Map([Int8: Int16])
