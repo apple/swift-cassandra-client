@@ -64,6 +64,11 @@ extension CassandraClient {
 
         private func bindParameters() throws {
             for (index, parameter) in parameters.enumerated() {
+                // UDT values are bound later by the session, once the type can be
+                // resolved from schema metadata. See `bindUDTs(schemaMeta:keyspace:)`.
+                if parameter.isUDT {
+                    continue
+                }
                 let result: CassError
                 switch parameter {
                 case .null:
@@ -289,6 +294,132 @@ extension CassandraClient {
             return cass_statement_bind_collection(self.rawPointer, index, collection)
         }
 
+        /// Whether this statement has UDT parameters that still need schema-resolved binding.
+        internal var needsUDTBinding: Bool {
+            self.parameters.contains { $0.isUDT }
+        }
+
+        /// Bind UDT parameters using the keyspace's schema metadata.
+        ///
+        /// UDT data types are only resolvable from a connected session, so the session calls
+        /// this just before execution. `schemaMeta` must outlive this call (the caller owns it).
+        internal func bindUDTs(schemaMeta: OpaquePointer, keyspace: String?) throws {
+            guard let keyspace = keyspace,
+                let keyspaceMeta = cass_schema_meta_keyspace_by_name(schemaMeta, keyspace)
+            else {
+                throw CassandraClient.Error.badParams("Cannot resolve keyspace for UDT binding")
+            }
+            for (index, parameter) in parameters.enumerated() where parameter.isUDT {
+                let result = try self.bindUDTValue(parameter, at: index, keyspaceMeta: keyspaceMeta)
+                guard result == CASS_OK else {
+                    throw CassandraClient.Error(result)
+                }
+            }
+        }
+
+        private func bindUDTValue(_ parameter: Value, at index: Int, keyspaceMeta: OpaquePointer) throws -> CassError {
+            switch parameter {
+            case .udt(let udt):
+                return try self.bindUDT(udt, at: index, keyspaceMeta: keyspaceMeta)
+            case .udtArray(let udts):
+                return try self.bindUDTArray(udts, at: index, keyspaceMeta: keyspaceMeta)
+            default:
+                return try self.bindUDTMapCases(parameter, at: index, keyspaceMeta: keyspaceMeta)
+            }
+        }
+
+        /// Create a `CassUserType` from a `UDT`, resolving its data type from the keyspace metadata.
+        /// The caller takes ownership and must free it with `cass_user_type_free`.
+        internal func makeUserType(_ udt: UDT, keyspaceMeta: OpaquePointer) throws -> OpaquePointer {
+            guard let dataType = cass_keyspace_meta_user_type_by_name(keyspaceMeta, udt.typeName) else {
+                throw CassandraClient.Error.badParams("UDT type '\(udt.typeName)' not found in keyspace")
+            }
+            guard let userType = cass_user_type_new_from_data_type(dataType) else {
+                throw CassandraClient.Error.badParams("Failed to create user type '\(udt.typeName)'")
+            }
+            for field in udt.fields {
+                let result = try self.setUDTField(
+                    userType,
+                    name: field.name,
+                    value: field.value,
+                    keyspaceMeta: keyspaceMeta
+                )
+                guard result == CASS_OK else {
+                    cass_user_type_free(userType)
+                    throw CassandraClient.Error(result)
+                }
+            }
+            return userType
+        }
+
+        private func setUDTField(
+            _ userType: OpaquePointer,
+            name: String,
+            value: Value,
+            keyspaceMeta: OpaquePointer
+        ) throws -> CassError {
+            switch value {
+            case .null:
+                return cass_user_type_set_null_by_name(userType, name)
+            case .int8(let v):
+                return cass_user_type_set_int8_by_name(userType, name, v)
+            case .int16(let v):
+                return cass_user_type_set_int16_by_name(userType, name, v)
+            case .int32(let v):
+                return cass_user_type_set_int32_by_name(userType, name, v)
+            case .int64(let v):
+                return cass_user_type_set_int64_by_name(userType, name, cass_int64_t(v))
+            case .float32(let v):
+                return cass_user_type_set_float_by_name(userType, name, v)
+            case .double(let v):
+                return cass_user_type_set_double_by_name(userType, name, v)
+            case .bool(let v):
+                return cass_user_type_set_bool_by_name(userType, name, v ? cass_true : cass_false)
+            case .string(let v):
+                return cass_user_type_set_string_by_name(userType, name, v)
+            case .uuid(let v):
+                return cass_user_type_set_uuid_by_name(userType, name, CassUuid(v.uuid))
+            case .timeuuid(let v):
+                return cass_user_type_set_uuid_by_name(userType, name, CassUuid(v.uuid))
+            case .bytes(let v):
+                return v.withUnsafeBufferPointer {
+                    cass_user_type_set_bytes_by_name(userType, name, $0.baseAddress, $0.count)
+                }
+            case .date(let v):
+                let milliseconds = Int64(v.timeIntervalSince1970 * 1000)
+                return cass_user_type_set_int64_by_name(userType, name, cass_int64_t(milliseconds))
+            case .udt(let nested):
+                let nestedUserType = try self.makeUserType(nested, keyspaceMeta: keyspaceMeta)
+                defer { cass_user_type_free(nestedUserType) }
+                return cass_user_type_set_user_type_by_name(userType, name, nestedUserType)
+            default:
+                throw CassandraClient.Error.badParams("UDT field '\(name)' of type \(value) is not supported")
+            }
+        }
+
+        private func bindUDT(_ udt: UDT, at index: Int, keyspaceMeta: OpaquePointer) throws -> CassError {
+            let userType = try self.makeUserType(udt, keyspaceMeta: keyspaceMeta)
+            defer { cass_user_type_free(userType) }
+            return cass_statement_bind_user_type(self.rawPointer, index, userType)
+        }
+
+        private func bindUDTArray(_ udts: [UDT], at index: Int, keyspaceMeta: OpaquePointer) throws -> CassError {
+            guard let collection = cass_collection_new(CASS_COLLECTION_TYPE_LIST, udts.count) else {
+                throw CassandraClient.Error.badParams("Failed to create collection")
+            }
+            defer { cass_collection_free(collection) }
+
+            for udt in udts {
+                let userType = try self.makeUserType(udt, keyspaceMeta: keyspaceMeta)
+                defer { cass_user_type_free(userType) }
+                let result = cass_collection_append_user_type(collection, userType)
+                guard result == CASS_OK else {
+                    throw CassandraClient.Error(result)
+                }
+            }
+            return cass_statement_bind_collection(self.rawPointer, index, collection)
+        }
+
         func setPagingSize(_ pagingSize: Int32) throws {
             try checkResult { cass_statement_set_paging_size(self.rawPointer, pagingSize) }
         }
@@ -356,6 +487,12 @@ extension CassandraClient {
             case float32Array([Float32])
             case doubleArray([Double])
             case stringArray([String])
+
+            case udt(UDT)
+            case udtArray([UDT])
+            case stringUDTMap([String: UDT])
+            case int32UDTMap([Int32: UDT])
+            case uuidUDTMap([Foundation.UUID: UDT])
 
             case int8Int8Map([Int8: Int8])
             case int8Int16Map([Int8: Int16])
@@ -426,6 +563,16 @@ extension CassandraClient {
             case timeuuidBoolMap([TimeBasedUUID: Bool])
             case timeuuidStringMap([TimeBasedUUID: String])
             case timeuuidUUIDMap([TimeBasedUUID: Foundation.UUID])
+
+            /// Whether this value is a UDT, or a collection of UDTs, that needs schema-resolved binding.
+            internal var isUDT: Bool {
+                switch self {
+                case .udt, .udtArray, .stringUDTMap, .int32UDTMap, .uuidUDTMap:
+                    return true
+                default:
+                    return false
+                }
+            }
 
             /// Whether this value is an encrypted regular column value (`.encryptedXxx` cases).
             internal var isEncrypted: Bool {
