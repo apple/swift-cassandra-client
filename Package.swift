@@ -171,7 +171,11 @@ let package = Package(
 
         .testTarget(
             name: "CassandraClientTests",
-            dependencies: ["CassandraClient", "CDataStaxDriver"],
+            dependencies: [
+                "CassandraClient",
+                "CDataStaxDriver",
+                .product(name: "MetricsTestKit", package: "swift-metrics"),
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]

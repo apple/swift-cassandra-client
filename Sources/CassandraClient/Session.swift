@@ -672,8 +672,16 @@ extension CassandraClient {
         private let configuration: Configuration
         private let logger: Logger
         private let _state = NIOLockedValueBox(State.idle)
+        private let _poller = NIOLockedValueBox(PollerHandle())
 
         private let underlying: CassSession
+
+        /// The running metrics poller and the event loop it ticks on. Guarded by `_poller`.
+        /// The `EventLoop` is retained so `shutdown()` can tell whether it runs on that loop.
+        private struct PollerHandle {
+            var task: RepeatedTask?
+            var loop: (any EventLoop)?
+        }
 
         private enum State {
             case idle
@@ -729,6 +737,7 @@ extension CassandraClient {
             case .wait(let future):
                 try future.wait()
             case .disconnectThenMarkShut(let promise):
+                self.stopMetricsPoller()
                 let future = self.underlying.close()
                 do {
                     try future.syncWait()
@@ -790,7 +799,17 @@ extension CassandraClient {
             switch action {
             case .startedConnecting(let future):
                 return future.flatMap { _ in
-                    self._state.withLockedValue { $0 = .connected }
+                    // Compare-and-set: only flip to `.connected` if still `.connectingFuture`. A
+                    // concurrent `shutdown()` may have set `.disconnected` while the connect was in
+                    // flight; flipping unconditionally would clobber that and trip deinit's precondition.
+                    let didConnect = self._state.withLockedValue { state -> Bool in
+                        guard case .connectingFuture = state else { return false }
+                        state = .connected
+                        return true
+                    }
+                    if didConnect {
+                        self.startMetricsPoller()
+                    }
                     return body(eventLoop, logger)
                 }
             case .awaitConnectingFuture(let future):
@@ -1167,6 +1186,72 @@ extension CassandraClient {
             self.underlying.getMetrics()
         }
 
+        /// Start the driver-snapshot metrics poller, if enabled.
+        ///
+        /// Called from the connect starter's branch once the compare-and-set to `.connected` wins.
+        /// Schedules a `RepeatedTask` on one event loop, then stores it under `_poller` only if the
+        /// session is still `.connected` and no poller is already running; otherwise the just-scheduled
+        /// task is cancelled, so a `shutdown()` racing between scheduling and storing can't leak a task.
+        private func startMetricsPoller() {
+            guard self.configuration.metricsEnabled,
+                let intervalMillis = self.configuration.metricsPollIntervalMillis,
+                intervalMillis > 0
+            else { return }
+
+            let loop = self.eventLoopGroup.next()
+            let gauges = SnapshotGauges(sessionName: self.configuration.metricsSessionName)
+            let interval = TimeAmount.milliseconds(Int64(intervalMillis))
+            // The tick reads the snapshot and `set`s the gauges synchronously (returns an
+            // already-completed future), so `cancel(promise:)` in `stopMetricsPoller` awaits it.
+            // `weak self` avoids Session -> _poller -> RepeatedTask -> closure -> Session keeping the
+            // session (and its ticks) alive forever on a consumer that never calls `shutdown()`.
+            let task = loop.scheduleRepeatedTask(initialDelay: interval, delay: interval) {
+                [weak self] _ in
+                guard let self else { return }
+                gauges.record(self.getMetrics())
+            }
+
+            // Lock order is always `_state` before `_poller`; `shutdown()` never holds `_state` while
+            // touching `_poller`, so there is no opposite-order acquisition to deadlock against.
+            let stored = self._state.withLockedValue { state -> Bool in
+                guard case .connected = state else { return false }
+                return self._poller.withLockedValue { poller in
+                    guard poller.task == nil else { return false }
+                    poller.task = task
+                    poller.loop = loop
+                    return true
+                }
+            }
+            if !stored {
+                task.cancel()
+            }
+        }
+
+        /// Cancel the metrics poller and await any in-flight tick before the session closes.
+        ///
+        /// Off the poller's loop, `cancel(promise:)` fulfils the promise via a deferred `execute`
+        /// *after* the current tick finishes, so `wait()` awaits it. On the poller's own loop no tick
+        /// can be in flight (the loop is serial and we are it) and blocking it would deadlock, so we
+        /// just cancel. `preconditionNotInEventLoop()` in the off-loop branch turns a residual hang
+        /// into a loud crash if `inEventLoop` ever false-negates.
+        private func stopMetricsPoller() {
+            let running = self._poller.withLockedValue { poller -> (RepeatedTask, any EventLoop)? in
+                guard let task = poller.task, let loop = poller.loop else { return nil }
+                poller.task = nil
+                poller.loop = nil
+                return (task, loop)
+            }
+            guard let (task, loop) = running else { return }
+            if loop.inEventLoop {
+                task.cancel()
+            } else {
+                loop.preconditionNotInEventLoop()
+                let promise = loop.makePromise(of: Void.self)
+                task.cancel(promise: promise)
+                try? promise.futureResult.wait()
+            }
+        }
+
         fileprivate struct ConnectionTask: Sendable {
             // `_task` only ever holds a `Task<Void, Error>`, erased to `any Sendable` for availability.
             private let _task: any Sendable
@@ -1368,7 +1453,15 @@ extension CassandraClient.Session {
         switch action {
         case .startedConnecting(let task):
             try await task.task.value
-            self._state.withLockedValue { $0 = .connected }
+            // Compare-and-set (see the ELF variant): guard against a concurrent `shutdown()`.
+            let didConnect = self._state.withLockedValue { state -> Bool in
+                guard case .connecting = state else { return false }
+                state = .connected
+                return true
+            }
+            if didConnect {
+                self.startMetricsPoller()
+            }
         case .awaitConnecting(let task):
             try await task.task.value
         case .awaitConnectingFuture(let future):

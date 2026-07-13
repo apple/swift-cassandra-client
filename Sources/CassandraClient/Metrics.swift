@@ -92,4 +92,7 @@ public struct CassandraMetrics: Sendable, Codable {
         self.errorsPendingRequestTimeouts = UInt(metrics.errors.pending_request_timeouts)
         self.errorsRequestTimeouts = UInt(metrics.errors.request_timeouts)
     }
+
+    /// An all-zero snapshot, used to enumerate the published gauge names without a live session.
+    internal static let zero = CassandraMetrics(metrics: CDataStaxDriver.CassMetrics())
 }
