@@ -25,22 +25,19 @@ extension CassandraClient {
         internal let parameters: [Value]
         internal let options: Options
         internal let rawPointer: OpaquePointer
-        private let _encryptor: AnyObject?
-
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        private var encryptor: Encryptor? { self._encryptor as? Encryptor }
+        private let encryptor: Encryptor?
 
         /// Create a new `Statement`.
         public convenience init(query: String, parameters: [Value] = [], options: Options = .init()) throws {
-            try self.init(query: query, parameters: parameters, options: options, _encryptor: nil)
+            try self.init(query: query, parameters: parameters, options: options, encryptor: nil)
         }
 
         /// Internal init that accepts an encryptor injected by Session from Configuration.
-        internal init(query: String, parameters: [Value], options: Options, _encryptor: AnyObject?) throws {
+        internal init(query: String, parameters: [Value], options: Options, encryptor: Encryptor?) throws {
             self.query = query
             self.parameters = parameters
             self.options = options
-            self._encryptor = _encryptor
+            self.encryptor = encryptor
             self.rawPointer = cass_statement_new(query, parameters.count)
 
             try self.bindParameters()
@@ -51,12 +48,12 @@ extension CassandraClient {
             preparedRawPointer: OpaquePointer,
             parameters: [Value],
             options: Options,
-            _encryptor: AnyObject?
+            encryptor: Encryptor?
         ) throws {
             self.query = "(prepared)"
             self.parameters = parameters
             self.options = options
-            self._encryptor = _encryptor
+            self.encryptor = encryptor
             self.rawPointer = preparedRawPointer
 
             try self.bindParameters()
@@ -239,9 +236,6 @@ extension CassandraClient {
             context: EncryptionContext,
             at index: Int
         ) throws -> CassError {
-            guard #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) else {
-                throw CassandraClient.Error.encryptionError("Encryption requires macOS 15.0+")
-            }
             guard let encryptor = self.encryptor else {
                 throw CassandraClient.Error.encryptionConfigError(
                     "Encryptor required but not set in Configuration"
@@ -492,25 +486,11 @@ extension CassandraClient {
             /// Sets the statement's request timeout in milliseconds. Default is `CASS_UINT64_MAX`
             public var requestTimeout: UInt64?
 
-            /// Type-erased backing store for ``encryptionContextBuilder``.
-            private var _encryptionContextBuilder: (any Sendable)?
-
             /// Closure that extracts encryption context from each row during Codable decoding.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionContextBuilder:
                 (
                     @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 )?
-            {
-                get {
-                    self._encryptionContextBuilder
-                        as? @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
-                }
-                set { self._encryptionContextBuilder = newValue }
-            }
-
-            /// Backing store for ``encryptionTable``.
-            private var _encryptionTable: String?
 
             /// Table name for column-registration-based automatic decryption.
             /// Use `"table"` (combined with the session keyspace) or `"keyspace.table"` for cross-keyspace queries.
@@ -520,15 +500,11 @@ extension CassandraClient {
             /// - Important: The query must SELECT all primary key columns registered in the schema.
             ///   The decoder reads these columns from each result row to build the ``PrimaryKey`` for key derivation.
             ///   Omitting a key column will cause decryption to fail at runtime.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-            public var encryptionTable: String? {
-                get { self._encryptionTable }
-                set { self._encryptionTable = newValue }
-            }
+            public var encryptionTable: String?
 
             /// Whether any encryption options are set (context builder or table name).
             internal var hasEncryptionOptions: Bool {
-                self._encryptionContextBuilder != nil || self._encryptionTable != nil
+                self.encryptionContextBuilder != nil || self.encryptionTable != nil
             }
 
             public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: UInt64? = nil) {
