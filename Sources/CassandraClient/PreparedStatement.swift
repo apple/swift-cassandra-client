@@ -17,9 +17,7 @@ internal import CDataStaxDriver
 extension CassandraClient {
     /// A server-side prepared statement that can be efficiently executed multiple times with different parameters.
     public final class PreparedStatement: Sendable {
-        /// A pointer to CassPrepared. The docs state " A prepared statement is read-only and it is thread-safe to concurrently bind new statements".
-        /// Therefore, this field is `nonisolated(unsafe)`
-        nonisolated(unsafe) let rawPointer: OpaquePointer
+        private let rawPointer: CassPrepared
         private let _parameterCount: Int
 
         /// The table name for encryption context resolution.
@@ -28,21 +26,17 @@ extension CassandraClient {
         /// PK column names (partition + clustering keys), looked up once at prepare time to avoid repeated schema metadata queries.
         internal let primaryKeyColumnNames: [String]
 
-        internal init(rawPointer: OpaquePointer, encryptionTable: String? = nil, primaryKeyColumnNames: [String] = []) {
+        internal init(rawPointer: CassPrepared, encryptionTable: String? = nil, primaryKeyColumnNames: [String] = []) {
             self.rawPointer = rawPointer
             self.encryptionTable = encryptionTable
             self.primaryKeyColumnNames = primaryKeyColumnNames
             var count = 0
             var namePtr: UnsafePointer<CChar>?
             var nameLength = Int()
-            while cass_prepared_parameter_name(rawPointer, count, &namePtr, &nameLength) == CASS_OK {
+            while self.rawPointer.parameterName(count: count, namePtr: &namePtr, nameLength: &nameLength) == CASS_OK {
                 count += 1
             }
             self._parameterCount = count
-        }
-
-        deinit {
-            cass_prepared_free(self.rawPointer)
         }
 
         /// The number of bind parameters in this prepared statement.
@@ -57,7 +51,7 @@ extension CassandraClient {
         public func parameterName(at index: Int) -> String? {
             var namePtr: UnsafePointer<CChar>?
             var nameLength = Int()
-            let result = cass_prepared_parameter_name(self.rawPointer, index, &namePtr, &nameLength)
+            let result = self.rawPointer.parameterName(count: index, namePtr: &namePtr, nameLength: &nameLength)
             guard result == CASS_OK, let namePtr = namePtr else {
                 return nil
             }
@@ -70,8 +64,8 @@ extension CassandraClient {
         /// Creates a bound statement from this prepared statement, ready for parameter binding and execution.
         ///
         /// The returned `OpaquePointer` is a `CassStatement*` that must be freed with `cass_statement_free`.
-        internal func bind() -> OpaquePointer {
-            cass_prepared_bind(self.rawPointer)
+        func bind() -> OpaquePointer {
+            self.rawPointer.bind()
         }
     }
 }
