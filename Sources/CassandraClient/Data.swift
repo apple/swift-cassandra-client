@@ -703,6 +703,11 @@ extension CassandraClient.Column {
         self.toArray(type: String.self)
     }
 
+    /// Get column value as `[UUID]`.
+    public var uuidArray: [Foundation.UUID]? {
+        self.toArray(type: Foundation.UUID.self)
+    }
+
     private func toArray<T>(type: T.Type) -> [T]? {
         guard cass_value_is_null(self.rawPointer) == cass_false else {
             return nil
@@ -745,6 +750,10 @@ extension CassandraClient.Column {
                 value = error == CASS_OK ? v as? T : nil
             case is String.Type:
                 value = valuePointer.flatMap { toString(cassValue: $0) as? T }
+            case is Foundation.UUID.Type:
+                var v = CassUuid()
+                let error = cass_value_get_uuid(valuePointer, &v)
+                value = error == CASS_OK ? v.uuid() as? T : nil
             default:
                 value = nil
             }
@@ -827,6 +836,16 @@ extension CassandraClient.Row {
     /// Get column value as `[String]`.
     public func column(_ index: Int) -> [String]? {
         self.column(index)?.stringArray
+    }
+
+    /// Get column value as `[UUID]`.
+    public func column(_ name: String) -> [Foundation.UUID]? {
+        self.column(name)?.uuidArray
+    }
+
+    /// Get column value as `[UUID]`.
+    public func column(_ index: Int) -> [Foundation.UUID]? {
+        self.column(index)?.uuidArray
     }
 }
 

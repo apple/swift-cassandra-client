@@ -1017,6 +1017,7 @@ final class Tests: XCTestCase {
                 col21 list<float>,
                 col22 list<double>,
                 col23 list<text>,
+                col24 list<uuid>,
                 )
                 """
             ).wait()
@@ -1053,6 +1054,7 @@ final class Tests: XCTestCase {
                 Double.random(in: Double(Int64.min)...Double(Int64.max))
             }
             let textList = (0...Int.random(in: 1...3)).map { _ in UUID().uuidString }
+            let uuidList = (0...Int.random(in: 1...3)).map { _ in UUID() }
 
             let parameters: [CassandraClient.Statement.Value] = [
                 .int8(index),  // tinyint
@@ -1078,15 +1080,16 @@ final class Tests: XCTestCase {
                 .float32Array(float32List),  // list<float>
                 .doubleArray(doubleList),  // list<double>
                 .stringArray(textList),  // list<text>
+                .uuidArray(uuidList),  // list<uuid>
             ]
 
             XCTAssertNoThrow(
                 try self.cassandraClient.run(
                     """
                     insert into \(tableName)
-                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23)
+                    (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23, col24)
                     values
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     parameters: parameters
                 ).wait()
@@ -1128,6 +1131,7 @@ final class Tests: XCTestCase {
             XCTAssertEqual(row.column("col21"), float32List, "expected value to match")
             XCTAssertEqual(row.column("col22"), doubleList, "expected value to match")
             XCTAssertEqual(row.column("col23"), textList, "expected value to match")
+            XCTAssertEqual(row.column("col24"), uuidList, "expected value to match")
         }
     }
 
