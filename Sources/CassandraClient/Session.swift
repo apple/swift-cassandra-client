@@ -615,8 +615,24 @@ extension CassFuture where T == Void {
 /// A `Sendable` wrapper around a `CassPrepared*` pointer. The docs state a prepared statement is
 /// read-only and "thread-safe to concurrently bind", so the pointer is safe to cross concurrency boundaries.
 /// See Sources/CDataStaxDriver/datastax-cpp-driver/include/cassandra.h
-struct CassPrepared: Sendable {
-    nonisolated(unsafe) let rawPointer: OpaquePointer
+final class CassPrepared: Sendable {
+    private nonisolated(unsafe) let rawPointer: OpaquePointer
+
+    init(rawPointer: OpaquePointer) {
+        self.rawPointer = rawPointer
+    }
+
+    func parameterName(count: Int, namePtr: inout UnsafePointer<CChar>?, nameLength: inout Int) -> CassError {
+        cass_prepared_parameter_name(self.rawPointer, count, &namePtr, &nameLength)
+    }
+
+    func bind() -> OpaquePointer {
+        cass_prepared_bind(self.rawPointer)
+    }
+
+    deinit {
+        cass_prepared_free(self.rawPointer)
+    }
 }
 
 struct CassSession: Sendable, ~Copyable {
@@ -945,7 +961,7 @@ extension CassandraClient {
                         pkColumns = []
                     }
                     let prepared = CassandraClient.PreparedStatement(
-                        rawPointer: prepared.rawPointer,
+                        rawPointer: prepared,
                         encryptionTable: encryptionTable,
                         primaryKeyColumnNames: pkColumns
                     )
@@ -1567,7 +1583,7 @@ extension CassandraClient.Session {
             pkColumns = []
         }
         return CassandraClient.PreparedStatement(
-            rawPointer: prepared.rawPointer,
+            rawPointer: prepared,
             encryptionTable: encryptionTable,
             primaryKeyColumnNames: pkColumns
         )
