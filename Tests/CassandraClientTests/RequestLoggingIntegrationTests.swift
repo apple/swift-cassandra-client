@@ -50,7 +50,6 @@ final class RequestLoggingIntegrationTests: XCTestCase {
         logBoundValues: Bool = false
     ) -> (CassandraClient, TestLogCapture, String) {
         var config = self.makeConfig()
-        config.requestLoggingEnabled = true
         config.slowQueryThresholdMillis = 0
         config.logBoundValues = logBoundValues
         let (logger, capture) = makeCapturingLogger()
@@ -95,7 +94,7 @@ final class RequestLoggingIntegrationTests: XCTestCase {
             _ = try await session.execute(prepared: prepared, parameters: [.int64(1), .string("x")])
 
             let record = capture.all.first {
-                $0.level == .info && $0.metadata[CassandraClient.LogKey.query] != nil
+                $0.level == .debug && $0.metadata[CassandraClient.LogKey.query] != nil
             }
             XCTAssertNotNil(record, "expected a slow-query record for the prepared execute")
             XCTAssertEqual(record?.metadata[CassandraClient.LogKey.query], "\(cql)")
@@ -140,7 +139,6 @@ final class RequestLoggingIntegrationTests: XCTestCase {
             )
             config.keyspace = "test"
             config.connectTimeoutMillis = 2_000
-            config.requestLoggingEnabled = true
             let (logger, capture) = makeCapturingLogger()
             let client = CassandraClient(configuration: config, logger: logger)
             defer { XCTAssertNoThrow(try client.shutdown()) }
@@ -245,62 +243,4 @@ final class RequestLoggingIntegrationTests: XCTestCase {
         }
     }
 
-    /// Master switch: with `requestLoggingEnabled` left at its real default (false), neither a completion-site
-    /// success that would otherwise log (threshold=0) nor a preflight failure should produce a feature record.
-    /// Exercises the real `Session`/`CassandraSession` code paths — not `RequestLog.instrumented` directly.
-    func testMasterSwitchDefaultOffSuppressesRealLogging() throws {
-        // The pre-existing unconditional `.debug("executing: ...")` breadcrumb is unrelated to this switch and
-        // still appears, so check for this feature's own metadata rather than an empty capture.
-        @Sendable func hasFeatureRecord(_ capture: TestLogCapture) -> Bool {
-            capture.all.contains {
-                $0.metadata[CassandraClient.LogKey.errorCategory] != nil
-                    || $0.metadata[CassandraClient.LogKey.latencyMs] != nil
-            }
-        }
-
-        runAsyncAndWaitFor {
-            var config = self.makeConfig()
-            // Deliberately NOT set: requestLoggingEnabled stays at its real default (false).
-            config.slowQueryThresholdMillis = 0  // would log every success if the switch were ignored
-            let (logger, capture) = makeCapturingLogger()
-            let client = CassandraClient(configuration: config, logger: logger)
-            defer { XCTAssertNoThrow(try client.shutdown()) }
-
-            let table = "log_switch_off_\(DispatchTime.now().uptimeNanoseconds)"
-            try await self.createKeyspaceAndTable(
-                client,
-                keyspace: config.keyspace!,
-                table: table,
-                schema: "(id bigint primary key, v text)"
-            )
-
-            // Completion-site path: a real success that WOULD be logged (threshold=0) if the switch were
-            // not honored at the `instrument`/`instrumented` call sites.
-            capture.clear()
-            _ = try await client.execute(
-                statement: CassandraClient.Statement(
-                    query: "insert into \(table) (id, v) values (?, ?)",
-                    parameters: [.int64(1), .string("x")]
-                )
-            )
-            XCTAssertFalse(hasFeatureRecord(capture), "master switch off should suppress completion-site logging")
-
-            // Preflight path: a real binding failure that WOULD be logged if any of the 11 individual
-            // `if self.requestLoggingEnabled` preflight guards were missing or broken.
-            let session = client.makeSession(keyspace: config.keyspace!)
-            defer { try? session.shutdown() }
-            let prepared = try await session.prepare("insert into \(table) (id, v) values (?, ?)")
-            capture.clear()
-            do {
-                _ = try await session.execute(
-                    prepared: prepared,
-                    parameters: [.int64(1), .string("x"), .string("extra")]
-                )
-                XCTFail("expected a preflight binding failure")
-            } catch {
-                // expected
-            }
-            XCTAssertFalse(hasFeatureRecord(capture), "master switch off should suppress preflight-catch logging too")
-        }
-    }
 }

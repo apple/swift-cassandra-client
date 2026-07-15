@@ -22,6 +22,8 @@ final class TestLogCapture: @unchecked Sendable {
         let level: Logger.Level
         let message: String
         let metadata: Logger.Metadata
+        /// Stringified `LogEvent.error` (the swift-log `error:` param), if any.
+        let error: String?
     }
 
     private let lock = NSLock()
@@ -56,20 +58,20 @@ struct TestCapturingLogHandler: LogHandler {
         set { self.metadata[key] = newValue }
     }
 
-    func log(
-        level: Logger.Level,
-        message: Logger.Message,
-        metadata: Logger.Metadata?,
-        source: String,
-        file: String,
-        function: String,
-        line: UInt
-    ) {
+    // Implements the event-based method so the `error:` param (`event.error`) is captured too.
+    func log(event: LogEvent) {
         var merged = self.metadata
-        if let metadata {
+        if let metadata = event.metadata {
             merged.merge(metadata) { _, new in new }
         }
-        self.capture.append(.init(level: level, message: "\(message)", metadata: merged))
+        self.capture.append(
+            .init(
+                level: event.level,
+                message: "\(event.message)",
+                metadata: merged,
+                error: event.error.map { "\($0)" }
+            )
+        )
     }
 }
 

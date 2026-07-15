@@ -20,17 +20,7 @@ extension CassandraClient {
     /// Shared request-logging helper. Deliberately free of any `Session` reference so it can be unit-tested
     /// directly with a synthesized error and a capturing `LogHandler`.
     internal enum RequestLog {
-        /// The log level for a failure category (a mapping *from* the category, kept separate from the
-        /// categoriser so the category stays reusable by metrics).
-        static func level(for category: ErrorCategory) -> Logger.Level {
-            switch category {
-            case .transient: return .debug
-            case .unavailable, .callerFault, .server: return .warning
-            case .wrapperInternal: return .error
-            }
-        }
-
-        /// Log a failed request once, at the level for its category, with best-effort metadata.
+        /// Log a failed request at `.debug` (library convention — never warning/error), with best-effort metadata.
         /// The error field uses `shortDescription` (code label) — never `description`, which can echo the
         /// server-provided message (potential PII).
         static func logFailure(
@@ -55,11 +45,18 @@ extension CassandraClient {
             if let boundValues {
                 metadata[LogKey.boundValues] = "\(boundValues)"
             }
-            logger.log(level: Self.level(for: category), "\(error.shortDescription)", metadata: metadata)
+            // The error rides swift-log's `error:` param (first-class on event-based handlers), never the
+            // message. A wrapper carries only the code label — the raw `Error.description` embeds the
+            // server message (PII), and the param serialises `"\(error)"`.
+            logger.debug(
+                "request failed",
+                error: RedactedError(description: error.shortDescription),
+                metadata: metadata
+            )
         }
 
-        /// If a successful request's elapsed time exceeds the threshold, log a `.info` "slow query" record.
-        /// `thresholdMillis == nil` skips all timing work (hot-path guard).
+        /// If a successful request's elapsed time is at least the threshold, log a `.debug` "slow query" record.
+        /// `thresholdMillis == nil` skips all timing work (hot-path guard); `0` logs every success.
         static func checkSlowSuccess(
             startedAt: DispatchTime,
             query: String,
@@ -69,7 +66,7 @@ extension CassandraClient {
         ) {
             guard let thresholdMillis else { return }
             let elapsed = Self.elapsedMillis(since: startedAt)
-            guard elapsed > thresholdMillis else { return }
+            guard elapsed >= thresholdMillis else { return }
             var metadata: Logger.Metadata = [
                 LogKey.query: "\(Self.truncated(query))",
                 LogKey.latencyMs: "\(elapsed)",
@@ -77,64 +74,22 @@ extension CassandraClient {
             if let boundValues {
                 metadata[LogKey.boundValues] = "\(boundValues)"
             }
-            logger.info("slow query", metadata: metadata)
+            logger.debug("slow query", metadata: metadata)
         }
 
-        /// Attach failure + slow-success logging to a bridged `EventLoopFuture`, returning it unchanged.
-        /// The completion closure captures only the Sendable values passed in — never a `Statement`/`Batch`.
-        static func instrument<Value>(
-            _ future: EventLoopFuture<Value>,
-            enabled: Bool,
+        /// Emit the failure or slow-success record for a completed request outcome — shared by the
+        /// `EventLoopFuture` and async wrappers so both log identically.
+        private static func logOutcome<Value>(
+            _ result: Result<Value, Swift.Error>,
             startedAt: DispatchTime,
             query: String?,
             consistency: CassandraClient.Consistency?,
             thresholdMillis: UInt32?,
-            boundValues: String? = nil,
+            boundValues: String?,
             logger: Logger
-        ) -> EventLoopFuture<Value> {
-            guard enabled else { return future }
-            return future.always { result in
-                switch result {
-                case .success:
-                    if let query {
-                        Self.checkSlowSuccess(
-                            startedAt: startedAt,
-                            query: query,
-                            thresholdMillis: thresholdMillis,
-                            boundValues: boundValues,
-                            logger: logger
-                        )
-                    }
-                case .failure(let error):
-                    if let cassError = error as? CassandraClient.Error {
-                        Self.logFailure(
-                            cassError,
-                            query: query,
-                            consistency: consistency,
-                            startedAt: startedAt,
-                            boundValues: boundValues,
-                            logger: logger
-                        )
-                    }
-                }
-            }
-        }
-
-        /// Run an async request body with the same failure + slow-success logging.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-        static func instrumented<Value>(
-            enabled: Bool,
-            startedAt: DispatchTime,
-            query: String?,
-            consistency: CassandraClient.Consistency?,
-            thresholdMillis: UInt32?,
-            boundValues: String? = nil,
-            logger: Logger,
-            _ body: () async throws -> Value
-        ) async throws -> Value {
-            guard enabled else { return try await body() }
-            do {
-                let value = try await body()
+        ) {
+            switch result {
+            case .success:
                 if let query {
                     Self.checkSlowSuccess(
                         startedAt: startedAt,
@@ -144,8 +99,7 @@ extension CassandraClient {
                         logger: logger
                     )
                 }
-                return value
-            } catch {
+            case .failure(let error):
                 if let cassError = error as? CassandraClient.Error {
                     Self.logFailure(
                         cassError,
@@ -156,8 +110,60 @@ extension CassandraClient {
                         logger: logger
                     )
                 }
-                throw error
             }
+        }
+
+        /// Attach failure + slow-success logging to a bridged `EventLoopFuture`, returning it unchanged.
+        /// The completion closure captures only the Sendable values passed in — never a `Statement`/`Batch`.
+        static func instrument<Value>(
+            _ future: EventLoopFuture<Value>,
+            startedAt: DispatchTime,
+            query: String?,
+            consistency: CassandraClient.Consistency?,
+            thresholdMillis: UInt32?,
+            boundValues: String? = nil,
+            logger: Logger
+        ) -> EventLoopFuture<Value> {
+            future.always { result in
+                Self.logOutcome(
+                    result,
+                    startedAt: startedAt,
+                    query: query,
+                    consistency: consistency,
+                    thresholdMillis: thresholdMillis,
+                    boundValues: boundValues,
+                    logger: logger
+                )
+            }
+        }
+
+        /// Run an async request body with the same failure + slow-success logging.
+        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+        static func instrumented<Value>(
+            startedAt: DispatchTime,
+            query: String?,
+            consistency: CassandraClient.Consistency?,
+            thresholdMillis: UInt32?,
+            boundValues: String? = nil,
+            logger: Logger,
+            _ body: () async throws -> Value
+        ) async throws -> Value {
+            let result: Result<Value, Swift.Error>
+            do {
+                result = .success(try await body())
+            } catch {
+                result = .failure(error)
+            }
+            Self.logOutcome(
+                result,
+                startedAt: startedAt,
+                query: query,
+                consistency: consistency,
+                thresholdMillis: thresholdMillis,
+                boundValues: boundValues,
+                logger: logger
+            )
+            return try result.get()
         }
 
         /// Format bound parameter values into a single string, each value capped to `maxLoggedValueLength`.
@@ -166,19 +172,25 @@ extension CassandraClient {
             let cap = Configuration.maxLoggedValueLength
             return parameters.map { value in
                 let string = "\(value)"
-                return string.count > cap ? String(string.prefix(cap)) + "…" : string
+                return string.count > cap ? string.prefix(cap) + "…" : string
             }.joined(separator: ", ")
         }
 
         private static func truncated(_ query: String) -> String {
             let cap = Configuration.maxLoggedQueryLength
-            return query.count > cap ? String(query.prefix(cap)) + "…" : query
+            return query.count > cap ? query.prefix(cap) + "…" : query
         }
 
         /// Monotonic elapsed milliseconds (uptime clock — unaffected by wall-clock/NTP adjustments).
         private static func elapsedMillis(since start: DispatchTime) -> UInt64 {
             let ns = DispatchTime.now().uptimeNanoseconds &- start.uptimeNanoseconds
             return ns / 1_000_000
+        }
+
+        /// Carries only a code label as its string form, so swift-log's `error:` param never serialises
+        /// the server-provided message our real `Error.description` embeds (PII).
+        private struct RedactedError: Swift.Error, CustomStringConvertible {
+            let description: String
         }
     }
 }

@@ -22,9 +22,9 @@ import XCTest
 /// Unit tests for request logging: a pure-categoriser test (no cluster) and direct-helper emission tests
 /// using the shared capturing `LogHandler` (`TestLogCapture`) — no cluster, no double-tautology.
 final class RequestLoggingTests: XCTestCase {
-    /// Categorisation + level mapping are pure functions — no cluster. Covers at least one case per
-    /// bucket (incl. a `server`-default catch-all case) and pins the metric-reused raw values.
-    func testCategorizationAndLevels() {
+    /// Categorisation is a pure function — no cluster. Covers at least one case per bucket (incl. a
+    /// `server`-default catch-all case) and pins the metric-reused raw values.
+    func testCategorization() {
         // transient
         XCTAssertEqual(CassandraClient.Error.readTimeout("").category, .transient)
         XCTAssertEqual(CassandraClient.Error.serverOverloaded("").category, .transient)
@@ -41,12 +41,6 @@ final class RequestLoggingTests: XCTestCase {
         XCTAssertEqual(CassandraClient.Error.unprepared("").category, .server)
         // internal (wrapper invariant)
         XCTAssertEqual(CassandraClient.Error.internalError("").category, .wrapperInternal)
-
-        XCTAssertEqual(CassandraClient.RequestLog.level(for: .transient), .debug)
-        XCTAssertEqual(CassandraClient.RequestLog.level(for: .unavailable), .warning)
-        XCTAssertEqual(CassandraClient.RequestLog.level(for: .callerFault), .warning)
-        XCTAssertEqual(CassandraClient.RequestLog.level(for: .server), .warning)
-        XCTAssertEqual(CassandraClient.RequestLog.level(for: .wrapperInternal), .error)
 
         // The category raw values are what a future metric tag reuses verbatim — pin them.
         XCTAssertEqual(CassandraClient.ErrorCategory.transient.rawValue, "transient")
@@ -72,12 +66,15 @@ final class RequestLoggingTests: XCTestCase {
         let entries = capture.all
         XCTAssertEqual(entries.count, 1)
         let entry = entries[0]
-        XCTAssertEqual(entry.level, .warning)  // callerFault -> .warning
+        XCTAssertEqual(entry.level, .debug)  // library convention — never warning/error
+        XCTAssertEqual(entry.message, "request failed")  // constant message, not the interpolated error
         XCTAssertEqual(entry.metadata[CassandraClient.LogKey.errorCategory], "callerFault")
         XCTAssertEqual(entry.metadata[CassandraClient.LogKey.query], "SELECT * FROM t WHERE id = ?")
-        XCTAssertEqual(entry.message, error.shortDescription)
-        // The server-provided message must NOT leak into the structured log field.
+        // The error rides swift-log's `error:` param, carrying only the code label — the server-provided
+        // message must NOT leak into the message or the error.
+        XCTAssertEqual(entry.error, error.shortDescription)
         XCTAssertFalse(entry.message.contains("SELET"))
+        XCTAssertFalse((entry.error ?? "").contains("SELET"))
     }
 
     /// Threshold 0 logs a slow record for a (>0 ms) success.
@@ -92,7 +89,7 @@ final class RequestLoggingTests: XCTestCase {
         )
         let entries = capture.all
         XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0].level, .info)
+        XCTAssertEqual(entries[0].level, .debug)
         XCTAssertEqual(entries[0].metadata[CassandraClient.LogKey.query], "SELECT 1")
         XCTAssertNotNil(entries[0].metadata[CassandraClient.LogKey.latencyMs])
     }
@@ -169,43 +166,5 @@ final class RequestLoggingTests: XCTestCase {
         let formatted = CassandraClient.RequestLog.formatValues([.string(long)])
         XCTAssertTrue(formatted.hasSuffix("…"))
         XCTAssertLessThanOrEqual(formatted.count, CassandraClient.Configuration.maxLoggedValueLength + 1)
-    }
-
-    /// Master switch (opt-in): with logging disabled, even a failure produces no record.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func testMasterSwitchGatesLogging() {
-        // enabled: false -> a failure in the body is NOT logged
-        let (loggerOff, captureOff) = makeCapturingLogger()
-        let offDone = expectation(description: "off")
-        Task {
-            _ = try? await CassandraClient.RequestLog.instrumented(
-                enabled: false,
-                startedAt: DispatchTime.now(),
-                query: "q",
-                consistency: nil,
-                thresholdMillis: 0,
-                logger: loggerOff
-            ) { throw CassandraClient.Error.serverError("boom") }
-            offDone.fulfill()
-        }
-        wait(for: [offDone], timeout: 3)
-        XCTAssertTrue(captureOff.all.isEmpty, "master switch off should suppress all logging")
-
-        // enabled: true -> the failure IS logged
-        let (loggerOn, captureOn) = makeCapturingLogger()
-        let onDone = expectation(description: "on")
-        Task {
-            _ = try? await CassandraClient.RequestLog.instrumented(
-                enabled: true,
-                startedAt: DispatchTime.now(),
-                query: "q",
-                consistency: nil,
-                thresholdMillis: nil,
-                logger: loggerOn
-            ) { throw CassandraClient.Error.serverError("boom") }
-            onDone.fulfill()
-        }
-        wait(for: [onDone], timeout: 3)
-        XCTAssertEqual(captureOn.all.count, 1, "master switch on should emit the failure")
     }
 }

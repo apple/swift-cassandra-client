@@ -37,11 +37,8 @@ extension CassandraClient {
         public var requestTimeoutMillis: UInt32?
         public var resolveTimeoutMillis: UInt32?
 
-        /// Master switch for request logging (failures, slow queries, connect/preflight failures). Off by default.
-        public var requestLoggingEnabled: Bool = false
-
-        /// Logs a successful query at `.info` when its latency exceeds this threshold. Only consulted when
-        /// ``requestLoggingEnabled`` is `true`. `nil` disables the check; `0` logs every success.
+        /// Logs a successful query at `.debug` when its latency reaches this threshold (ms). `nil` disables
+        /// the check; `0` logs every success.
         public var slowQueryThresholdMillis: UInt32? = nil
 
         /// Includes bound parameter values in request logs when `true`. Off by default — values are potential PII.

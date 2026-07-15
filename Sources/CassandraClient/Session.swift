@@ -38,9 +38,6 @@ import NIOCore  // for async-await bridge
     /// The default `Logger` for this session/client, used when a call site passes no explicit logger.
     var logger: Logger { get }
 
-    /// Whether request logging (failures + slow queries) is enabled — opt-in, default off.
-    var requestLoggingEnabled: Bool { get }
-
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -219,9 +216,6 @@ extension CassandraSession {
     /// this with their configured logger, so this only applies to third-party conformances.
     public var logger: Logger { Logger(label: "com.apple.cassandra") }
 
-    /// Default: request logging off (opt-in). Conformers backed by a `Configuration` witness this from it.
-    public var requestLoggingEnabled: Bool { false }
-
     private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger?) {
         if count > 0, options.hasEncryptionOptions {
             (logger ?? encryptionLogger).debug(
@@ -377,7 +371,7 @@ extension CassandraSession {
             }
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
-            if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+            if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(
                     cassError,
                     query: query,
@@ -411,7 +405,7 @@ extension CassandraSession {
             }
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
         } catch {
-            if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+            if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(
                     cassError,
                     query: query,
@@ -473,7 +467,7 @@ extension CassandraSession {
             }
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
-            if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+            if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(
                     cassError,
                     query: prepared.query,
@@ -727,10 +721,6 @@ extension CassandraClient {
             self.configuration.keyspace
         }
 
-        public var requestLoggingEnabled: Bool {
-            self.configuration.requestLoggingEnabled
-        }
-
         private let configuration: Configuration
         public let logger: Logger
         private let _state = NIOLockedValueBox(State.idle)
@@ -922,7 +912,6 @@ extension CassandraClient {
                 let future = self.underlying.execute(statement: statement)
                 return CassandraClient.RequestLog.instrument(
                     future.asNIOFuture(eventLoop: eventLoop),
-                    enabled: self.configuration.requestLoggingEnabled,
                     startedAt: startedAt,
                     query: query,
                     consistency: consistency,
@@ -944,7 +933,7 @@ extension CassandraClient {
             do {
                 try statement.setPagingSize(pageSize)
             } catch {
-                if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+                if let cassError = error as? CassandraClient.Error {
                     CassandraClient.RequestLog.logFailure(
                         cassError,
                         query: statement.query,
@@ -973,7 +962,6 @@ extension CassandraClient {
                 let future = self.underlying.prepare(query: query)
                 let bridged = CassandraClient.RequestLog.instrument(
                     future.asNIOFuture(eventLoop: eventLoop),
-                    enabled: self.configuration.requestLoggingEnabled,
                     startedAt: startedAt,
                     query: query,
                     consistency: nil,
@@ -986,7 +974,7 @@ extension CassandraClient {
                         do {
                             pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
                         } catch {
-                            if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+                            if let cassError = error as? CassandraClient.Error {
                                 CassandraClient.RequestLog.logFailure(
                                     cassError,
                                     query: query,
@@ -1212,7 +1200,7 @@ extension CassandraClient {
                 }
                 return self.execute(statement: statement, on: eventLoop, logger: logger)
             } catch {
-                if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+                if let cassError = error as? CassandraClient.Error {
                     CassandraClient.RequestLog.logFailure(
                         cassError,
                         query: prepared.query,
@@ -1240,7 +1228,6 @@ extension CassandraClient {
                 let future = self.underlying.execute(batch: optionalBatch.take()!)
                 return CassandraClient.RequestLog.instrument(
                     future.asNIOFuture(eventLoop: eventLoop),
-                    enabled: self.configuration.requestLoggingEnabled,
                     startedAt: startedAt,
                     query: "batch",
                     consistency: nil,
@@ -1298,7 +1285,7 @@ extension CassandraClient {
                 try build(&batch)
                 return self.execute(batch: batch, on: eventLoop, logger: logger)
             } catch {
-                if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+                if let cassError = error as? CassandraClient.Error {
                     CassandraClient.RequestLog.logFailure(
                         cassError,
                         query: "batch",
@@ -1324,7 +1311,6 @@ extension CassandraClient {
                 }
             return CassandraClient.RequestLog.instrument(
                 connected,
-                enabled: self.configuration.requestLoggingEnabled,
                 startedAt: startedAt,
                 query: nil,
                 consistency: nil,
@@ -1581,7 +1567,6 @@ extension CassandraClient.Session {
                 ? CassandraClient.RequestLog.formatValues(statement.parameters) : nil
             let startedAt = DispatchTime.now()
             return try await CassandraClient.RequestLog.instrumented(
-                enabled: self.configuration.requestLoggingEnabled,
                 startedAt: startedAt,
                 query: query,
                 consistency: consistency,
@@ -1603,7 +1588,7 @@ extension CassandraClient.Session {
         do {
             try statement.setPagingSize(pageSize)
         } catch {
-            if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+            if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(
                     cassError,
                     query: statement.query,
@@ -1628,7 +1613,6 @@ extension CassandraClient.Session {
             logger.debug("executing batch")
             let startedAt = DispatchTime.now()
             try await CassandraClient.RequestLog.instrumented(
-                enabled: self.configuration.requestLoggingEnabled,
                 startedAt: startedAt,
                 query: "batch",
                 consistency: nil,
@@ -1688,7 +1672,7 @@ extension CassandraClient.Session {
             try await build(&built)
             batch = built
         } catch {
-            if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+            if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(
                     cassError,
                     query: "batch",
@@ -1712,7 +1696,6 @@ extension CassandraClient.Session {
             logger.debug("preparing: \(query)")
             let startedAt = DispatchTime.now()
             return try await CassandraClient.RequestLog.instrumented(
-                enabled: self.configuration.requestLoggingEnabled,
                 startedAt: startedAt,
                 query: query,
                 consistency: nil,
@@ -1727,7 +1710,7 @@ extension CassandraClient.Session {
             do {
                 pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
             } catch {
-                if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+                if let cassError = error as? CassandraClient.Error {
                     CassandraClient.RequestLog.logFailure(
                         cassError,
                         query: query,
@@ -1786,7 +1769,7 @@ extension CassandraClient.Session {
                 )
             }
         } catch {
-            if self.requestLoggingEnabled, let cassError = error as? CassandraClient.Error {
+            if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(
                     cassError,
                     query: prepared.query,
@@ -1807,7 +1790,6 @@ extension CassandraClient.Session {
             let startedAt = DispatchTime.now()
             // Instrument makeCluster + connect together so cluster-build failures are logged too.
             return try await CassandraClient.RequestLog.instrumented(
-                enabled: self.configuration.requestLoggingEnabled,
                 startedAt: startedAt,
                 query: nil,
                 consistency: nil,
