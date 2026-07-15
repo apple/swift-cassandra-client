@@ -20,7 +20,7 @@ import NIOConcurrencyHelpers
 
 /// `CassandraClient` is a wrapper around the [Datastax Cassandra C++ Driver](https://github.com/datastax/cpp-driver)
 ///  and can be used to run queries against a Cassandra database.
-public class CassandraClient: CassandraSession {
+public final class CassandraClient: CassandraSession, Sendable {
     private let eventLoopGroupContainer: EventLoopGroupContainer
     public var eventLoopGroup: EventLoopGroup {
         self.eventLoopGroupContainer.value
@@ -120,7 +120,7 @@ public class CassandraClient: CassandraSession {
     ///
     /// - Returns: The resulting ``Rows``.
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         on eventLoop: EventLoop?,
         logger: Logger? = .none
     )
@@ -141,7 +141,7 @@ public class CassandraClient: CassandraSession {
     ///
     /// - Returns: The ``PaginatedRows``.
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         pageSize: Int32,
         on eventLoop: EventLoop?,
         logger: Logger? = .none
@@ -184,7 +184,7 @@ public class CassandraClient: CassandraSession {
     /// - Returns: The resulting ``Rows``.
     public func execute(
         prepared: PreparedStatement,
-        parameters: [Statement.Value] = [],
+        parameters: sending [Statement.Value] = [],
         options: Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -208,9 +208,10 @@ public class CassandraClient: CassandraSession {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The decoded rows.
-    public func execute<T: Decodable>(
+    @preconcurrency
+    public func execute<T: Decodable & Sendable>(
         prepared: PreparedStatement,
-        parameters: [Statement.Value] = [],
+        parameters: sending [Statement.Value] = [],
         options: Statement.Options = .init(),
         on eventLoop: EventLoop? = .none,
         logger: Logger? = .none
@@ -376,7 +377,7 @@ public class CassandraClient: CassandraSession {
     ///
     /// When `shared`, the `EventLoopGroup` is provided externally and its lifecycle will be managed by the caller.
     /// When `createNew`, the library will create a new `EventLoopGroup` and manage its lifecycle.
-    public enum EventLoopGroupProvider {
+    public enum EventLoopGroupProvider: Sendable {
         case shared(EventLoopGroup)
         case createNew
     }
@@ -409,7 +410,7 @@ extension CassandraClient {
     /// - Returns: The ``PaginatedRows``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(
-        statement: Statement,
+        statement: sending Statement,
         pageSize: Int32,
         logger: Logger? = .none
     ) async throws

@@ -52,8 +52,10 @@ public protocol PagingStateToken: ContiguousBytes {}
 
 extension CassandraClient {
     /// Resulting row(s) of a Cassandra query. Data are returned all at once.
-    public final class Rows: Sequence {
-        internal let rawPointer: OpaquePointer
+    public final class Rows: Sequence, Sendable {
+        /// This can be `nonisolated(unsafe)` because the docs state a result is read-only and "thread-safe to read or iterate over concurrently".
+        /// See Sources/CDataStaxDriver/datastax-cpp-driver/include/cassandra.h
+        nonisolated(unsafe) internal let rawPointer: OpaquePointer
 
         internal init(_ resultRawPointer: OpaquePointer) {
             self.rawPointer = resultRawPointer
@@ -213,14 +215,14 @@ extension CassandraClient {
             self.parent = row
         }
 
-        func isNull() -> Bool {
+        public func isNull() -> Bool {
             cass_value_is_null(self.rawPointer) == cass_true
         }
     }
 
     /// A reusable page token that can be used by `Statement` to resume querying
     /// at a specific position.
-    public struct OpaquePagingStateToken: PagingStateToken {
+    public struct OpaquePagingStateToken: PagingStateToken, Sendable {
         let token: [UInt8]
 
         public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
@@ -452,7 +454,7 @@ extension CassandraClient.Row {
 // MARK: - UUID
 
 /// Time-based UUID (version 1).
-public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertible {
+public struct TimeBasedUUID: Sendable, Codable, Hashable, Equatable, CustomStringConvertible {
     private let underlying: Foundation.UUID
 
     internal var uuid: uuid_t {
@@ -478,10 +480,11 @@ public struct TimeBasedUUID: Codable, Hashable, Equatable, CustomStringConvertib
     /// Wrapper around `CassUuidGen` for generating time-based UUID.
     ///
     /// - SeeAlso: https://docs.datastax.com/en/developer/cpp-driver/2.15/topics/basics/uuids/
-    private class UUIDGenerator {
+    private final class UUIDGenerator: Sendable {
         static let instance = UUIDGenerator()
 
-        let rawPointer: OpaquePointer
+        // Docs state "Instances of the UUID generator object are thread-safe to generate UUIDs."
+        nonisolated(unsafe) let rawPointer: OpaquePointer
 
         init() {
             self.rawPointer = cass_uuid_gen_new()
