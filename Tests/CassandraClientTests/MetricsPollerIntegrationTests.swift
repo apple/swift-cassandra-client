@@ -118,9 +118,11 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         )
     }
 
-    // Shutdown off the poller's loop cancels-and-awaits the poller before close.
-    func testShutdownOffEventLoopStopsPoller() throws {
-        let session = "v3-off"
+    // Shutdown stops the poller: no gauge is recorded after shutdown returns. The poller reads the
+    // snapshot only while `.connected` under the state lock, and shutdown flips the state before
+    // closing, so a cancelled tick cannot record against a closing session.
+    func testShutdownStopsPoller() throws {
+        let session = "v3"
         let dims = [("session", session)]
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = true
@@ -133,53 +135,12 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         _ = try client.query("select release_version from system.local").wait()
         let meter = try XCTUnwrap(self.waitForMeter(self.connectionsTotal, dimensions: dims))
 
-        // Shutdown runs on the test thread — off the poller's event loop.
         XCTAssertNoThrow(try client.shutdown())
 
         // No tick after shutdown: the recorded-values count must stay put across several intervals.
         let countAfterShutdown = meter.values.count
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertEqual(meter.values.count, countAfterShutdown)
-    }
-
-    // Shutdown from the poller's own loop must not hang.
-    func testShutdownOnPollerEventLoop() throws {
-        let session = "v3-on"
-        let dims = [("session", session)]
-        // A single-threaded shared group forces the poller's loop to be the only loop, so we can
-        // dispatch shutdown onto it and exercise the in-event-loop teardown branch.
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { XCTAssertNoThrow(try group.syncShutdownGracefully()) }
-        let loop = group.next()
-
-        var configuration = self.makeConfiguration()
-        configuration.metricsEnabled = true
-        configuration.metricsPollIntervalMillis = 50
-        configuration.metricsSessionName = session
-
-        let client = CassandraClient(
-            eventLoopGroupProvider: .shared(group),
-            configuration: configuration,
-            logger: self.makeLogger()
-        )
-        // Defensive: idempotent, so it's a no-op after the on-loop shutdown below but guards throws.
-        defer { try? client.shutdown() }
-        _ = try client.query("select release_version from system.local").wait()
-        _ = try XCTUnwrap(self.waitForMeter(self.connectionsTotal, dimensions: dims))
-
-        // Shutdown on the poller's loop must complete without deadlocking.
-        let done = DispatchSemaphore(value: 0)
-        let errorBox = NIOLockedValueBox<Error?>(nil)
-        loop.execute {
-            do {
-                try client.shutdown()
-            } catch {
-                errorBox.withLockedValue { $0 = error }
-            }
-            done.signal()
-        }
-        XCTAssertEqual(done.wait(timeout: .now() + 5), .success, "shutdown on poller loop hung")
-        XCTAssertNil(errorBox.withLockedValue { $0 })
     }
 
     // With metrics disabled no gauge series are ever created.

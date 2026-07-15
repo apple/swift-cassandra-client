@@ -676,11 +676,14 @@ extension CassandraClient {
 
         private let underlying: CassSession
 
-        /// The running metrics poller and the event loop it ticks on. Guarded by `_poller`.
-        /// The `EventLoop` is retained so `shutdown()` can tell whether it runs on that loop.
+        /// The running metrics poller task, plus a stop flag. Guarded by `_poller`.
+        /// `task` holds a `Task<Void, Never>`, erased to `any Sendable` for availability — the task is
+        /// only created on macOS 12+, but `shutdown()`/`deinit` that touch this handle are not gated.
         private struct PollerHandle {
-            var task: RepeatedTask?
-            var loop: (any EventLoop)?
+            var task: (any Sendable)?
+            /// Set by `stopMetricsPoller()` under the lock; the tick reads the driver snapshot and
+            /// records gauges only while this is `false`, so no gauge is recorded once shutdown begins.
+            var stopped = false
         }
 
         private enum State {
@@ -1189,36 +1192,57 @@ extension CassandraClient {
         /// Start the driver-snapshot metrics poller, if enabled.
         ///
         /// Called from the connect starter's branch once the compare-and-set to `.connected` wins.
-        /// Schedules a `RepeatedTask` on one event loop, then stores it under `_poller` only if the
-        /// session is still `.connected` and no poller is already running; otherwise the just-scheduled
-        /// task is cancelled, so a `shutdown()` racing between scheduling and storing can't leak a task.
+        /// Spawns an async `Task` that sleeps then polls on the configured cadence, then stores it
+        /// under `_poller` only if the session is still `.connected` and no poller is already running;
+        /// otherwise the just-spawned task is cancelled, so a `shutdown()` racing between spawn and
+        /// store can't leak a task.
         private func startMetricsPoller() {
             guard self.configuration.metricsEnabled,
                 let intervalMillis = self.configuration.metricsPollIntervalMillis,
                 intervalMillis > 0
             else { return }
 
-            let loop = self.eventLoopGroup.next()
+            // The poller uses Swift Concurrency (`Task` + `Task.sleep`), which this package floors at
+            // macOS 12 / iOS 15. On older platforms the poller silently does not start (documented on
+            // `Configuration.metricsEnabled`); every other feature still works there.
+            guard #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) else { return }
+
             let gauges = SnapshotGauges(sessionName: self.configuration.metricsSessionName)
-            let interval = TimeAmount.milliseconds(Int64(intervalMillis))
-            // The tick reads the snapshot and `set`s the gauges synchronously (returns an
-            // already-completed future), so `cancel(promise:)` in `stopMetricsPoller` awaits it.
-            // `weak self` avoids Session -> _poller -> RepeatedTask -> closure -> Session keeping the
-            // session (and its ticks) alive forever on a consumer that never calls `shutdown()`.
-            let task = loop.scheduleRepeatedTask(initialDelay: interval, delay: interval) {
-                [weak self] _ in
-                guard let self else { return }
-                gauges.record(self.getMetrics())
+            let intervalNanos = UInt64(intervalMillis) * 1_000_000
+
+            // `weak self` avoids Session -> _poller -> Task -> closure -> Session keeping the session
+            // (and its ticks) alive forever on a consumer that never calls `shutdown()`.
+            let task = Task<Void, Never> { [weak self] in
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(nanoseconds: intervalNanos)
+                    } catch {
+                        break  // cancelled during sleep
+                    }
+                    guard let self else { break }
+                    // Read the snapshot and record the gauges inside the `_poller` lock, gated on the
+                    // stop flag. `stopMetricsPoller()` sets `stopped` under this same lock, so once
+                    // shutdown begins no further tick reads the driver snapshot or records a gauge; and
+                    // because `stopMetricsPoller()` runs before `underlying.close()`, acquiring the lock
+                    // there blocks until any in-flight tick finishes — the read can't overlap `close()`.
+                    // (No `await` under the lock; `_poller` is never held while `_state` is held.)
+                    let didRecord = self._poller.withLockedValue { poller -> Bool in
+                        guard !poller.stopped else { return false }
+                        gauges.record(self.getMetrics())
+                        return true
+                    }
+                    if !didRecord { break }
+                }
             }
 
-            // Lock order is always `_state` before `_poller`; `shutdown()` never holds `_state` while
-            // touching `_poller`, so there is no opposite-order acquisition to deadlock against.
+            // Store the just-spawned task under `_poller` only if the session is still `.connected` and
+            // no poller is already running; otherwise cancel it, so a `shutdown()` racing between spawn
+            // and store can't leak a task. Lock order is always `_state` before `_poller`.
             let stored = self._state.withLockedValue { state -> Bool in
                 guard case .connected = state else { return false }
                 return self._poller.withLockedValue { poller in
-                    guard poller.task == nil else { return false }
+                    guard poller.task == nil, !poller.stopped else { return false }
                     poller.task = task
-                    poller.loop = loop
                     return true
                 }
             }
@@ -1227,28 +1251,22 @@ extension CassandraClient {
             }
         }
 
-        /// Cancel the metrics poller and await any in-flight tick before the session closes.
+        /// Stop the metrics poller before the session closes.
         ///
-        /// Off the poller's loop, `cancel(promise:)` fulfils the promise via a deferred `execute`
-        /// *after* the current tick finishes, so `wait()` awaits it. On the poller's own loop no tick
-        /// can be in flight (the loop is serial and we are it) and blocking it would deadlock, so we
-        /// just cancel. `preconditionNotInEventLoop()` in the off-loop branch turns a residual hang
-        /// into a loud crash if `inEventLoop` ever false-negates.
+        /// Sets `stopped` and cancels the task under `_poller`. Because the poller tick reads the driver
+        /// snapshot and records gauges *inside* the `_poller` lock, acquiring the lock here blocks until
+        /// any in-flight tick finishes, and the `stopped` flag prevents any later tick from recording —
+        /// so no gauge is recorded once shutdown begins and no tick can overlap `underlying.close()`.
+        /// `shutdown()` calls this before `close()` and never holds `_state` while doing so.
         private func stopMetricsPoller() {
-            let running = self._poller.withLockedValue { poller -> (RepeatedTask, any EventLoop)? in
-                guard let task = poller.task, let loop = poller.loop else { return nil }
+            let task = self._poller.withLockedValue { poller -> (any Sendable)? in
+                poller.stopped = true
+                let task = poller.task
                 poller.task = nil
-                poller.loop = nil
-                return (task, loop)
+                return task
             }
-            guard let (task, loop) = running else { return }
-            if loop.inEventLoop {
-                task.cancel()
-            } else {
-                loop.preconditionNotInEventLoop()
-                let promise = loop.makePromise(of: Void.self)
-                task.cancel(promise: promise)
-                try? promise.futureResult.wait()
+            if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
+                (task as? Task<Void, Never>)?.cancel()
             }
         }
 
