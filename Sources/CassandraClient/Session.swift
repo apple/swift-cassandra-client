@@ -768,7 +768,7 @@ extension CassandraClient {
                 switch state {
                 case .connectingFuture, .connecting:
                     state = .connected
-                case .disconnected:
+                case .disconnected, .disconnectingFuture:
                     // Shut down while connecting, stay disconnected
                     throw Error.disconnected
                 case .idle, .connected:
