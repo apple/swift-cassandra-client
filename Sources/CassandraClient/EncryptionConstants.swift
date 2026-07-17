@@ -15,15 +15,6 @@
 // MARK: - Centralised encryption string constants
 
 extension CassandraClient {
-    internal enum EncryptionLogKey {
-        static let keyName = "encryption.keyName"
-        static let column = "encryption.column"
-        static let keyRotationFrom = "encryption.keyRotation.from"
-        static let keyRotationTo = "encryption.keyRotation.to"
-        static let keysLoaded = "encryption.keysLoaded"
-        static let rowsDecrypted = "encryption.rowsDecrypted"
-    }
-
     internal enum EncryptionMetric {
         static let encryptTotal = "cassandra.encryption.encrypt.total"
         static let encryptDuration = "cassandra.encryption.encrypt.duration"

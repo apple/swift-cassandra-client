@@ -36,6 +36,19 @@ extension CassandraClient {
         public var connectTimeoutMillis: UInt32?
         public var requestTimeoutMillis: UInt32?
         public var resolveTimeoutMillis: UInt32?
+
+        /// Logs a successful query at `.debug` when its latency reaches this threshold (ms). `nil` disables
+        /// the check; `0` logs every success.
+        public var slowQueryThresholdMillis: UInt32? = nil
+
+        /// Includes bound parameter values in request logs when `true`. Off by default — values are potential PII.
+        public var logBoundValues: Bool = false
+
+        /// Maximum length of query text in a log record; longer text is truncated.
+        internal static let maxLoggedQueryLength = 500
+        /// Maximum length of each bound value in a log record when ``logBoundValues`` is set.
+        internal static let maxLoggedValueLength = 50
+
         public var coreConnectionsPerHost: UInt32?
         public var tcpNodelay: Bool?
         public var tcpKeepalive: Bool?

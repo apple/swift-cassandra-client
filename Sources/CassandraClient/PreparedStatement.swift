@@ -26,8 +26,17 @@ extension CassandraClient {
         /// PK column names (partition + clustering keys), looked up once at prepare time to avoid repeated schema metadata queries.
         internal let primaryKeyColumnNames: [String]
 
-        internal init(rawPointer: CassPrepared, encryptionTable: String? = nil, primaryKeyColumnNames: [String] = []) {
+        /// The CQL text this statement was prepared from, so prepared-path logs show the real query rather than `"(prepared)"`.
+        internal let query: String
+
+        internal init(
+            rawPointer: CassPrepared,
+            query: String = "(prepared)",
+            encryptionTable: String? = nil,
+            primaryKeyColumnNames: [String] = []
+        ) {
             self.rawPointer = rawPointer
+            self.query = query
             self.encryptionTable = encryptionTable
             self.primaryKeyColumnNames = primaryKeyColumnNames
             var count = 0
