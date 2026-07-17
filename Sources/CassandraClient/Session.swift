@@ -1471,7 +1471,7 @@ extension CassandraClient.Session {
         switch action {
         case .startedConnecting(let task):
             try await task.task.value
-            // Compare-and-set (see the ELF variant): guard against a concurrent `shutdown()`.
+            // Compare-and-set (see the EventLoopFuture variant): guard against a concurrent `shutdown()`.
             let didConnect = self._state.withLockedValue { state -> Bool in
                 guard case .connecting = state else { return false }
                 state = .connected
