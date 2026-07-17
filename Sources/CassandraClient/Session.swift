@@ -724,8 +724,19 @@ extension CassandraClient {
         private let configuration: Configuration
         public let logger: Logger
         private let _state = NIOLockedValueBox(State.idle)
+        private let _poller = NIOLockedValueBox(PollerHandle())
 
         private let underlying: CassSession
+
+        /// The running metrics poller task, plus a stop flag. Guarded by `_poller`.
+        /// `task` holds a `Task<Void, Never>`, erased to `any Sendable` for availability — the task is
+        /// only created on macOS 12+, but `shutdown()`/`deinit` that touch this handle are not gated.
+        private struct PollerHandle {
+            var task: (any Sendable)?
+            /// Set by `stopMetricsPoller()` under the lock; the tick reads the driver snapshot and
+            /// records gauges only while this is `false`, so no gauge is recorded once shutdown begins.
+            var stopped = false
+        }
 
         private enum State {
             case idle
@@ -781,6 +792,7 @@ extension CassandraClient {
             case .wait(let future):
                 try future.wait()
             case .disconnectThenMarkShut(let promise):
+                self.stopMetricsPoller()
                 let future = self.underlying.close()
                 do {
                     try future.syncWait()
@@ -861,6 +873,7 @@ extension CassandraClient {
                 return future.flatMap { _ -> EventLoopFuture<Result> in
                     do {
                         try self.handleConnectionSucceeded()
+                        self.startMetricsPoller()
                         return body(eventLoop, logger)
                     } catch {
                         return eventLoop.makeFailedFuture(error)
@@ -1328,6 +1341,87 @@ extension CassandraClient {
             self.underlying.getMetrics()
         }
 
+        /// Start the driver-snapshot metrics poller, if enabled.
+        ///
+        /// Called from the connect starter's branch once the compare-and-set to `.connected` wins.
+        /// Spawns an async `Task` that sleeps then polls on the configured cadence, then stores it
+        /// under `_poller` only if the session is still `.connected` and no poller is already running;
+        /// otherwise the just-spawned task is cancelled, so a `shutdown()` racing between spawn and
+        /// store can't leak a task.
+        private func startMetricsPoller() {
+            guard self.configuration.metricsEnabled,
+                let intervalMillis = self.configuration.metricsPollIntervalMillis,
+                intervalMillis > 0
+            else { return }
+
+            // The poller uses Swift Concurrency (`Task` + `Task.sleep`), which this package floors at
+            // macOS 12 / iOS 15. On older platforms the poller silently does not start (documented on
+            // `Configuration.metricsEnabled`); every other feature still works there.
+            guard #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) else { return }
+
+            let gauges = SnapshotGauges(sessionName: self.configuration.metricsSessionName)
+            let intervalNanos = UInt64(intervalMillis) * 1_000_000
+
+            // `weak self` avoids Session -> _poller -> Task -> closure -> Session keeping the session
+            // (and its ticks) alive forever on a consumer that never calls `shutdown()`.
+            let task = Task<Void, Never> { [weak self] in
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(nanoseconds: intervalNanos)
+                    } catch {
+                        break  // cancelled during sleep
+                    }
+                    guard let self else { break }
+                    // Read the snapshot and record the gauges inside the `_poller` lock, gated on the
+                    // stop flag. `stopMetricsPoller()` sets `stopped` under this same lock, so once
+                    // shutdown begins no further tick reads the driver snapshot or records a gauge; and
+                    // because `stopMetricsPoller()` runs before `underlying.close()`, acquiring the lock
+                    // there blocks until any in-flight tick finishes — the read can't overlap `close()`.
+                    // (No `await` under the lock; `_poller` is never held while `_state` is held.)
+                    let didRecord = self._poller.withLockedValue { poller -> Bool in
+                        guard !poller.stopped else { return false }
+                        gauges.record(self.getMetrics())
+                        return true
+                    }
+                    if !didRecord { break }
+                }
+            }
+
+            // Store the just-spawned task under `_poller` only if the session is still `.connected` and
+            // no poller is already running; otherwise cancel it, so a `shutdown()` racing between spawn
+            // and store can't leak a task. Lock order is always `_state` before `_poller`.
+            let stored = self._state.withLockedValue { state -> Bool in
+                guard case .connected = state else { return false }
+                return self._poller.withLockedValue { poller in
+                    guard poller.task == nil, !poller.stopped else { return false }
+                    poller.task = task
+                    return true
+                }
+            }
+            if !stored {
+                task.cancel()
+            }
+        }
+
+        /// Stop the metrics poller before the session closes.
+        ///
+        /// Sets `stopped` and cancels the task under `_poller`. Because the poller tick reads the driver
+        /// snapshot and records gauges *inside* the `_poller` lock, acquiring the lock here blocks until
+        /// any in-flight tick finishes, and the `stopped` flag prevents any later tick from recording —
+        /// so no gauge is recorded once shutdown begins and no tick can overlap `underlying.close()`.
+        /// `shutdown()` calls this before `close()` and never holds `_state` while doing so.
+        private func stopMetricsPoller() {
+            let task = self._poller.withLockedValue { poller -> (any Sendable)? in
+                poller.stopped = true
+                let task = poller.task
+                poller.task = nil
+                return task
+            }
+            if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
+                (task as? Task<Void, Never>)?.cancel()
+            }
+        }
+
         fileprivate struct ConnectionTask: Sendable {
             // `_task` only ever holds a `Task<Void, Error>`, erased to `any Sendable` for availability.
             private let _task: any Sendable
@@ -1530,6 +1624,7 @@ extension CassandraClient.Session {
         case .startedConnecting(let task):
             try await task.task.value
             try self.handleConnectionSucceeded()
+            self.startMetricsPoller()
         case .awaitConnecting(let task):
             try await task.task.value
         case .awaitConnectingFuture(let future):

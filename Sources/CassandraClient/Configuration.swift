@@ -62,6 +62,20 @@ extension CassandraClient {
         public var prepareStrategy: PrepareStrategy?
         public var compact: Bool?
 
+        /// Enables driver metrics emission. Default `false` (off).
+        /// When enabled, the session polls the driver's snapshot and pushes gauges to swift-metrics.
+        public var metricsEnabled: Bool = false
+
+        /// Poller cadence in milliseconds. Default `10000` (10s). `nil` or `0` disables the poller
+        /// while leaving ``metricsEnabled`` on; a `0` interval would busy-loop the poller.
+        /// Requires macOS 12 / iOS 15 or newer; on older platforms the poller does not start.
+        public var metricsPollIntervalMillis: UInt32? = 10000
+
+        /// Optional session name attached as a `session` dimension on every emitted metric.
+        /// Set this to disambiguate metrics when more than one metrics-enabled session runs in a
+        /// process, otherwise their identically-named gauges overwrite each other. `nil` = no dimension.
+        public var metricsSessionName: String? = nil
+
         /// Encryptor for transparent column encryption.
         @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public var encryptor: Encryptor? {
