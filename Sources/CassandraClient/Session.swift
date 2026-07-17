@@ -216,14 +216,17 @@ import NIOCore  // for async-await bridge
 extension CassandraSession {
     /// Terminate the session and free resources.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    @available(
-        *,
-        deprecated,
-        message:
-            "You must implement this function to shutdown async. This default implementation calls the sync shutdown function"
-    )
+    @available(*, deprecated, message: "You must implement this function to shutdown async")
     func shutdownAsync() async throws {
-        try self.shutdown()
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(
+                    with: Result {
+                        try self.shutdown()
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -824,15 +827,18 @@ extension CassandraClient {
             case .alreadyShut:
                 return
             case .waitThenMarkShut(let task):
-                try await task.task.value
-                self._state.withLockedValue { state in
-                    switch state {
-                    case .disconnecting, .disconnectingFuture:
-                        state = .disconnected
-                    default:
-                        preconditionFailure("State changed from disconnecting to not disconnecting unexpectedly")
+                // Defer state change: always change the state to disconnected even if task.value throws
+                defer {
+                    self._state.withLockedValue { state in
+                        switch state {
+                        case .disconnecting, .disconnectingFuture:
+                            state = .disconnected
+                        default:
+                            preconditionFailure("State changed from disconnecting to not disconnecting unexpectedly")
+                        }
                     }
                 }
+                try await task.task.value
             case .waitFuture(let future):
                 try await future.get()
             case .wait(let task):
@@ -845,7 +851,7 @@ extension CassandraClient {
                 switch state {
                 case .connectingFuture, .connecting:
                     state = .connected
-                case .disconnected, .disconnectingFuture:
+                case .disconnected, .disconnecting, .disconnectingFuture:
                     // Shut down while connecting, stay disconnected
                     throw Error.disconnected
                 case .idle, .connected:
