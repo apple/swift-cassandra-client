@@ -22,15 +22,18 @@ import XCTest
 final class Tests: XCTestCase {
     var cassandraClient: CassandraClient!
     var configuration: CassandraClient.Configuration!
+    var cassandraHost: String!
 
     override func setUp() {
         super.setUp()
 
         let env = ProcessInfo.processInfo.environment
         let keyspace = env["CASSANDRA_KEYSPACE"] ?? "test"
+        let host = env["CASSANDRA_HOST"] ?? "127.0.0.1"
+        self.cassandraHost = host
         self.configuration = CassandraClient.Configuration(
             contactPointsProvider: { callback in
-                callback(.success([env["CASSANDRA_HOST"] ?? "127.0.0.1"]))
+                callback(.success([host]))
             },
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
@@ -180,6 +183,53 @@ final class Tests: XCTestCase {
             XCTAssertEqual(error as? CassandraClient.Error, CassandraClient.Error.disconnected)
         }
         XCTAssertNoThrow(try cassandraClient.shutdown())
+    }
+
+    // A connection that completes *after* `shutdown()` must not resurrect the session
+    // back to `.connected`.
+    //
+    // The race is made deterministic by a `contactPointsProvider` that parks the connect
+    // (it stashes the callback instead of completing it), so the connect is guaranteed to
+    // still be in flight when `shutdown()` runs, and completes only when we say so.
+    func testShutdownDuringInFlightConnectDoesNotResurrectSession() throws {
+        final class CallbackBox: @unchecked Sendable {
+            var callback: ((Result<CassandraClient.Configuration.ContactPoints, Swift.Error>) -> Void)?
+        }
+
+        let box = CallbackBox()
+        let connectStarted = self.expectation(description: "connect started")
+
+        // Connect without a keyspace so the connect always succeeds against a running
+        // node regardless of which keyspaces exist — the resurrection only happens on a
+        // *successful* connect, so the connect must reliably succeed.
+        var configuration: CassandraClient.Configuration = self.configuration
+        configuration.keyspace = nil
+        configuration.contactPointsProvider = { callback in
+            box.callback = callback
+            connectStarted.fulfill()
+        }
+
+        let client = CassandraClient(
+            eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton),
+            configuration: configuration
+        )
+
+        // Kick off a request: it triggers a connect that parks in our provider.
+        let future = client.run("select release_version from system.local;")
+        self.wait(for: [connectStarted], timeout: 1.0)
+
+        // Owner shuts the session down while the connect is still in flight.
+        XCTAssertNoThrow(try client.shutdown())
+
+        // Now let the (real) connect complete successfully.
+        let callback = try XCTUnwrap(box.callback)
+        callback(.success([self.cassandraHost]))
+
+        // The in-flight request must fail with `.disconnected` rather than run against —
+        // and resurrect — a session the owner already tore down.
+        XCTAssertThrowsError(try future.wait()) { error in
+            XCTAssertEqual(error as? CassandraClient.Error, .disconnected)
+        }
     }
 
     func testKeyspace() {

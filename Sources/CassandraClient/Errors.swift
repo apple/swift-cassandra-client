@@ -497,6 +497,38 @@ extension CassandraClient {
             }
         }
 
+        /// Coarse failure category, used to choose a log level (and, later, a metric tag).
+        /// Total over every case; `server` is the explicit default so no failure is left uncategorized.
+        internal var category: CassandraClient.ErrorCategory {
+            switch self.code {
+            case .requestTimedOut, .readTimeout, .writeTimeout, .serverOverloaded, .serverBootstrapping:
+                return .transient
+            case .noHostsAvailable, .serverUnavailable, .unableToConnect, .hostResolution:
+                return .unavailable
+            case .syntaxError, .invalidQuery, .unauthorized, .badCredentials,
+                .badParams, .invalidValueType, .invalidItemCount, .parameterUnset,
+                .indexOutOfBounds, .nameDoesNotExist, .noPagingState, .nullValue,
+                .encryptionConfigError, .keyNotFound:
+                return .callerFault
+            case .invalidFutureType, .invalidErrorResultType, .callbackAlreadySet, .internalError:
+                return .wrapperInternal
+            // Explicit `server` bucket (no `default:`) so a newly-added `Error.Code` fails to compile until it
+            // is deliberately categorised — this function is the single source of truth reused by metrics.
+            case .serverError, .protocolError, .readFailure, .writeFailure, .functionFailure, .truncateError,
+                .alreadyExists, .serverConfigError, .requestQueueFull, .unprepared,
+                .sslInvalidCert, .sslInvalidPrivateKey, .sslNoPeerCert, .sslInvalidPeerCert,
+                .sslIdentityMismatch, .sslProtocolError, .sslClosed,
+                .encryptionError, .decryptionError,
+                .noStreams, .unableToInit, .messageEncode, .unexpectedResponse, .noAvailableIOThread,
+                .writeError, .unableToSetKeyspace, .invalidStatementType, .unableToDetermineProtocol,
+                .notImplemented, .unableToClose, .invalidCustomType, .invalidData, .notEnoughData,
+                .invalidState, .noCustomPayload,
+                .rowsExhausted, .disconnected, .concurrentPaginationUnsupported,
+                .other:
+                return .server
+            }
+        }
+
         /// All rows for a query result have been consumed.
         public static let rowsExhausted = Error(code: .rowsExhausted)
 
@@ -772,5 +804,22 @@ extension CassandraClient {
         public var description: String {
             "Configuration error: \(self.message)"
         }
+    }
+}
+
+extension CassandraClient {
+    /// Coarse failure category for a ``CassandraClient/Error``. Consumed by the log level and (later) a
+    /// metric tag, so the two can never disagree about a failure's kind.
+    internal enum ErrorCategory: String {
+        /// Routine / retryable (timeouts, overloaded, bootstrapping). Logged at `.debug`.
+        case transient
+        /// Exhausted availability — can't reach the cluster. Logged at `.warning`.
+        case unavailable
+        /// Programming / bad-input error (syntax, bad params, encryption config). Logged at `.warning`.
+        case callerFault
+        /// Server / unexpected (the default bucket). Logged at `.warning`.
+        case server
+        /// Wrapper invariant ("shouldn't happen"). Logged at `.error`. Raw value is `"internal"`.
+        case wrapperInternal = "internal"
     }
 }

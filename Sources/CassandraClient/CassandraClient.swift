@@ -41,7 +41,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     }
 
     private let configuration: Configuration
-    private let logger: Logger
+    public let logger: Logger
     private let defaultSession: Session
     private let isShutdown = ManagedAtomic<Bool>(false)
 
