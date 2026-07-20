@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+import OTelSemanticConventions
 import Tracing
 
 extension CassandraClient {
@@ -19,11 +20,11 @@ extension CassandraClient {
     /// with an in-memory tracer and a synthesized error — no cluster.
     internal enum RequestTrace {
         /// Wrap an async request body in a `.client` span carrying the OpenTelemetry DB attributes, recording a
-        /// sanitized error status on throw, and rethrowing the original error unchanged.
+        /// sanitized error status on failure, and rethrowing the original error unchanged.
         ///
-        /// Uses a *manual* span (not the `withSpan` closure) deliberately: it avoids the operation-closure
-        /// `@Sendable` capture question for the non-`Sendable` `Statement`, and it avoids `withSpan`'s
-        /// auto-`recordError`, which would serialize the raw `Error.description` (the server message is PII).
+        /// The operation closure returns a `Result` rather than throwing so that `withSpan`'s built-in error
+        /// recording never runs — it would serialize the raw `Error.description`, which embeds the
+        /// server-provided message (PII). We record only the code label + shared category ourselves.
         @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         static func traced<Value>(
             _ operation: SpanName,
@@ -32,46 +33,45 @@ extension CassandraClient {
             keyspace: String?,
             _ body: () async throws -> Value
         ) async throws -> Value {
-            var span = InstrumentationSystem.tracer.startAnySpan(operation.label, ofKind: .client)
-            defer { span.end() }
-
-            // Skip all attribute/string work when the span isn't recording (e.g. the NoOp tracer or a
-            // sampled-out span), so the disabled path stays cheap.
-            if span.isRecording {
-                span.attributes[TraceAttributeKey.system] = "cassandra"
-                span.attributes[TraceAttributeKey.operation] = operation.operation
-                if let query {
-                    span.attributes[TraceAttributeKey.queryText] = query
-                }
-                if let keyspace {
-                    span.attributes[TraceAttributeKey.namespace] = keyspace
-                }
-                if let consistency {
-                    span.attributes[TraceAttributeKey.consistencyLevel] = Self.otelToken(consistency)
-                }
-            }
-
-            do {
-                return try await body()
-            } catch {
+            // Use `withSpan` for span lifecycle + task-local context propagation. The operation closure
+            // returns a `Result` instead of throwing, so `withSpan`'s built-in error recording — which would
+            // serialize the raw `Error.description` (the server-provided message, PII) — never fires; we record
+            // a sanitized status ourselves and rethrow the original error to the caller.
+            let result: Result<Value, Swift.Error> = await withSpan(operation.label, ofKind: .client) { span in
                 if span.isRecording {
-                    // PII: never hand the raw error to the span — `Error.description` embeds the server message.
-                    // Set the status from the code label only, and tag the shared failure category
-                    // (`db.cassandra.error.category`).
-                    if let cassError = error as? CassandraClient.Error {
-                        span.setStatus(SpanStatus(code: .error, message: cassError.shortDescription))
-                        span.attributes[TraceAttributeKey.errorCategory] = cassError.category.rawValue
-                    } else {
-                        span.setStatus(SpanStatus(code: .error))
+                    span.attributes.db.system.name = .init(rawValue: "cassandra")
+                    span.attributes.db.operation.name = operation.operation
+                    if let query {
+                        span.attributes.db.query.text = query
+                    }
+                    if let keyspace {
+                        span.attributes.db.namespace = keyspace
+                    }
+                    if let consistency {
+                        span.attributes[TraceAttributeKey.consistencyLevel] = Self.otelToken(consistency)
                     }
                 }
-                throw error
+                do {
+                    return .success(try await body())
+                } catch {
+                    if span.isRecording {
+                        // PII: never hand the raw error to the span — `Error.description` embeds the server
+                        // message. Record the code label only, plus the shared failure category.
+                        if let cassError = error as? CassandraClient.Error {
+                            span.setStatus(SpanStatus(code: .error, message: cassError.shortDescription))
+                            span.attributes[TraceAttributeKey.errorCategory] = cassError.category.rawValue
+                        } else {
+                            span.setStatus(SpanStatus(code: .error))
+                        }
+                    }
+                    return .failure(error)
+                }
             }
+            return try result.get()
         }
 
-        /// Map a consistency level to its OpenTelemetry `db.cassandra.consistency_level` token. Kept here (not a
-        /// `CustomStringConvertible` on the public ``CassandraClient/Consistency``) and exhaustive, so a new
-        /// enum case can't silently emit a wrong string.
+        /// Map a consistency level to its OpenTelemetry `cassandra.consistency.level` token — exhaustive, so a
+        /// new ``CassandraClient/Consistency`` case can't silently emit a wrong string.
         static func otelToken(_ consistency: CassandraClient.Consistency) -> String {
             switch consistency {
             case .any: return "any"

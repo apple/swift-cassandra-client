@@ -21,7 +21,7 @@ import XCTest
 // Tracing tests: client-side span behaviour for the async execute / prepare / batch path.
 //
 // Prerequisites for a green run:
-//  1. The failure attribute key is asserted as `db.cassandra.error.category` (the same "errorCategory"
+//  1. The failure attribute key is asserted as `cassandra.error.category` (the same "errorCategory"
 //     concept logging emits as `request.errorCategory` and metrics tag as `errorCategory`; value is
 //     `Error.category.rawValue`). The tracing helper must emit that key, not `error.type`.
 //  2. `swift-distributed-tracing` must resolve so `RequestTrace` and the in-memory tracer
@@ -62,11 +62,11 @@ final class TracingUnitTests: XCTestCase {
             XCTAssertEqual(span.attributes["db.operation.name"], "execute")
             XCTAssertEqual(span.attributes["db.query.text"], "SELECT id FROM t WHERE id = ?")
             XCTAssertEqual(span.attributes["db.namespace"], "shop")
-            XCTAssertEqual(span.attributes["db.cassandra.consistency_level"], "local_one")
+            XCTAssertEqual(span.attributes["cassandra.consistency.level"], "local_one")
             // Bound values are never attached; a success carries no error status/category.
             XCTAssertNil(span.attributes["db.query.parameters"])
             XCTAssertNil(span.statusCode)
-            XCTAssertNil(span.attributes["db.cassandra.error.category"])
+            XCTAssertNil(span.attributes["cassandra.error.category"])
         }
     }
 
@@ -82,7 +82,7 @@ final class TracingUnitTests: XCTestCase {
 
             let span = try XCTUnwrap(SharedTestTracer.instance.recorded.first)
             XCTAssertEqual(span.attributes["db.operation.name"], "prepare")
-            XCTAssertNil(span.attributes["db.cassandra.consistency_level"], "omit, do not fabricate 'default'")
+            XCTAssertNil(span.attributes["cassandra.consistency.level"], "omit, do not fabricate 'default'")
             XCTAssertNil(span.attributes["db.namespace"])
         }
     }
@@ -125,7 +125,7 @@ final class TracingUnitTests: XCTestCase {
 
             let span = try XCTUnwrap(SharedTestTracer.instance.recorded.first)
             XCTAssertEqual(span.statusCode, .error)
-            XCTAssertEqual(span.attributes["db.cassandra.error.category"], thrown.category.rawValue)
+            XCTAssertEqual(span.attributes["cassandra.error.category"], thrown.category.rawValue)
             // PII: neither the status message nor any recorded error may carry the server text.
             XCTAssertEqual(span.statusMessage, thrown.shortDescription)
             XCTAssertFalse((span.statusMessage ?? "").contains("secret keyspace"))
@@ -156,7 +156,7 @@ final class TracingUnitTests: XCTestCase {
             XCTAssertTrue(caught is Boom, "the original non-Cassandra error is rethrown unchanged")
             let span = try XCTUnwrap(SharedTestTracer.instance.recorded.first)
             XCTAssertEqual(span.statusCode, .error)
-            XCTAssertNil(span.attributes["db.cassandra.error.category"], "no category for a non-Cassandra error")
+            XCTAssertNil(span.attributes["cassandra.error.category"], "no category for a non-Cassandra error")
             XCTAssertNil(span.statusMessage, "no message set for a non-Cassandra error")
         }
     }
@@ -257,7 +257,7 @@ final class TracingIntegrationTests: XCTestCase {
                 let span = try XCTUnwrap(self.executeSpans.first)
                 XCTAssertEqual(span.statusCode, .error)
                 XCTAssertEqual(
-                    span.attributes["db.cassandra.error.category"],
+                    span.attributes["cassandra.error.category"],
                     "callerFault",
                     "syntax error -> callerFault via the shared categoriser"
                 )
@@ -399,7 +399,7 @@ final class TracingIntegrationTests: XCTestCase {
                 XCTAssertEqual(prepareSpan.kind, .client)
                 XCTAssertEqual(prepareSpan.attributes["db.operation.name"], "prepare")
                 XCTAssertEqual(prepareSpan.attributes["db.query.text"], cql)
-                XCTAssertNil(prepareSpan.attributes["db.cassandra.consistency_level"])
+                XCTAssertNil(prepareSpan.attributes["cassandra.consistency.level"])
 
                 // Executing the prepared statement: the EXECUTE span shows real CQL, and there is exactly one.
                 SharedTestTracer.instance.reset()
@@ -481,7 +481,7 @@ final class TracingIntegrationTests: XCTestCase {
                 XCTAssertEqual(span.attributes["db.system.name"], "cassandra")
                 XCTAssertEqual(span.attributes["db.operation.name"], "batch")
                 XCTAssertEqual(span.attributes["db.query.text"], "batch")
-                XCTAssertNil(span.attributes["db.cassandra.consistency_level"], "batch carries no consistency")
+                XCTAssertNil(span.attributes["cassandra.consistency.level"], "batch carries no consistency")
                 XCTAssertNil(span.statusCode)
             },
             30.0
@@ -530,13 +530,13 @@ final class TracingIntegrationTests: XCTestCase {
                     options: .init(consistency: .one)
                 )
                 _ = try await client.execute(statement: explicit)
-                XCTAssertEqual(self.executeSpans.first?.attributes["db.cassandra.consistency_level"], "one")
+                XCTAssertEqual(self.executeSpans.first?.attributes["cassandra.consistency.level"], "one")
 
                 // No statement-level consistency -> the config default is used.
                 SharedTestTracer.instance.reset()
                 let inherited = try CassandraClient.Statement(query: "select release_version from system.local")
                 _ = try await client.execute(statement: inherited)
-                XCTAssertEqual(self.executeSpans.first?.attributes["db.cassandra.consistency_level"], "quorum")
+                XCTAssertEqual(self.executeSpans.first?.attributes["cassandra.consistency.level"], "quorum")
             },
             30.0
         )

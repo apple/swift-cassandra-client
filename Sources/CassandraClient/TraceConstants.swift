@@ -41,17 +41,14 @@ extension CassandraClient {
         }
     }
 
-    /// OpenTelemetry span attribute keys (frozen — a de-facto public contract; trace backends bind to them).
-    /// Target: the stabilized OpenTelemetry DB semantic conventions. Named `TraceAttributeKey` (not
-    /// `SpanAttributeKey`) to avoid confusion with `Tracing`'s own `SpanAttribute`/`SpanAttributes`.
+    /// Attribute keys not taken from swift-otel-semantic-conventions' stable `db.*` API. The Cassandra
+    /// (`cassandra.*`) attributes are gated behind that package's non-default `Experimental` trait (they're
+    /// UNSTABLE upstream), so we emit them as our own constants rather than depend on an experimental surface.
     internal enum TraceAttributeKey {
-        static let system = "db.system.name"
-        static let operation = "db.operation.name"
-        static let queryText = "db.query.text"
-        static let namespace = "db.namespace"
-        static let consistencyLevel = "db.cassandra.consistency_level"
+        /// Current OTel key (`db.cassandra.consistency_level` is deprecated upstream in favor of this).
+        static let consistencyLevel = "cassandra.consistency.level"
         /// Shared failure classification — the same concept logging emits as `request.errorCategory` and
         /// metrics tag as `errorCategory`; value is the ``CassandraClient/Error`` category (`category.rawValue`).
-        static let errorCategory = "db.cassandra.error.category"
+        static let errorCategory = "cassandra.error.category"
     }
 }
