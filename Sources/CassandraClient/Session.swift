@@ -35,6 +35,9 @@ import NIOCore  // for async-await bridge
     /// The default keyspace for this session, used to resolve unqualified table names.
     var keyspace: String? { get }
 
+    /// The default `Logger` for this session/client, used when a call site passes no explicit logger.
+    var logger: Logger { get }
+
     /// Execute a prepared statement.
     ///
     /// **All** rows are returned.
@@ -233,6 +236,10 @@ extension CassandraSession {
 private let encryptionLogger = Logger(label: "cassandra.encryption")
 
 extension CassandraSession {
+    /// Fallback for conformers that don't provide their own logger. `CassandraClient` and `Session` witness
+    /// this with their configured logger, so this only applies to third-party conformances.
+    public var logger: Logger { Logger(label: "com.apple.cassandra") }
+
     private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger?) {
         if count > 0, options.hasEncryptionOptions {
             (logger ?? encryptionLogger).debug(
@@ -388,6 +395,15 @@ extension CassandraSession {
             }
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
+            if let cassError = error as? CassandraClient.Error {
+                CassandraClient.RequestLog.logFailure(
+                    cassError,
+                    query: query,
+                    consistency: nil,
+                    startedAt: nil,
+                    logger: logger ?? self.logger
+                )
+            }
             let eventLoop = eventLoop ?? eventLoopGroup.next()
             return eventLoop.makeFailedFuture(error)
         }
@@ -413,6 +429,15 @@ extension CassandraSession {
             }
             return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
         } catch {
+            if let cassError = error as? CassandraClient.Error {
+                CassandraClient.RequestLog.logFailure(
+                    cassError,
+                    query: query,
+                    consistency: nil,
+                    startedAt: nil,
+                    logger: logger ?? self.logger
+                )
+            }
             let eventLoop = eventLoop ?? eventLoopGroup.next()
             return eventLoop.makeFailedFuture(error)
         }
@@ -450,6 +475,7 @@ extension CassandraSession {
                 )
                 statement = try CassandraClient.Statement(
                     preparedRawPointer: prepared.bind(),
+                    query: prepared.query,
                     parameters: parameters,
                     options: options,
                     _encryptor: self.encryptor
@@ -457,6 +483,7 @@ extension CassandraSession {
             } else {
                 statement = try CassandraClient.Statement(
                     preparedRawPointer: prepared.bind(),
+                    query: prepared.query,
                     parameters: parameters,
                     options: options,
                     _encryptor: nil
@@ -464,6 +491,15 @@ extension CassandraSession {
             }
             return self.execute(statement: statement, on: eventLoop, logger: logger)
         } catch {
+            if let cassError = error as? CassandraClient.Error {
+                CassandraClient.RequestLog.logFailure(
+                    cassError,
+                    query: prepared.query,
+                    consistency: nil,
+                    startedAt: nil,
+                    logger: logger ?? self.logger
+                )
+            }
             let eventLoop = eventLoop ?? eventLoopGroup.next()
             return eventLoop.makeFailedFuture(error)
         }
@@ -715,10 +751,21 @@ extension CassandraClient {
         }
 
         private let configuration: Configuration
-        private let logger: Logger
+        public let logger: Logger
         private let _state = NIOLockedValueBox(State.idle)
+        private let _poller = NIOLockedValueBox(PollerHandle())
 
         private let underlying: CassSession
+
+        /// The running metrics poller task, plus a stop flag. Guarded by `_poller`.
+        /// `task` holds a `Task<Void, Never>`, erased to `any Sendable` for availability — the task is
+        /// only created on macOS 12+, but `shutdown()`/`deinit` that touch this handle are not gated.
+        private struct PollerHandle {
+            var task: (any Sendable)?
+            /// Set by `stopMetricsPoller()` under the lock; the tick reads the driver snapshot and
+            /// records gauges only while this is `false`, so no gauge is recorded once shutdown begins.
+            var stopped = false
+        }
 
         private enum State {
             case idle
@@ -778,6 +825,7 @@ extension CassandraClient {
             case .wait(let future):
                 try future.wait()
             case .disconnectThenMarkShut(let promise):
+                self.stopMetricsPoller()
                 let future = self.underlying.close()
                 do {
                     try future.syncWait()
@@ -908,6 +956,7 @@ extension CassandraClient {
                 return future.flatMap { _ -> EventLoopFuture<Result> in
                     do {
                         try self.handleConnectionSucceeded()
+                        self.startMetricsPoller()
                         return body(eventLoop, logger)
                     } catch {
                         return eventLoop.makeFailedFuture(error)
@@ -946,9 +995,26 @@ extension CassandraClient {
             nonisolated(unsafe) let statement = statement
             return self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("executing: \(statement.query)")
-                logger.trace("\(statement.parameters)")
+                if self.configuration.logBoundValues {
+                    logger.trace("\(statement.parameters)")
+                }
+                // Capture only Sendable values before bridging — never `statement` into the completion.
+                let query = statement.query
+                let consistency = statement.options.consistency ?? self.configuration.consistency
+                let boundValues =
+                    self.configuration.logBoundValues
+                    ? CassandraClient.RequestLog.formatValues(statement.parameters) : nil
+                let startedAt = DispatchTime.now()
                 let future = self.underlying.execute(statement: statement)
-                return future.asNIOFuture(eventLoop: eventLoop)
+                return CassandraClient.RequestLog.instrument(
+                    future.asNIOFuture(eventLoop: eventLoop),
+                    startedAt: startedAt,
+                    query: query,
+                    consistency: consistency,
+                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    boundValues: boundValues,
+                    logger: logger
+                )
             }
         }
 
@@ -963,6 +1029,15 @@ extension CassandraClient {
             do {
                 try statement.setPagingSize(pageSize)
             } catch {
+                if let cassError = error as? CassandraClient.Error {
+                    CassandraClient.RequestLog.logFailure(
+                        cassError,
+                        query: statement.query,
+                        consistency: nil,
+                        startedAt: nil,
+                        logger: logger ?? self.logger
+                    )
+                }
                 return eventLoop.makeFailedFuture(error)
             }
 
@@ -979,16 +1054,39 @@ extension CassandraClient {
         ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
             self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("preparing: \(query)")
+                let startedAt = DispatchTime.now()
                 let future = self.underlying.prepare(query: query)
-                return future.asNIOFuture(eventLoop: eventLoop).flatMapThrowing { prepared in
+                let bridged = CassandraClient.RequestLog.instrument(
+                    future.asNIOFuture(eventLoop: eventLoop),
+                    startedAt: startedAt,
+                    query: query,
+                    consistency: nil,
+                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    logger: logger
+                )
+                return bridged.flatMapThrowing { prepared in
                     let pkColumns: [String]
                     if let tableName = encryptionTable {
-                        pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+                        do {
+                            pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+                        } catch {
+                            if let cassError = error as? CassandraClient.Error {
+                                CassandraClient.RequestLog.logFailure(
+                                    cassError,
+                                    query: query,
+                                    consistency: nil,
+                                    startedAt: nil,
+                                    logger: logger
+                                )
+                            }
+                            throw error
+                        }
                     } else {
                         pkColumns = []
                     }
                     let prepared = CassandraClient.PreparedStatement(
                         rawPointer: prepared,
+                        query: query,
                         encryptionTable: encryptionTable,
                         primaryKeyColumnNames: pkColumns
                     )
@@ -1182,6 +1280,7 @@ extension CassandraClient {
                     )
                     statement = try CassandraClient.Statement(
                         preparedRawPointer: prepared.bind(),
+                        query: prepared.query,
                         parameters: resolvedParameters,
                         options: options,
                         _encryptor: self.encryptor
@@ -1189,6 +1288,7 @@ extension CassandraClient {
                 } else {
                     statement = try CassandraClient.Statement(
                         preparedRawPointer: prepared.bind(),
+                        query: prepared.query,
                         parameters: parameters,
                         options: options,
                         _encryptor: nil
@@ -1196,6 +1296,15 @@ extension CassandraClient {
                 }
                 return self.execute(statement: statement, on: eventLoop, logger: logger)
             } catch {
+                if let cassError = error as? CassandraClient.Error {
+                    CassandraClient.RequestLog.logFailure(
+                        cassError,
+                        query: prepared.query,
+                        consistency: nil,
+                        startedAt: nil,
+                        logger: logger ?? self.logger
+                    )
+                }
                 let eventLoop = eventLoop ?? self.eventLoopGroup.next()
                 return eventLoop.makeFailedFuture(error)
             }
@@ -1211,8 +1320,16 @@ extension CassandraClient {
             nonisolated(unsafe) var optionalBatch: CassandraClient.Batch? = batch
             return self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
                 logger.debug("executing batch")
+                let startedAt = DispatchTime.now()
                 let future = self.underlying.execute(batch: optionalBatch.take()!)
-                return future.asNIOFuture(eventLoop: eventLoop)
+                return CassandraClient.RequestLog.instrument(
+                    future.asNIOFuture(eventLoop: eventLoop),
+                    startedAt: startedAt,
+                    query: "batch",
+                    consistency: nil,
+                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    logger: logger
+                )
             }
         }
 
@@ -1251,6 +1368,7 @@ extension CassandraClient {
                         )
                         return try CassandraClient.Statement(
                             preparedRawPointer: prepared.bind(),
+                            query: prepared.query,
                             parameters: resolvedParameters,
                             options: options,
                             _encryptor: self.encryptor
@@ -1263,6 +1381,15 @@ extension CassandraClient {
                 try build(&batch)
                 return self.execute(batch: batch, on: eventLoop, logger: logger)
             } catch {
+                if let cassError = error as? CassandraClient.Error {
+                    CassandraClient.RequestLog.logFailure(
+                        cassError,
+                        query: "batch",
+                        consistency: nil,
+                        startedAt: nil,
+                        logger: logger ?? self.logger
+                    )
+                }
                 let eventLoop = eventLoop ?? eventLoopGroup.next()
                 return eventLoop.makeFailedFuture(error)
             }
@@ -1270,12 +1397,22 @@ extension CassandraClient {
 
         private func connect(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Void> {
             logger.debug("connecting to: \(self.configuration)")
-
-            return self.configuration.makeCluster(on: eventLoop)
+            let startedAt = DispatchTime.now()
+            // Instrument the whole chain so a `makeCluster` failure (SSL / contact-point / credentials) is
+            // logged too, not just a driver-connect failure.
+            let connected = self.configuration.makeCluster(on: eventLoop)
                 .flatMap { cluster in
-                    let future = self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
-                    return future.asNIOFuture(eventLoop: eventLoop)
+                    self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
+                        .asNIOFuture(eventLoop: eventLoop)
                 }
+            return CassandraClient.RequestLog.instrument(
+                connected,
+                startedAt: startedAt,
+                query: nil,
+                consistency: nil,
+                thresholdMillis: nil,
+                logger: logger
+            )
         }
 
         @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -1286,6 +1423,87 @@ extension CassandraClient {
 
         func getMetrics() -> CassandraMetrics {
             self.underlying.getMetrics()
+        }
+
+        /// Start the driver-snapshot metrics poller, if enabled.
+        ///
+        /// Called from the connect starter's branch once the compare-and-set to `.connected` wins.
+        /// Spawns an async `Task` that sleeps then polls on the configured cadence, then stores it
+        /// under `_poller` only if the session is still `.connected` and no poller is already running;
+        /// otherwise the just-spawned task is cancelled, so a `shutdown()` racing between spawn and
+        /// store can't leak a task.
+        private func startMetricsPoller() {
+            guard self.configuration.metricsEnabled,
+                let intervalMillis = self.configuration.metricsPollIntervalMillis,
+                intervalMillis > 0
+            else { return }
+
+            // The poller uses Swift Concurrency (`Task` + `Task.sleep`), which this package floors at
+            // macOS 12 / iOS 15. On older platforms the poller silently does not start (documented on
+            // `Configuration.metricsEnabled`); every other feature still works there.
+            guard #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) else { return }
+
+            let gauges = SnapshotGauges(sessionName: self.configuration.metricsSessionName)
+            let intervalNanos = UInt64(intervalMillis) * 1_000_000
+
+            // `weak self` avoids Session -> _poller -> Task -> closure -> Session keeping the session
+            // (and its ticks) alive forever on a consumer that never calls `shutdown()`.
+            let task = Task<Void, Never> { [weak self] in
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(nanoseconds: intervalNanos)
+                    } catch {
+                        break  // cancelled during sleep
+                    }
+                    guard let self else { break }
+                    // Read the snapshot and record the gauges inside the `_poller` lock, gated on the
+                    // stop flag. `stopMetricsPoller()` sets `stopped` under this same lock, so once
+                    // shutdown begins no further tick reads the driver snapshot or records a gauge; and
+                    // because `stopMetricsPoller()` runs before `underlying.close()`, acquiring the lock
+                    // there blocks until any in-flight tick finishes — the read can't overlap `close()`.
+                    // (No `await` under the lock; `_poller` is never held while `_state` is held.)
+                    let didRecord = self._poller.withLockedValue { poller -> Bool in
+                        guard !poller.stopped else { return false }
+                        gauges.record(self.getMetrics())
+                        return true
+                    }
+                    if !didRecord { break }
+                }
+            }
+
+            // Store the just-spawned task under `_poller` only if the session is still `.connected` and
+            // no poller is already running; otherwise cancel it, so a `shutdown()` racing between spawn
+            // and store can't leak a task. Lock order is always `_state` before `_poller`.
+            let stored = self._state.withLockedValue { state -> Bool in
+                guard case .connected = state else { return false }
+                return self._poller.withLockedValue { poller in
+                    guard poller.task == nil, !poller.stopped else { return false }
+                    poller.task = task
+                    return true
+                }
+            }
+            if !stored {
+                task.cancel()
+            }
+        }
+
+        /// Stop the metrics poller before the session closes.
+        ///
+        /// Sets `stopped` and cancels the task under `_poller`. Because the poller tick reads the driver
+        /// snapshot and records gauges *inside* the `_poller` lock, acquiring the lock here blocks until
+        /// any in-flight tick finishes, and the `stopped` flag prevents any later tick from recording —
+        /// so no gauge is recorded once shutdown begins and no tick can overlap `underlying.close()`.
+        /// `shutdown()` calls this before `close()` and never holds `_state` while doing so.
+        private func stopMetricsPoller() {
+            let task = self._poller.withLockedValue { poller -> (any Sendable)? in
+                poller.stopped = true
+                let task = poller.task
+                poller.task = nil
+                return task
+            }
+            if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
+                (task as? Task<Void, Never>)?.cancel()
+            }
         }
 
         fileprivate struct ConnectionTask: Sendable {
@@ -1490,6 +1708,7 @@ extension CassandraClient.Session {
         case .startedConnecting(let task):
             try await task.task.value
             try self.handleConnectionSucceeded()
+            self.startMetricsPoller()
         case .awaitConnecting(let task):
             try await task.task.value
         case .awaitConnectingFuture(let future):
@@ -1517,9 +1736,25 @@ extension CassandraClient.Session {
     {
         try await self.withConnection(logger: logger) { logger in
             logger.debug("executing: \(statement.query)")
-            logger.trace("\(statement.parameters)")
-            let future = self.underlying.execute(statement: statement)
-            return try await future.await()
+            if self.configuration.logBoundValues {
+                logger.trace("\(statement.parameters)")
+            }
+            let query = statement.query
+            let consistency = statement.options.consistency ?? self.configuration.consistency
+            let boundValues =
+                self.configuration.logBoundValues
+                ? CassandraClient.RequestLog.formatValues(statement.parameters) : nil
+            let startedAt = DispatchTime.now()
+            return try await CassandraClient.RequestLog.instrumented(
+                startedAt: startedAt,
+                query: query,
+                consistency: consistency,
+                thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                boundValues: boundValues,
+                logger: logger
+            ) {
+                try await self.underlying.execute(statement: statement).await()
+            }
         }
     }
 
@@ -1529,7 +1764,20 @@ extension CassandraClient.Session {
         pageSize: Int32,
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
-        try statement.setPagingSize(pageSize)
+        do {
+            try statement.setPagingSize(pageSize)
+        } catch {
+            if let cassError = error as? CassandraClient.Error {
+                CassandraClient.RequestLog.logFailure(
+                    cassError,
+                    query: statement.query,
+                    consistency: nil,
+                    startedAt: nil,
+                    logger: logger ?? self.logger
+                )
+            }
+            throw error
+        }
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
     }
 
@@ -1542,8 +1790,16 @@ extension CassandraClient.Session {
         var optionalBatch: CassandraClient.Batch? = batch
         try await self.withConnection(logger: logger) { logger in
             logger.debug("executing batch")
-            let future = self.underlying.execute(batch: optionalBatch.take()!)
-            try await future.await()
+            let startedAt = DispatchTime.now()
+            try await CassandraClient.RequestLog.instrumented(
+                startedAt: startedAt,
+                query: "batch",
+                consistency: nil,
+                thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                logger: logger
+            ) {
+                try await self.underlying.execute(batch: optionalBatch.take()!).await()
+            }
         }
     }
 
@@ -1580,6 +1836,7 @@ extension CassandraClient.Session {
                 )
                 return try CassandraClient.Statement(
                     preparedRawPointer: prepared.bind(),
+                    query: prepared.query,
                     parameters: resolvedParameters,
                     options: options,
                     _encryptor: self.encryptor
@@ -1588,8 +1845,23 @@ extension CassandraClient.Session {
         } else {
             resolver = nil
         }
-        var batch = try CassandraClient.Batch(configuration: configuration, resolver: resolver)
-        try await build(&batch)
+        let batch: CassandraClient.Batch
+        do {
+            var built = try CassandraClient.Batch(configuration: configuration, resolver: resolver)
+            try await build(&built)
+            batch = built
+        } catch {
+            if let cassError = error as? CassandraClient.Error {
+                CassandraClient.RequestLog.logFailure(
+                    cassError,
+                    query: "batch",
+                    consistency: nil,
+                    startedAt: nil,
+                    logger: logger ?? self.logger
+                )
+            }
+            throw error
+        }
         try await self.execute(batch: batch, logger: logger)
     }
 
@@ -1601,16 +1873,39 @@ extension CassandraClient.Session {
     ) async throws -> CassandraClient.PreparedStatement {
         let prepared: CassPrepared = try await self.withConnection(logger: logger) { logger in
             logger.debug("preparing: \(query)")
-            return try await self.underlying.prepare(query: query).await()
+            let startedAt = DispatchTime.now()
+            return try await CassandraClient.RequestLog.instrumented(
+                startedAt: startedAt,
+                query: query,
+                consistency: nil,
+                thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                logger: logger
+            ) {
+                try await self.underlying.prepare(query: query).await()
+            }
         }
         let pkColumns: [String]
         if let tableName = encryptionTable {
-            pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+            do {
+                pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
+            } catch {
+                if let cassError = error as? CassandraClient.Error {
+                    CassandraClient.RequestLog.logFailure(
+                        cassError,
+                        query: query,
+                        consistency: nil,
+                        startedAt: nil,
+                        logger: logger ?? self.logger
+                    )
+                }
+                throw error
+            }
         } else {
             pkColumns = []
         }
         return CassandraClient.PreparedStatement(
             rawPointer: prepared,
+            query: query,
             encryptionTable: encryptionTable,
             primaryKeyColumnNames: pkColumns
         )
@@ -1624,30 +1919,45 @@ extension CassandraClient.Session {
         logger: Logger? = .none
     ) async throws -> CassandraClient.Rows {
         let statement: CassandraClient.Statement
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            let resolvedParameters = try self.resolveEncryptionContexts(
-                prepared: prepared,
-                parameters: parameters,
-                options: options
-            )
-            try self.validateEncryptionBindings(
-                prepared: prepared,
-                parameters: resolvedParameters,
-                options: options
-            )
-            statement = try CassandraClient.Statement(
-                preparedRawPointer: prepared.bind(),
-                parameters: resolvedParameters,
-                options: options,
-                _encryptor: self.encryptor
-            )
-        } else {
-            statement = try CassandraClient.Statement(
-                preparedRawPointer: prepared.bind(),
-                parameters: parameters,
-                options: options,
-                _encryptor: nil
-            )
+        do {
+            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
+                let resolvedParameters = try self.resolveEncryptionContexts(
+                    prepared: prepared,
+                    parameters: parameters,
+                    options: options
+                )
+                try self.validateEncryptionBindings(
+                    prepared: prepared,
+                    parameters: resolvedParameters,
+                    options: options
+                )
+                statement = try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    query: prepared.query,
+                    parameters: resolvedParameters,
+                    options: options,
+                    _encryptor: self.encryptor
+                )
+            } else {
+                statement = try CassandraClient.Statement(
+                    preparedRawPointer: prepared.bind(),
+                    query: prepared.query,
+                    parameters: parameters,
+                    options: options,
+                    _encryptor: nil
+                )
+            }
+        } catch {
+            if let cassError = error as? CassandraClient.Error {
+                CassandraClient.RequestLog.logFailure(
+                    cassError,
+                    query: prepared.query,
+                    consistency: nil,
+                    startedAt: nil,
+                    logger: logger ?? self.logger
+                )
+            }
+            throw error
         }
         return try await self.execute(statement: statement, logger: logger)
     }
@@ -1656,10 +1966,19 @@ extension CassandraClient.Session {
     private func connect(logger: Logger) -> Task<Void, Swift.Error> {
         Task {
             logger.debug("connecting to: \(self.configuration)")
-
-            let cluster = try await self.configuration.makeCluster()
-            let future = self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
-            return try await future.await()
+            let startedAt = DispatchTime.now()
+            // Instrument makeCluster + connect together so cluster-build failures are logged too.
+            return try await CassandraClient.RequestLog.instrumented(
+                startedAt: startedAt,
+                query: nil,
+                consistency: nil,
+                thresholdMillis: nil,
+                logger: logger
+            ) {
+                let cluster = try await self.configuration.makeCluster()
+                return try await self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
+                    .await()
+            }
         }
     }
 }

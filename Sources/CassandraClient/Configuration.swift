@@ -36,6 +36,19 @@ extension CassandraClient {
         public var connectTimeoutMillis: UInt32?
         public var requestTimeoutMillis: UInt32?
         public var resolveTimeoutMillis: UInt32?
+
+        /// Logs a successful query at `.debug` when its latency reaches this threshold (ms). `nil` disables
+        /// the check; `0` logs every success.
+        public var slowQueryThresholdMillis: UInt32? = nil
+
+        /// Includes bound parameter values in request logs when `true`. Off by default — values are potential PII.
+        public var logBoundValues: Bool = false
+
+        /// Maximum length of query text in a log record; longer text is truncated.
+        internal static let maxLoggedQueryLength = 500
+        /// Maximum length of each bound value in a log record when ``logBoundValues`` is set.
+        internal static let maxLoggedValueLength = 50
+
         public var coreConnectionsPerHost: UInt32?
         public var tcpNodelay: Bool?
         public var tcpKeepalive: Bool?
@@ -48,6 +61,20 @@ extension CassandraClient {
         public var speculativeExecutionPolicy: SpeculativeExecutionPolicy?
         public var prepareStrategy: PrepareStrategy?
         public var compact: Bool?
+
+        /// Enables driver metrics emission. Default `false` (off).
+        /// When enabled, the session polls the driver's snapshot and pushes gauges to swift-metrics.
+        public var metricsEnabled: Bool = false
+
+        /// Poller cadence in milliseconds. Default `10000` (10s). `nil` or `0` disables the poller
+        /// while leaving ``metricsEnabled`` on; a `0` interval would busy-loop the poller.
+        /// Requires macOS 12 / iOS 15 or newer; on older platforms the poller does not start.
+        public var metricsPollIntervalMillis: UInt32? = 10000
+
+        /// Optional session name attached as a `session` dimension on every emitted metric.
+        /// Set this to disambiguate metrics when more than one metrics-enabled session runs in a
+        /// process, otherwise their identically-named gauges overwrite each other. `nil` = no dimension.
+        public var metricsSessionName: String? = nil
 
         /// Encryptor for transparent column encryption.
         @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)

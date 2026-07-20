@@ -49,11 +49,12 @@ extension CassandraClient {
         /// Internal init for prepared statements. Takes a pre-bound `CassStatement*` from `cass_prepared_bind()`.
         internal init(
             preparedRawPointer: OpaquePointer,
+            query: String = "(prepared)",
             parameters: [Value],
             options: Options,
             _encryptor: AnyObject?
         ) throws {
-            self.query = "(prepared)"
+            self.query = query
             self.parameters = parameters
             self.options = options
             self._encryptor = _encryptor
