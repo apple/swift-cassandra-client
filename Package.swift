@@ -106,6 +106,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.12.0")),
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-metrics", .upToNextMajor(from: "2.0.0")),
+        .package(url: "https://github.com/apple/swift-distributed-tracing", .upToNextMajor(from: "1.1.0")),
+        .package(url: "https://github.com/swift-otel/swift-otel-semantic-conventions", .upToNextMajor(from: "1.39.0")),
     ],
     targets: [
         .target(
@@ -166,6 +168,8 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Metrics", package: "swift-metrics"),
+                .product(name: "Tracing", package: "swift-distributed-tracing"),
+                .product(name: "OTelSemanticConventions", package: "swift-otel-semantic-conventions"),
             ]
         ),
 
@@ -175,6 +179,9 @@ let package = Package(
                 "CassandraClient",
                 "CDataStaxDriver",
                 .product(name: "MetricsTestKit", package: "swift-metrics"),
+                // The tests bootstrap swift-distributed-tracing's shipped in-memory tracer.
+                .product(name: "Tracing", package: "swift-distributed-tracing"),
+                .product(name: "InMemoryTracing", package: "swift-distributed-tracing"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
