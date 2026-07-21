@@ -262,17 +262,18 @@ extension CassandraClient {
             var keysHolder: KeysHolder
             var metricsCache: [String: EncryptorMetrics] = [:]
 
-            mutating func metrics(forKey keyName: String) -> EncryptorMetrics {
-                if let cached = metricsCache[keyName] {
+            mutating func metrics(forKey keyName: String, column: String) -> EncryptorMetrics {
+                let cacheKey = "\(keyName):\(column)"
+                if let cached = metricsCache[cacheKey] {
                     return cached
                 }
-                let m = EncryptorMetrics(keyName: keyName)
-                metricsCache[keyName] = m
+                let m = EncryptorMetrics(keyName: keyName, column: column)
+                metricsCache[cacheKey] = m
                 return m
             }
         }
 
-        /// Cached metric handles for a single key name, avoiding per-call allocation.
+        /// Cached metric handles for a single key name and column, avoiding per-call allocation.
         private struct EncryptorMetrics {
             let encryptTotal: Counter
             let encryptDuration: Timer
@@ -280,8 +281,11 @@ extension CassandraClient {
             let decryptDuration: Timer
             let decryptFailures: Counter
 
-            init(keyName: String) {
-                let dims = [(EncryptionMetric.dimensionKeyName, keyName)]
+            init(keyName: String, column: String) {
+                let dims = [
+                    (EncryptionMetric.dimensionKeyName, keyName),
+                    (EncryptionMetric.dimensionColumn, column),
+                ]
                 self.encryptTotal = Counter(label: EncryptionMetric.encryptTotal, dimensions: dims)
                 self.encryptDuration = Timer(label: EncryptionMetric.encryptDuration, dimensions: dims)
                 self.decryptTotal = Counter(label: EncryptionMetric.decryptTotal, dimensions: dims)
@@ -412,7 +416,7 @@ extension CassandraClient {
                     context: context.contextString,
                     primaryKey: context.primaryKey
                 )
-                let m = $0.metrics(forKey: name)
+                let m = $0.metrics(forKey: name, column: context.column)
                 return (name, key, m)
             }
 
@@ -540,7 +544,7 @@ extension CassandraClient {
                         context: context.contextString,
                         primaryKey: context.primaryKey
                     )
-                    let m = $0.metrics(forKey: keyName)
+                    let m = $0.metrics(forKey: keyName, column: context.column)
                     return (key, m)
                 }
             } catch {
@@ -625,7 +629,10 @@ extension CassandraClient {
             } else {
                 Counter(
                     label: EncryptionMetric.decryptFailures,
-                    dimensions: [(EncryptionMetric.dimensionKeyName, keyName)]
+                    dimensions: [
+                        (EncryptionMetric.dimensionKeyName, keyName),
+                        (EncryptionMetric.dimensionColumn, column),
+                    ]
                 ).increment()
             }
         }

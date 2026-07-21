@@ -12,8 +12,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+import CoreMetrics
 import Foundation
 import Logging
+import MetricsTestKit
 import XCTest
 
 @testable import CassandraClient
@@ -567,5 +569,36 @@ final class EncryptorTests: XCTestCase {
             let description = String(describing: error)
             XCTAssertTrue(description.contains("user_id"), "Error should mention the overlapping column")
         }
+    }
+
+    // MARK: - Metrics dimensions
+
+    /// Encrypt, decrypt, and decrypt-failure metrics carry both the keyName and column dimensions.
+    func testMetricsCarryKeyNameAndColumnDimensions() throws {
+        MetricsTestSupport.bootstrap()
+        let metrics = MetricsTestSupport.testMetrics
+
+        // Unique keyName/column so the exact-dimension lookup isolates this test's
+        // counters from the shared, process-global TestMetrics.
+        let keyName = "key-metric-dims"
+        let column = "col_metric_dims"
+        let (encryptor, _) = try makeEncryptor(keyName: keyName)
+        let context = testContext(column: column)
+        let dims = [
+            (CassandraClient.EncryptionMetric.dimensionKeyName, keyName),
+            (CassandraClient.EncryptionMetric.dimensionColumn, column),
+        ]
+
+        let encrypted = try encryptor.encrypt(Data("hello".utf8), context: context)
+        _ = try encryptor.decrypt(encrypted, context: context)
+
+        XCTAssertEqual(try metrics.expectCounter(CassandraClient.EncryptionMetric.encryptTotal, dims).totalValue, 1)
+        XCTAssertEqual(try metrics.expectCounter(CassandraClient.EncryptionMetric.decryptTotal, dims).totalValue, 1)
+
+        // Corrupt the tag so AES-GCM authentication fails, driving the decrypt-failure path.
+        var corrupted = encrypted
+        corrupted[corrupted.count - 1] ^= 0xFF
+        XCTAssertThrowsError(try encryptor.decrypt(corrupted, context: context))
+        XCTAssertEqual(try metrics.expectCounter(CassandraClient.EncryptionMetric.decryptFailures, dims).totalValue, 1)
     }
 }

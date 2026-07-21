@@ -23,5 +23,6 @@ extension CassandraClient {
         static let decryptFailures = "cassandra.encryption.decrypt.failures"
         static let keyRotationTotal = "cassandra.encryption.key_rotation.total"
         static let dimensionKeyName = "keyName"
+        static let dimensionColumn = "column"
     }
 }
