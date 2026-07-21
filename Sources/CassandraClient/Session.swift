@@ -561,14 +561,10 @@ final class CassFuture<T>: Sendable {
 
     func asNIOFuture(eventLoop: any EventLoop) -> EventLoopFuture<T> where T: Sendable {
         let promise = eventLoop.makePromise(of: T.self)
-        self.complete(to: promise)
-        return promise.futureResult
-    }
-
-    func complete(to promise: EventLoopPromise<T>) {
         self.setResultCallback { result in
             promise.completeWith(result)
         }
+        return promise.futureResult
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
