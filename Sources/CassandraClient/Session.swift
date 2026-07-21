@@ -1741,15 +1741,22 @@ extension CassandraClient.Session {
                 self.configuration.logBoundValues
                 ? CassandraClient.RequestLog.formatValues(statement.parameters) : nil
             let startedAt = DispatchTime.now()
-            return try await CassandraClient.RequestLog.instrumented(
-                startedAt: startedAt,
+            return try await CassandraClient.RequestTrace.traced(
+                .execute,
                 query: query,
                 consistency: consistency,
-                thresholdMillis: self.configuration.slowQueryThresholdMillis,
-                boundValues: boundValues,
-                logger: logger
+                keyspace: self.configuration.keyspace
             ) {
-                try await self.underlying.execute(statement: statement).await()
+                try await CassandraClient.RequestLog.instrumented(
+                    startedAt: startedAt,
+                    query: query,
+                    consistency: consistency,
+                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    boundValues: boundValues,
+                    logger: logger
+                ) {
+                    try await self.underlying.execute(statement: statement).await()
+                }
             }
         }
     }
@@ -1787,14 +1794,21 @@ extension CassandraClient.Session {
         try await self.withConnection(logger: logger) { logger in
             logger.debug("executing batch")
             let startedAt = DispatchTime.now()
-            try await CassandraClient.RequestLog.instrumented(
-                startedAt: startedAt,
+            try await CassandraClient.RequestTrace.traced(
+                .batch,
                 query: "batch",
                 consistency: nil,
-                thresholdMillis: self.configuration.slowQueryThresholdMillis,
-                logger: logger
+                keyspace: self.configuration.keyspace
             ) {
-                try await self.underlying.execute(batch: optionalBatch.take()!).await()
+                try await CassandraClient.RequestLog.instrumented(
+                    startedAt: startedAt,
+                    query: "batch",
+                    consistency: nil,
+                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    logger: logger
+                ) {
+                    try await self.underlying.execute(batch: optionalBatch.take()!).await()
+                }
             }
         }
     }
@@ -1870,14 +1884,21 @@ extension CassandraClient.Session {
         let prepared: CassPrepared = try await self.withConnection(logger: logger) { logger in
             logger.debug("preparing: \(query)")
             let startedAt = DispatchTime.now()
-            return try await CassandraClient.RequestLog.instrumented(
-                startedAt: startedAt,
+            return try await CassandraClient.RequestTrace.traced(
+                .prepare,
                 query: query,
                 consistency: nil,
-                thresholdMillis: self.configuration.slowQueryThresholdMillis,
-                logger: logger
+                keyspace: self.configuration.keyspace
             ) {
-                try await self.underlying.prepare(query: query).await()
+                try await CassandraClient.RequestLog.instrumented(
+                    startedAt: startedAt,
+                    query: query,
+                    consistency: nil,
+                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    logger: logger
+                ) {
+                    try await self.underlying.prepare(query: query).await()
+                }
             }
         }
         let pkColumns: [String]
