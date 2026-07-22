@@ -234,6 +234,14 @@ extension CassandraClient {
 // MARK: - Utils
 
 private func toString(cassValue: OpaquePointer) -> String? {
+    let valueType = cass_value_type(cassValue)
+    guard
+        valueType == CASS_VALUE_TYPE_ASCII
+            || valueType == CASS_VALUE_TYPE_TEXT
+            || valueType == CASS_VALUE_TYPE_VARCHAR
+    else {
+        return nil
+    }
     var value: UnsafePointer<CChar>?
     var valueSize = 0
     let error = cass_value_get_string(cassValue, &value, &valueSize)
@@ -242,7 +250,7 @@ private func toString(cassValue: OpaquePointer) -> String? {
     }
     let stringBuffer = UnsafeBufferPointer(start: definiteValue, count: valueSize)
     return stringBuffer.withMemoryRebound(to: UInt8.self) {
-        String(decoding: $0, as: UTF8.self)
+        String(bytes: $0, encoding: .utf8)
     }
 }
 
