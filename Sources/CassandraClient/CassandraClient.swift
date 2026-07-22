@@ -83,6 +83,7 @@ public final class CassandraClient: CassandraSession, Sendable {
     /// Shutdown the client.
     ///
     /// - Note: It is required to call this method before terminating the program. `CassandraClient` will assert it was cleanly shut down as part of its deinitializer.
+    @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
     public func shutdown() throws {
         if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
             .exchanged
@@ -100,6 +101,33 @@ public final class CassandraClient: CassandraSession, Sendable {
         if self.eventLoopGroupContainer.managed {
             do {
                 try self.eventLoopGroup.syncShutdownGracefully()
+            } catch {
+                lastError = error
+            }
+        }
+        if let error = lastError {
+            throw error
+        }
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func shutdownAsync() async throws {
+        if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
+            .exchanged
+        {
+            return
+        }
+
+        var lastError: Swift.Error?
+
+        do {
+            try await self.defaultSession.shutdownAsync()
+        } catch {
+            lastError = error
+        }
+        if self.eventLoopGroupContainer.managed {
+            do {
+                try await self.eventLoopGroup.shutdownGracefully()
             } catch {
                 lastError = error
             }
@@ -450,15 +478,7 @@ extension CassandraClient {
         logger: Logger? = .none,
         closure: (CassandraSession) async throws -> Void
     ) async throws {
-        let session = self.makeSession(keyspace: keyspace, logger: logger)
-        defer {
-            do {
-                try session.shutdown()
-            } catch {
-                self.logger.warning("shutdown error: \(error)")
-            }
-        }
-        try await closure(session)
+        try await self.withSession(keyspace: keyspace, logger: logger, handler: closure)
     }
 
     /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure and return its result.
@@ -476,14 +496,18 @@ extension CassandraClient {
         handler: (CassandraSession) async throws -> T
     ) async throws -> T {
         let session = self.makeSession(keyspace: keyspace, logger: logger)
-        defer {
-            do {
-                try session.shutdown()
-            } catch {
-                self.logger.warning("shutdown error: \(error)")
-            }
+        let result: Result<T, any Swift.Error>
+        do {
+            result = try await .success(handler(session))
+        } catch {
+            result = .failure(error)
         }
-        return try await handler(session)
+        do {
+            try await session.shutdownAsync()
+        } catch {
+            self.logger.warning("shutdown error: \(error)")
+        }
+        return try result.get()
     }
 }
 
