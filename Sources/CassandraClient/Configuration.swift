@@ -30,6 +30,12 @@ extension CassandraClient {
         public var protocolVersion: ProtocolVersion
         public var username: String?
         public var password: String?
+
+        /// A custom SASL authenticator. When set, it takes precedence over ``username``/``password``.
+        /// The instance is shared across all connections and invoked concurrently; see
+        /// ``CassandraClient/Authenticator``.
+        public var authenticator: (any CassandraClient.Authenticator)? = nil
+
         public var ssl: SSL?
         public var keyspace: String?
         public var numIOThreads: UInt32?
@@ -230,7 +236,9 @@ extension CassandraClient {
 
             try cluster.setPort(self.port)
             try cluster.setProtocolVersion(self.protocolVersion.rawValue)
-            if let username = self.username, let password = self.password {
+            if let authenticator = self.authenticator {
+                try cluster.setAuthenticator(authenticator)
+            } else if let username = self.username, let password = self.password {
                 try cluster.setCredentials(username: username, password: password)
             }
             if let ssl = self.ssl {
@@ -312,7 +320,8 @@ extension CassandraClient {
             [\(Configuration.self):
             port: \(self.port),
             username: \(self.username ?? "none"),
-            password: *****]
+            password: *****,
+            authenticator: \(self.authenticator == nil ? "none" : "custom")]
             """
         }
     }

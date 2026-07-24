@@ -71,6 +71,12 @@ jobs:
           - image: "swiftlang/swift:nightly-main-jammy"
             swift_version: "nightly-main"
             enabled: ${{ inputs.linux_nightly_main_enabled }}
+    # The Cassandra service is run with PasswordAuthenticator (see the "Start Cassandra" step), which the
+    # stock `cassandra:3.11` image has no env var to enable and cannot be reconfigured after start. That
+    # rules out a job-level `services:` block (its container starts before checkout, so a mounted
+    # cassandra.yaml is unavailable, and a containerized job has no Docker socket to patch it). So this job
+    # runs on the host runner and drives both Cassandra and the Swift toolchain via `docker run`, sharing a
+    # user-defined network so the tests reach the node by name.
     steps:
       - name: Checkout repository
         if: ${{ matrix.swift.enabled }}
@@ -78,35 +84,56 @@ jobs:
         with:
           persist-credentials: false
           submodules: true
-      - name: Mark the workspace as safe
+      - name: Start Cassandra with PasswordAuthenticator
         if: ${{ matrix.swift.enabled }}
-        # https://github.com/actions/checkout/issues/766
-        run: git config --global --add safe.directory ${GITHUB_WORKSPACE}
+        # `cassandra:3.11` defaults to AllowAllAuthenticator and exposes no env var for the authenticator,
+        # so the auth-enabled node is built from `.github/cassandra/Dockerfile` (a one-line cassandra.yaml
+        # patch at build time). The container then runs the stock entrypoint unchanged.
+        run: |
+          docker network create cassandra-net
+          docker build -t cassandra-auth:3.11 .github/cassandra
+          docker run -d --name cassandra --network cassandra-net cassandra-auth:3.11
+      - name: Wait for Cassandra auth to be ready
+        if: ${{ matrix.swift.enabled }}
+        # PasswordAuthenticator creates the default `cassandra`/`cassandra` superuser only after system_auth
+        # is bootstrapped (a short, replication-dependent delay), so wait until a credentialed query works
+        # rather than just for the port to open.
+        run: |
+          ready=0
+          for i in $(seq 1 60); do
+            if docker exec cassandra sh -c 'cqlsh -u cassandra -p cassandra "$(hostname -i)" -e "SELECT release_version FROM system.local"' >/dev/null 2>&1; then
+              echo "Cassandra auth ready after $((i * 5))s"
+              ready=1
+              break
+            fi
+            echo "waiting for Cassandra auth ($i/60)"
+            sleep 5
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "Cassandra did not become ready with auth enabled"
+            docker logs cassandra || true
+            exit 1
+          fi
       - name: Run matrix job
         if: ${{ matrix.swift.enabled }}
-        env:
-          SWIFT_VERSION: ${{ matrix.swift.swift_version }}
-          COMMAND: "swift test"
-          COMMAND_OVERRIDE_6_1: "swift test ${{ inputs.linux_6_1_arguments_override }}"
-          COMMAND_OVERRIDE_6_2: "swift test ${{ inputs.linux_6_2_arguments_override }}"
-          COMMAND_OVERRIDE_6_3: "swift test ${{ inputs.linux_6_3_arguments_override }}"
-          COMMAND_OVERRIDE_NIGHTLY_NEXT: "swift test ${{ inputs.linux_nightly_next_arguments_override }}"
-          COMMAND_OVERRIDE_NIGHTLY_MAIN: "swift test ${{ inputs.linux_nightly_main_arguments_override }}"
-          CASSANDRA_HOST: cassandra
-          CASSANDRA_CQL_PORT: 9042
-          CASSANDRA_USER: cassandra
-          CASSANDRA_PASSWORD: cassandra
-          CASSANDRA_KEYSPACE: cassandra
+        # Run `swift test` inside the matrix Swift image, on the same network as Cassandra so the tests
+        # reach it at `cassandra:9042`. The existing integration tests already send `cassandra`/`cassandra`,
+        # which now traverses real authentication.
         run: |
-          apt-get -qq update && apt-get -qq -y install curl
-          curl -s https://raw.githubusercontent.com/apple/swift-nio/main/scripts/check-matrix-job.sh | bash
-    container:
-      image: ${{ matrix.swift.image }}
-    services:
-      cassandra:
-        image: cassandra:3.11
-        env:
-          CASSANDRA_CQL_PORT: 9042
-          CASSANDRA_USER: cassandra
-          CASSANDRA_PASSWORD: cassandra
-          CASSANDRA_KEYSPACE: cassandra
+          docker run --rm --network cassandra-net \
+            -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace \
+            -e SWIFT_VERSION="${{ matrix.swift.swift_version }}" \
+            -e COMMAND="swift test" \
+            -e COMMAND_OVERRIDE_6_1="swift test ${{ inputs.linux_6_1_arguments_override }}" \
+            -e COMMAND_OVERRIDE_6_2="swift test ${{ inputs.linux_6_2_arguments_override }}" \
+            -e COMMAND_OVERRIDE_6_3="swift test ${{ inputs.linux_6_3_arguments_override }}" \
+            -e COMMAND_OVERRIDE_NIGHTLY_NEXT="swift test ${{ inputs.linux_nightly_next_arguments_override }}" \
+            -e COMMAND_OVERRIDE_NIGHTLY_MAIN="swift test ${{ inputs.linux_nightly_main_arguments_override }}" \
+            -e CASSANDRA_HOST=cassandra \
+            -e CASSANDRA_CQL_PORT=9042 \
+            -e CASSANDRA_USER=cassandra \
+            -e CASSANDRA_PASSWORD=cassandra \
+            -e CASSANDRA_KEYSPACE=cassandra \
+            -e CASSANDRA_REQUIRE_AUTH=1 \
+            "${{ matrix.swift.image }}" \
+            bash -c "git config --global --add safe.directory /workspace && apt-get -qq update && apt-get -qq -y install curl && curl -s https://raw.githubusercontent.com/apple/swift-nio/main/scripts/check-matrix-job.sh | bash"
