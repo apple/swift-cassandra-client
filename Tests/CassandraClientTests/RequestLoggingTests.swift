@@ -167,4 +167,16 @@ final class RequestLoggingTests: XCTestCase {
         XCTAssertTrue(formatted.hasSuffix("…"))
         XCTAssertLessThanOrEqual(formatted.count, CassandraClient.Configuration.maxLoggedValueLength + 1)
     }
+
+    /// Encrypted bound values are redacted in the formatted string — plaintext must never reach the log.
+    func testBoundValuesRedactEncryptedPlaintext() {
+        let secret = "123-45-6789"
+        let formatted = CassandraClient.RequestLog.formatValues([
+            .string("public"),
+            .encryptedString(.init(secret), context: nil),
+        ])
+        XCTAssertTrue(formatted.contains("<redacted>"))
+        XCTAssertFalse(formatted.contains(secret))
+        XCTAssertTrue(formatted.contains("public"), "Non-encrypted values should still be logged")
+    }
 }
