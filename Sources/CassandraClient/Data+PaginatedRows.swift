@@ -252,7 +252,7 @@ extension CassandraClient.PaginatedRows: AsyncSequence {
             // to overwrite previous rows so that the iterated rows differ from those
             // yielded to continuation.
             self.pageStream = AsyncThrowingStream { continuation in
-                Task {
+                let task = Task {
                     do {
                         repeat {
                             // This shouldn't throw `rowExhausted` error, but if it does
@@ -260,13 +260,16 @@ extension CassandraClient.PaginatedRows: AsyncSequence {
                             // through, which indicates usage error so it's ok to throw.
                             let rows = try await paginatedRows.nextPage()
                             continuation.yield(rows)
-                        } while paginatedRows.hasMorePages
+                        } while paginatedRows.hasMorePages && !Task.isCancelled
 
                         continuation.finish()
                     } catch {
                         continuation.finish(throwing: error)
                     }
                 }
+                // Stop paging when the consumer stops early (break, `prefix`, a decode error in a
+                // downstream `map`): otherwise the producer keeps fetching pages to exhaustion.
+                continuation.onTermination = { _ in task.cancel() }
             }.makeAsyncIterator()
         }
 
