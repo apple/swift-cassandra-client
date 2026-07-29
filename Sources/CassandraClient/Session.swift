@@ -1611,6 +1611,32 @@ extension CassandraSession {
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
 
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`,
+    /// decoding each row into `T` as the sequence is iterated, rather than materializing the whole
+    /// decoded result set as an array.
+    ///
+    /// - Note: Unlike the raw ``query(_:parameters:pageSize:options:logger:)`` sequence, decoded values
+    ///   are independent Swift values and remain valid after the sequence is advanced.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func query<T: Decodable & Sendable>(
+        _ query: String,
+        parameters: sending [CassandraClient.Statement.Value] = [],
+        pageSize: Int32,
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none
+    ) async throws -> AsyncThrowingMapSequence<CassandraClient.PaginatedRows, T> {
+        let paginatedRows = try await self.query(
+            query,
+            parameters: parameters,
+            pageSize: pageSize,
+            options: options,
+            logger: logger
+        )
+        return paginatedRows.map { row in
+            try T(from: self.makeDecoder(row: row, options: options))
+        }
+    }
+
     /// Prepare a CQL query for repeated execution.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func prepare(

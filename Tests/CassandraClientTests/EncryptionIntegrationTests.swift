@@ -470,6 +470,68 @@ final class EncryptionIntegrationTests: XCTestCase {
         }
     }
 
+    // MARK: - Paged Codable reads
+
+    /// Paged decoding goes through the same decoder as the buffered decoding query, so an encrypted
+    /// column read a page at a time comes back as plaintext: 12 rows over a page size of 5 decrypt to
+    /// the values the buffered decoding query returns.
+    func testPagedCodableDecrypt() async throws {
+        let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+        defer { XCTAssertNoThrow(try session.shutdown()) }
+
+        let tableName = "test_enc_paged_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        try await session.run("create table \(tableName) (user_id text primary key, secret blob)")
+
+        let users = (0..<12).map { ("paged-user-\($0)", "paged-secret-\($0)") }
+
+        var options = CassandraClient.Statement.Options()
+        options.encryptionContextBuilder = { row in
+            guard let uid: String = row.column("user_id") else {
+                throw CassandraClient.Error.badParams("user_id not found in row")
+            }
+            return CassandraClient.EncryptionContext.Base(
+                keyspace: keyspace,
+                table: tableName,
+                primaryKey: .init(from: .string(uid))
+            )
+        }
+
+        for (userId, secretValue) in users {
+            let context = CassandraClient.EncryptionContext(
+                keyspace: keyspace,
+                table: tableName,
+                column: "secret",
+                primaryKey: .init(from: .string(userId))
+            )
+            try await session.run(
+                "insert into \(tableName) (user_id, secret) values (?, ?)",
+                parameters: [
+                    .string(userId),
+                    .encryptedString(CassandraClient.Encrypted(secretValue), context: context),
+                ],
+                options: options
+            )
+        }
+
+        let cql = "select user_id, secret from \(tableName)"
+        let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, UserWithSecret> =
+            try await session.query(cql, pageSize: 5, options: options)
+        var decoded: [UserWithSecret] = []
+        for try await user in paged {
+            decoded.append(user)
+        }
+        let buffered: [UserWithSecret] = try await session.query(cql, options: options)
+
+        // Keyed by user_id: rows come back in partition-key order, which is not the insertion order.
+        let pagedSecrets = Dictionary(uniqueKeysWithValues: decoded.map { ($0.user_id, $0.secret.value) })
+        let bufferedSecrets = Dictionary(uniqueKeysWithValues: buffered.map { ($0.user_id, $0.secret.value) })
+        XCTAssertEqual(decoded.count, users.count)
+        XCTAssertEqual(pagedSecrets, Dictionary(uniqueKeysWithValues: users))
+        XCTAssertEqual(pagedSecrets, bufferedSecrets)
+    }
+
     // MARK: - Codable with multiple encrypted columns
 
     /// Struct with two Encrypted fields of different types, decoded via Codable.
