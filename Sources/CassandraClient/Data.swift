@@ -48,8 +48,6 @@ extension Data {
     }
 }
 
-public protocol PagingStateToken: ContiguousBytes {}
-
 extension CassandraClient {
     /// Resulting row(s) of a Cassandra query. Data are returned all at once.
     public final class Rows: Sequence, Sendable {
@@ -222,7 +220,11 @@ extension CassandraClient {
 
     /// A reusable page token that can be used by `Statement` to resume querying
     /// at a specific position.
-    public struct OpaquePagingStateToken: PagingStateToken, Sendable {
+    ///
+    /// - Important: This type has no public initializer, so a token can only be vended by
+    /// ``CassandraClient/Rows/opaquePagingStateToken()``. Adding one would let a caller pass
+    /// arbitrary bytes to `Statement.setPagingStateToken(_:)`.
+    public struct OpaquePagingStateToken: ContiguousBytes, Sendable {
         let token: [UInt8]
 
         public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {

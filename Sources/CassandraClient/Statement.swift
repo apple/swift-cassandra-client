@@ -296,13 +296,9 @@ extension CassandraClient {
 
         /// Sets the starting page of the returned paginated results.
         ///
-        /// The paging state token can be obtained by the `pagingStateToken()`
-        /// function on `Rows`.
-        ///
-        /// - Warning: The paging state should not be exposed to or come from
-        /// untrusted environments. The paging state could be spoofed and
-        /// potentially used to gain access to other data.
-        public func setPagingStateToken(_ pagingStateToken: PagingStateToken) throws {
+        /// The paging state token can be obtained by
+        /// ``CassandraClient/Rows/opaquePagingStateToken()``.
+        public func setPagingStateToken(_ pagingStateToken: OpaquePagingStateToken) throws {
             try checkResult {
                 pagingStateToken.withUnsafeBytes {
                     let buffer = $0.bindMemory(to: CChar.self)
