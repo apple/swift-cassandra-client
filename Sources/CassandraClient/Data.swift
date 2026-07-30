@@ -111,7 +111,8 @@ extension CassandraClient {
 
         /// Returns a reusable paging token.
         ///
-        /// - Warning: This token is not suitable or safe for sharing externally.
+        /// The token is usable only within the process that produced it: the library provides
+        /// no API for reading its bytes.
         public func opaquePagingStateToken() throws -> OpaquePagingStateToken {
             try OpaquePagingStateToken(token: self.rawPagingStateToken())
         }
@@ -219,15 +220,16 @@ extension CassandraClient {
     }
 
     /// A reusable page token that can be used by `Statement` to resume querying
-    /// at a specific position.
+    /// at a specific position. Two tokens can be compared for equality.
     ///
-    /// - Important: This type has no public initializer, so a token can only be vended by
-    /// ``CassandraClient/Rows/opaquePagingStateToken()``. Adding one would let a caller pass
-    /// arbitrary bytes to `Statement.setPagingStateToken(_:)`.
-    public struct OpaquePagingStateToken: ContiguousBytes, Sendable {
+    /// - Important: This type has no public initializer and provides no API for reading its
+    ///   bytes, so a token can only be vended by ``CassandraClient/Rows/opaquePagingStateToken()``
+    ///   and cannot be serialized through this library. Adding a public initializer or a public
+    ///   bytes accessor would let a caller move a paging state across a trust boundary.
+    public struct OpaquePagingStateToken: Equatable, Sendable {
         let token: [UInt8]
 
-        public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
+        func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
             try self.token.withUnsafeBytes(body)
         }
     }
