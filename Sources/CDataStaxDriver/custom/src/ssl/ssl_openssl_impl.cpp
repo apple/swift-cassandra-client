@@ -556,6 +556,9 @@ OpenSslContext::OpenSslContext()
 #if (OPENSSL_VERSION_NUMBER >= 0x10100000L)
   // Limit to TLS 1.2 for now. TLS 1.3 has broken the handshake code.
   SSL_CTX_set_max_proto_version(ssl_ctx_, TLS1_2_VERSION);
+  // edit: BoringSSL already defaults the client floor to TLS 1.2. Pin it so the
+  // floor stays at TLS 1.2 if that default changes.
+  SSL_CTX_set_min_proto_version(ssl_ctx_, TLS1_2_VERSION);
 #endif
 #if DEBUG_SSL
   SSL_CTX_set_info_callback(ssl_ctx_, ssl_info_callback);
