@@ -172,6 +172,19 @@ extension CassandraClient {
 // Only Sendable when T is Sendable
 extension CassandraClient.Encrypted: Sendable where T: Sendable {}
 
+// Redact the wrapped plaintext from every string form. Without this, default reflection
+// renders `value` verbatim, leaking encryption-designated plaintext through any interpolation
+// of an `Encrypted<T>`, a `Statement.Value.encryptedXxx` case, or a `Statement` — e.g. bound-value
+// logs, `Statement.description`. Either string conformance covers both `String(describing:)` and
+// `String(reflecting:)` (each falls back to the other); both are stated so neither can drift.
+// `CustomReflectable` additionally redacts `dump(_:)` / `Mirror`, which walk stored properties and
+// ignore the string conformances.
+extension CassandraClient.Encrypted: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String { "<redacted>" }
+    public var debugDescription: String { "<redacted>" }
+    public var customMirror: Mirror { Mirror(self, children: ["value": "<redacted>"]) }
+}
+
 // MARK: - KeysHolder
 
 extension CassandraClient {

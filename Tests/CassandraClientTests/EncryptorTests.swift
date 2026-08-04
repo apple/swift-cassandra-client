@@ -571,6 +571,56 @@ final class EncryptorTests: XCTestCase {
         }
     }
 
+    // MARK: - Plaintext redaction in string forms
+
+    /// Test plaintext that must never appear in any string form of an encrypted value.
+    private static let secret = "123-45-6789"
+
+    /// `Encrypted<T>` renders as `<redacted>` — never its wrapped plaintext — through every string form.
+    func testEncryptedWrapperRedactsPlaintext() {
+        let wrapped = CassandraClient.Encrypted(Self.secret)
+        // `==` in XCTAssertTrue, not XCTAssertEqual — the latter echoes the actual value (plaintext) on failure.
+        for rendered in ["\(wrapped)", String(describing: wrapped), String(reflecting: wrapped)] {
+            XCTAssertTrue(rendered == "<redacted>", "wrapper string form should be <redacted>")
+            XCTAssertFalse(rendered.contains(Self.secret), "wrapper leaked plaintext")
+        }
+    }
+
+    /// `dump(_:)` / `Mirror` walk stored properties and ignore `CustomStringConvertible`, so redaction there
+    /// relies on `CustomReflectable`. Guards the operator-debugging path (e.g. `dump(statement.parameters)`).
+    func testEncryptedWrapperRedactsUnderDumpAndMirror() {
+        let wrapped = CassandraClient.Encrypted(Self.secret)
+
+        var dumped = ""
+        dump(wrapped, to: &dumped)
+        XCTAssertFalse(dumped.contains(Self.secret), "dump leaked plaintext")
+
+        let mirrored = Mirror(reflecting: wrapped).children
+            .map { "\($0.value)" }
+            .joined(separator: ",")
+        XCTAssertFalse(mirrored.contains(Self.secret), "Mirror leaked plaintext")
+
+        // Same via the enum case, the shape that flows through Statement.parameters.
+        var dumpedValue = ""
+        dump(CassandraClient.Statement.Value.encryptedString(.init(Self.secret), context: nil), to: &dumpedValue)
+        XCTAssertFalse(dumpedValue.contains(Self.secret), "dump of Value leaked plaintext")
+    }
+
+    /// `Statement.description` — the public, ungated sink — redacts encrypted plaintext even though the
+    /// statement's `parameters` array retains the original `Encrypted` wrapper after binding.
+    func testStatementDescriptionRedactsPlaintext() throws {
+        let (encryptor, _) = try makeEncryptor()
+        let statement = try CassandraClient.Statement(
+            query: "INSERT INTO users (ssn) VALUES (?)",
+            parameters: [.encryptedString(.init(Self.secret), context: testContext())],
+            options: .init(),
+            _encryptor: encryptor
+        )
+        let rendered = statement.description
+        XCTAssertTrue(rendered.contains("<redacted>"))
+        XCTAssertFalse(rendered.contains(Self.secret))
+    }
+
     // MARK: - Metrics dimensions
 
     /// Encrypt, decrypt, and decrypt-failure metrics carry both the keyName and column dimensions.
