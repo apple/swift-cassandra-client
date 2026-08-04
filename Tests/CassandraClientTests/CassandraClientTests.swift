@@ -351,7 +351,11 @@ final class Tests: XCTestCase {
 
         let page = try initialPages.nextPage().wait()
         let pageToken = try page.opaquePagingStateToken()
-        let row = try initialPages.nextPage().wait().first!
+        // Tokens from the same result are equal; a later page's token is not.
+        XCTAssertEqual(pageToken, try page.opaquePagingStateToken())
+        let nextPage = try initialPages.nextPage().wait()
+        XCTAssertNotEqual(pageToken, try nextPage.opaquePagingStateToken())
+        let row = nextPage.first!
 
         let statement = try CassandraClient.Statement(query: "select id, data from \(tableName);")
         try! statement.setPagingStateToken(pageToken)
