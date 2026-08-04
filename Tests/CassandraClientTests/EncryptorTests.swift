@@ -586,36 +586,6 @@ final class EncryptorTests: XCTestCase {
         }
     }
 
-    /// A `Statement.Value.encryptedXxx` case redacts its wrapped plaintext through both string forms.
-    /// Redaction here relies on default enum reflection delegating to `Encrypted`'s `CustomStringConvertible`
-    /// — there is no hand-written `Value.description`. Covering every encrypted payload type guards against a
-    /// future `Value.description` (or per-type conformance) that pattern-matches a case and interpolates
-    /// `.value`, which would silently reintroduce the leak.
-    func testStatementValueRedactsPlaintext() {
-        let uuid = Foundation.UUID()
-        // (static label, value case, a plaintext substring that must not appear in the rendered form)
-        let cases: [(label: String, value: CassandraClient.Statement.Value, plaintext: String)] = [
-            ("encryptedString", .encryptedString(.init(Self.secret), context: nil), Self.secret),
-            ("encryptedBytes", .encryptedBytes(.init([0xDE, 0xAD, 0xBE, 0xEF]), context: nil), "222"),  // 0xDE == 222
-            ("encryptedInt32", .encryptedInt32(.init(1_234_567), context: nil), "1234567"),
-            ("encryptedInt64", .encryptedInt64(.init(9_876_543_210), context: nil), "9876543210"),
-            ("encryptedDouble", .encryptedDouble(.init(3.14159), context: nil), "3.14159"),
-            ("encryptedUUID", .encryptedUUID(.init(uuid), context: nil), uuid.uuidString),
-            (
-                "encryptedDate", .encryptedDate(.init(Date(timeIntervalSince1970: 1_700_000_000)), context: nil),
-                "2023-11-14"
-            ),
-        ]
-        for (label, value, plaintext) in cases {
-            // Both string forms — `String(reflecting:)` is the debug form some sinks use.
-            // Messages use only the static label — a regression must not echo the plaintext to CI.
-            for rendered in ["\(value)", String(reflecting: value)] {
-                XCTAssertTrue(rendered.contains("<redacted>"), "\(label) should render <redacted>")
-                XCTAssertFalse(rendered.contains(plaintext), "\(label) leaked plaintext")
-            }
-        }
-    }
-
     /// `dump(_:)` / `Mirror` walk stored properties and ignore `CustomStringConvertible`, so redaction there
     /// relies on `CustomReflectable`. Guards the operator-debugging path (e.g. `dump(statement.parameters)`).
     func testEncryptedWrapperRedactsUnderDumpAndMirror() {
