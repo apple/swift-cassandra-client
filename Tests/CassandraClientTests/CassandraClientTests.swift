@@ -1918,6 +1918,82 @@ final class Tests: XCTestCase {
             XCTAssertEqual(result[0].column(1)?.string, "alice")
         }
     }
+
+    func testQueryDecodingWithModelType() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        try self.cassandraClient.run("create table \(tableName) (id int primary key, name text);").wait()
+        try self.cassandraClient.run("insert into \(tableName) (id, name) values (1, 'alice');").wait()
+
+        // No type annotation on `result`: the `withModelType:` argument is the only thing binding `T`.
+        let result = try self.cassandraClient.query(
+            "select id, name from \(tableName) where id = 1;",
+            withModelType: Person.self
+        ).wait()
+        XCTAssertEqual(result, [Person(id: 1, name: "alice")])
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testQueryDecodingWithModelTypeAsync() throws {
+        runAsyncAndWaitFor {
+            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+            try await self.cassandraClient.run("create table \(tableName) (id int primary key, name text);")
+            try await self.cassandraClient.run("insert into \(tableName) (id, name) values (1, 'alice');")
+
+            let result = try await self.cassandraClient.query(
+                "select id, name from \(tableName) where id = 1;",
+                withModelType: Person.self
+            )
+            XCTAssertEqual(result, [Person(id: 1, name: "alice")])
+        }
+    }
+
+    func testPreparedStatementDecodingWithModelType() throws {
+        let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+        defer { XCTAssertNoThrow(try session.shutdown()) }
+
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        try session.run("create table \(tableName) (id int primary key, name text);").wait()
+
+        let insertStmt = try session.prepare("insert into \(tableName) (id, name) values (?, ?)").wait()
+        _ = try session.execute(prepared: insertStmt, parameters: [.int32(1), .string("alice")]).wait()
+
+        let selectStmt = try session.prepare("select id, name from \(tableName) where id = ?").wait()
+        // No type annotation on `result`: the `withModelType:` argument is the only thing binding `T`.
+        let result = try session.execute(
+            prepared: selectStmt,
+            parameters: [.int32(1)],
+            withModelType: Person.self
+        ).wait()
+        XCTAssertEqual(result, [Person(id: 1, name: "alice")])
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    func testPreparedStatementDecodingWithModelTypeAsync() throws {
+        runAsyncAndWaitFor {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+
+            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+            try await session.run("create table \(tableName) (id int primary key, name text);")
+
+            let insertStmt = try await session.prepare("insert into \(tableName) (id, name) values (?, ?)")
+            _ = try await session.execute(prepared: insertStmt, parameters: [.int32(1), .string("alice")])
+
+            let selectStmt = try await session.prepare("select id, name from \(tableName) where id = ?")
+            let result = try await session.execute(
+                prepared: selectStmt,
+                parameters: [.int32(1)],
+                withModelType: Person.self
+            )
+            XCTAssertEqual(result, [Person(id: 1, name: "alice")])
+        }
+    }
+}
+
+/// Row fixture shared by the `withModelType:` decoding tests.
+private struct Person: Codable, Equatable {
+    let id: Int32
+    let name: String
 }
 
 extension XCTestCase {
