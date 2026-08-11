@@ -191,6 +191,15 @@ let package = Package(
     cxxLanguageStandard: .cxx17
 )
 
+#if compiler(>=6.2)
+package.dependencies.append(
+    .package(url: "https://github.com/apple/swift-configuration.git", from: "1.0.0", traits: [])
+)
+for target in package.targets where ["CassandraClient", "CassandraClientTests"].contains(target.name) {
+    target.dependencies.append(.product(name: "Configuration", package: "swift-configuration"))
+}
+#endif
+
 // ---    STANDARD CROSS-REPO SETTINGS DO NOT EDIT   --- //
 for target in package.targets {
     switch target.type {

@@ -162,12 +162,12 @@ extension CassandraClient {
             case disabled
         }
 
-        public enum PrepareStrategy: Sendable, Hashable {
+        public enum PrepareStrategy: String, Sendable, Hashable {
             case allHosts
             case upOrAddHost
         }
 
-        public enum ProtocolVersion: Int32, Sendable {
+        public enum ProtocolVersion: Int32, Sendable, CaseIterable {
             case v1 = 1
             case v2 = 2
             case v3 = 3
@@ -497,7 +497,7 @@ extension CassandraClient.Configuration {
         public var privateKey: (key: String, password: String)?
 
         /// Verification performed on the peer's certificate.
-        public enum VerifyFlag: Sendable {
+        public enum VerifyFlag: String, Sendable {
             /// Use DataStax driver's default, which is .peerCert
             case `default`
 
