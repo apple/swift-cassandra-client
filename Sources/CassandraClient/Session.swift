@@ -1437,6 +1437,9 @@ extension CassandraClient {
 
         private func connect(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Void> {
             logger.debug("connecting to: \(self.configuration)")
+            if let warning = self.configuration.insecureSSLWarning {
+                logger.warning("\(warning)")
+            }
             let startedAt = DispatchTime.now()
             // Instrument the whole chain so a `makeCluster` failure (SSL / contact-point / credentials) is
             // logged too, not just a driver-connect failure.
@@ -2114,6 +2117,9 @@ extension CassandraClient.Session {
     private func connect(logger: Logger) -> Task<Void, Swift.Error> {
         Task {
             logger.debug("connecting to: \(self.configuration)")
+            if let warning = self.configuration.insecureSSLWarning {
+                logger.warning("\(warning)")
+            }
             let startedAt = DispatchTime.now()
             // Instrument makeCluster + connect together so cluster-build failures are logged too.
             return try await CassandraClient.RequestLog.instrumented(
