@@ -372,6 +372,25 @@ extension CassandraSession {
             }
     }
 
+    /// Query small data-sets that fit into memory, decoding each row into `model`.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `session.query("select ...", withModelType: Model.self)`.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    @preconcurrency
+    public func query<T: Decodable & Sendable>(
+        _ query: String,
+        parameters: sending [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none,
+        withModelType model: T.Type
+    ) -> EventLoopFuture<[T]> {
+        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger)
+    }
+
     /// Query large data-sets where using an interator helps control memory usage.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
@@ -536,6 +555,31 @@ extension CassandraSession {
             self.logDecryptedRows(count: result.count, options: finalOptions, logger: logger)
             return result
         }
+    }
+
+    /// Execute a prepared statement, decoding each row into `model`.
+    ///
+    /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `session.execute(prepared: statement, withModelType: Model.self)`.
+    ///
+    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
+    @preconcurrency
+    public func execute<T: Decodable & Sendable>(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: sending [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none,
+        withModelType model: T.Type
+    ) -> EventLoopFuture<[T]> {
+        self.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger
+        )
     }
 }
 
@@ -1572,6 +1616,22 @@ extension CassandraSession {
         return result
     }
 
+    /// Query small data-sets that fit into memory, decoding each row into `model`.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await session.query("select ...", withModelType: Model.self)`.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func query<T: Decodable>(
+        _ query: String,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none,
+        withModelType model: T.Type
+    ) async throws -> [T] {
+        try await self.query(query, parameters: parameters, options: options, logger: logger)
+    }
+
     /// Query large data-sets where using an interator helps control memory usage.
     ///
     /// - Important:
@@ -1637,6 +1697,30 @@ extension CassandraSession {
         }
     }
 
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`,
+    /// decoding each row into `model` as the sequence is iterated.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await session.query("select ...", pageSize: 100, withModelType: Model.self)`.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func query<T: Decodable & Sendable>(
+        _ query: String,
+        parameters: sending [CassandraClient.Statement.Value] = [],
+        pageSize: Int32,
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none,
+        withModelType model: T.Type
+    ) async throws -> AsyncThrowingMapSequence<CassandraClient.PaginatedRows, T> {
+        try await self.query(
+            query,
+            parameters: parameters,
+            pageSize: pageSize,
+            options: options,
+            logger: logger
+        )
+    }
+
     /// Prepare a CQL query for repeated execution.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func prepare(
@@ -1683,6 +1767,27 @@ extension CassandraSession {
         }
         self.logDecryptedRows(count: result.count, options: effectiveOptions, logger: logger)
         return result
+    }
+
+    /// Execute a prepared statement, decoding each row into `model`.
+    ///
+    /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await session.execute(prepared: statement, withModelType: Model.self)`.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func execute<T: Decodable>(
+        prepared: CassandraClient.PreparedStatement,
+        parameters: [CassandraClient.Statement.Value] = [],
+        options: CassandraClient.Statement.Options = .init(),
+        logger: Logger? = .none,
+        withModelType model: T.Type
+    ) async throws -> [T] {
+        try await self.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            logger: logger
+        )
     }
 }
 

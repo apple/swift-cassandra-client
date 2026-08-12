@@ -150,6 +150,41 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         )
     }
 
+    /// The `withModelType:` paginated overload yields the same decoded values, in the same order, as its
+    /// inference sibling. Here the element type is bound only by `withModelType:`, not a return-type
+    /// annotation on `paged`.
+    func testYieldsEveryRowInOrderWithModelType() throws {
+        let count = 25  // > pageSize: 3 pages
+        let table = try self.makeTable(rows: count)
+
+        runAsyncAndWaitFor(
+            {
+                let paged = try await self.cassandraClient.query(
+                    self.selectAll(table),
+                    pageSize: Self.pageSize,
+                    withModelType: Item.self
+                )
+                var decoded: [Item] = []
+                for try await item in paged {
+                    decoded.append(item)
+                }
+
+                let buffered = try await self.cassandraClient.query(
+                    self.selectAll(table),
+                    withModelType: Item.self
+                )
+                XCTAssertEqual(decoded.count, count, "every row should be yielded")
+                XCTAssertEqual(decoded, buffered, "paged decoding should match the buffered decoding query")
+                XCTAssertEqual(
+                    decoded.map(\.ck),
+                    Array(Int32(0)..<Int32(count)),
+                    "rows should arrive in clustering order"
+                )
+            },
+            30.0
+        )
+    }
+
     /// A row that cannot be decoded fails the iteration at that element: the rows before it — more than
     /// a full page of them — are still yielded, so rows are decoded one at a time as the sequence
     /// advances rather than up front.

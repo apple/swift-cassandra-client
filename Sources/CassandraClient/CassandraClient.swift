@@ -253,6 +253,39 @@ public final class CassandraClient: CassandraSession, Sendable {
         )
     }
 
+    /// Execute a ``PreparedStatement`` and decode each row into `model` using the default ``CassandraSession``.
+    ///
+    /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `cassandraClient.execute(prepared: statement, withModelType: Model.self)`.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - eventLoop: The `EventLoop` to use, or create a new one.
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - model: The type to decode each row into.
+    ///
+    /// - Returns: The decoded rows.
+    @preconcurrency
+    public func execute<T: Decodable & Sendable>(
+        prepared: PreparedStatement,
+        parameters: sending [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        on eventLoop: EventLoop? = .none,
+        logger: Logger? = .none,
+        withModelType model: T.Type
+    ) -> EventLoopFuture<[T]> {
+        self.defaultSession.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            on: eventLoop,
+            logger: logger
+        )
+    }
+
     /// Execute a batch of statements.
     ///
     /// - Parameters:
@@ -392,6 +425,36 @@ public final class CassandraClient: CassandraSession, Sendable {
         parameters: [Statement.Value] = [],
         options: Statement.Options = .init(),
         logger: Logger? = .none
+    ) async throws -> [T] {
+        try await self.defaultSession.execute(
+            prepared: prepared,
+            parameters: parameters,
+            options: options,
+            logger: logger
+        )
+    }
+
+    /// Execute a ``PreparedStatement`` and decode each row into `model` using the default ``CassandraSession``.
+    ///
+    /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await cassandraClient.execute(prepared: statement, withModelType: Model.self)`.
+    ///
+    /// - Parameters:
+    ///   - prepared: The ``PreparedStatement`` to execute.
+    ///   - parameters: The values to bind to the statement's `?` placeholders.
+    ///   - options: Statement options (consistency, timeout, encryption context).
+    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - model: The type to decode each row into.
+    ///
+    /// - Returns: The decoded rows.
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    public func execute<T: Decodable>(
+        prepared: PreparedStatement,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        logger: Logger? = .none,
+        withModelType model: T.Type
     ) async throws -> [T] {
         try await self.defaultSession.execute(
             prepared: prepared,

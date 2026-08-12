@@ -715,6 +715,144 @@ final class EncryptionIntegrationTests: XCTestCase {
         XCTAssertEqual(results[0].secret.value, secretValue)
     }
 
+    /// async/await counterpart of `testColumnRegistrationWithPreparedStatementWithModelType`. The async
+    /// `execute(prepared:...withModelType:)` overload delegates to a separate inference method with its own
+    /// copy of the `encryptionTable` defaulting, so it needs its own coverage of both routes.
+    func testColumnRegistrationWithPreparedStatementWithModelTypeAsync() async throws {
+        let tableName = "test_colreg_prep_mt_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try await session.run("create table \(tableName) (user_id text primary key, secret blob)")
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+
+        self.recreateClient()
+
+        let userId = "user-prep-mt"
+        let secretValue = "prepared-secret"
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: .init(from: .string(userId))
+        )
+
+        let insertStmt = try await self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        )
+        _ = try await self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(secretValue), context: baseContext.forColumn("secret")),
+            ]
+        )
+
+        // Read the same row twice, sourcing `encryptionTable` a different way each pass:
+        // `false` sets it on the read options; `true` resolves it from the prepared statement.
+        for viaPreparedStatement in [false, true] {
+            let selectStmt = try await self.cassandraClient.prepare(
+                "select user_id, secret from \(tableName) where user_id = ?",
+                encryptionTable: viaPreparedStatement ? tableName : nil
+            )
+            var readOptions = CassandraClient.Statement.Options()
+            if !viaPreparedStatement {
+                readOptions.encryptionTable = tableName
+            }
+
+            // No type annotation on `results`: the `withModelType:` argument is the only thing binding `T`.
+            let results = try await self.cassandraClient.execute(
+                prepared: selectStmt,
+                parameters: [.string(userId)],
+                options: readOptions,
+                withModelType: UserWithSecret.self
+            )
+
+            XCTAssertEqual(results.count, 1, "viaPreparedStatement=\(viaPreparedStatement)")
+            XCTAssertEqual(results[0].user_id, userId, "viaPreparedStatement=\(viaPreparedStatement)")
+            XCTAssertEqual(results[0].secret.value, secretValue, "viaPreparedStatement=\(viaPreparedStatement)")
+        }
+    }
+
+    /// The `withModelType:` execute overload must decrypt an encrypted column on read regardless of how
+    /// `encryptionTable` reaches the decoder. Exercises both routes: the table set on the read `options`
+    /// (a plain pass-through, like `parameters` and `logger`), and the table resolved at execute time from
+    /// `prepared.encryptionTable` (the defaulting branch specific to `execute(prepared:)`). A refactor that
+    /// dropped either would fail here while passing every plaintext `withModelType:` test.
+    func testColumnRegistrationWithPreparedStatementWithModelType() throws {
+        let tableName = "test_colreg_prep_mt_elf_\(DispatchTime.now().uptimeNanoseconds)"
+        let keyspace = self.configuration.keyspace!
+
+        do {
+            let session = self.cassandraClient.makeSession(keyspace: self.configuration.keyspace)
+            defer { XCTAssertNoThrow(try session.shutdown()) }
+            try session.run("create table \(tableName) (user_id text primary key, secret blob)").wait()
+        }
+
+        let schema = try CassandraClient.EncryptionSchema(
+            keyspace: keyspace,
+            table: tableName,
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: ["secret"]
+        )
+        self.configuration.registerEncryptionSchema(schema)
+
+        self.recreateClient()
+
+        let userId = "user-prep-mt-elf"
+        let secretValue = "prepared-secret"
+        let baseContext = CassandraClient.EncryptionContext.Base(
+            keyspace: keyspace,
+            table: tableName,
+            primaryKey: .init(from: .string(userId))
+        )
+
+        let insertStmt = try self.cassandraClient.prepare(
+            "insert into \(tableName) (user_id, secret) values (?, ?)"
+        ).wait()
+        _ = try self.cassandraClient.execute(
+            prepared: insertStmt,
+            parameters: [
+                .string(userId),
+                .encryptedString(CassandraClient.Encrypted(secretValue), context: baseContext.forColumn("secret")),
+            ]
+        ).wait()
+
+        // Read the same row twice, sourcing `encryptionTable` a different way each pass:
+        // `false` sets it on the read options; `true` resolves it from the prepared statement.
+        for viaPreparedStatement in [false, true] {
+            let selectStmt = try self.cassandraClient.prepare(
+                "select user_id, secret from \(tableName) where user_id = ?",
+                encryptionTable: viaPreparedStatement ? tableName : nil
+            ).wait()
+            var readOptions = CassandraClient.Statement.Options()
+            if !viaPreparedStatement {
+                readOptions.encryptionTable = tableName
+            }
+
+            // No type annotation on `results`: the `withModelType:` argument is the only thing binding `T`.
+            let results = try self.cassandraClient.execute(
+                prepared: selectStmt,
+                parameters: [.string(userId)],
+                options: readOptions,
+                withModelType: UserWithSecret.self
+            ).wait()
+
+            XCTAssertEqual(results.count, 1, "viaPreparedStatement=\(viaPreparedStatement)")
+            XCTAssertEqual(results[0].user_id, userId, "viaPreparedStatement=\(viaPreparedStatement)")
+            XCTAssertEqual(results[0].secret.value, secretValue, "viaPreparedStatement=\(viaPreparedStatement)")
+        }
+    }
+
     /// Both encryptionContextBuilder and encryptionTable are set — builder wins.
     func testColumnRegistrationBuilderTakesPrecedence() throws {
         let tableName = "test_colreg_prec_\(DispatchTime.now().uptimeNanoseconds)"
