@@ -310,6 +310,20 @@ extension CassandraClient {
                     )
                 }
                 return value as! T
+            } else if type == Foundation.Decimal.self {
+                guard let value: Foundation.Decimal = row.column(key.stringValue)?.decimal else {
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
+                }
+                return value as! T
+            } else if type == [Foundation.Decimal].self {
+                guard let value: [Foundation.Decimal] = row.column(key.stringValue) else {
+                    throw DecodingError.typeMismatch(
+                        "value for \(key.stringValue) not found or of incorrect data type."
+                    )
+                }
+                return value as! T
             } else {
                 throw DecodingError.notSupported("Decoding of \(type) is not supported.")
             }
