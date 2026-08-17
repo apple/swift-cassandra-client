@@ -72,7 +72,8 @@ enum SharedTestTracer {
     }
 
     /// Thin accessor around the shipped `InMemoryTracer`, exposing finished spans as `CapturedSpan`s.
-    final class Recorder {
+    /// `Sendable` because the tracer it holds is (`Tracer` refines it) and is stored immutably.
+    final class Recorder: Sendable {
         let tracer = InMemoryTracer()
         var recorded: [CapturedSpan] { self.tracer.finishedSpans.map(CapturedSpan.init) }
         func reset() { self.tracer.clearAll(includingActive: true) }

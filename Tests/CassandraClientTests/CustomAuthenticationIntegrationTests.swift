@@ -28,15 +28,18 @@ import XCTest
 /// default `AllowAllAuthenticator` cluster the callbacks never fire, so all but the teardown test are gated
 /// behind `CASSANDRA_REQUIRE_AUTH` and `XCTSkip` when it is unset. The flag is set out-of-band, not probed,
 /// because `testClusterEnforcesAuthentication` is itself the probe.
+///
+/// The environment accessors are `static` so the `contactPointsProvider` closure never captures `self`:
+/// a test case is not `Sendable`, and they read only the process environment.
 final class CustomAuthenticationIntegrationTests: XCTestCase {
-    private var environment: [String: String] { ProcessInfo.processInfo.environment }
-    private var validUsername: String { self.environment["CASSANDRA_USER"] ?? "cassandra" }
-    private var validPassword: String { self.environment["CASSANDRA_PASSWORD"] ?? "cassandra" }
+    private static var environment: [String: String] { ProcessInfo.processInfo.environment }
+    private static var validUsername: String { Self.environment["CASSANDRA_USER"] ?? "cassandra" }
+    private static var validPassword: String { Self.environment["CASSANDRA_PASSWORD"] ?? "cassandra" }
 
     /// Skips a test unless `CASSANDRA_REQUIRE_AUTH` is set to a non-empty value, i.e. the caller asserts the
     /// target cluster enforces `PasswordAuthenticator`. See the type doc for why this is opt-in, not probed.
     private func requireAuthEnforcement() throws {
-        guard let value = self.environment["CASSANDRA_REQUIRE_AUTH"], !value.isEmpty else {
+        guard let value = Self.environment["CASSANDRA_REQUIRE_AUTH"], !value.isEmpty else {
             throw XCTSkip(
                 "set CASSANDRA_REQUIRE_AUTH=1 against an auth-enforcing cluster to run this test"
             )
@@ -49,9 +52,9 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
     private func makeConfiguration() -> CassandraClient.Configuration {
         var configuration = CassandraClient.Configuration(
             contactPointsProvider: { callback in
-                callback(.success([self.environment["CASSANDRA_HOST"] ?? "127.0.0.1"]))
+                callback(.success([Self.environment["CASSANDRA_HOST"] ?? "127.0.0.1"]))
             },
-            port: self.environment["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
+            port: Self.environment["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
         configuration.connectTimeoutMillis = 10_000
@@ -82,8 +85,8 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
     func testAuthenticatorConnectsAndSucceeds() throws {
         try self.requireAuthEnforcement()
         let authenticator = RecordingPlaintextAuthenticator(
-            username: self.validUsername,
-            password: self.validPassword
+            username: Self.validUsername,
+            password: Self.validPassword
         )
         var configuration = self.makeConfiguration()
         configuration.authenticator = authenticator
@@ -100,7 +103,7 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = PlaintextAuthenticator(
-            username: self.validUsername,
+            username: Self.validUsername,
             password: "wrong-\(UUID().uuidString)"
         )
         let client = self.makeClient(configuration)
@@ -117,8 +120,8 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = PlaintextAuthenticator(
-            username: self.validUsername,
-            password: self.validPassword
+            username: Self.validUsername,
+            password: Self.validPassword
         )
         configuration.username = "bogus-\(UUID().uuidString)"
         configuration.password = "bogus-\(UUID().uuidString)"
@@ -135,8 +138,8 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
     func testConcurrentSharedAuthenticator() throws {
         try self.requireAuthEnforcement()
         let authenticator = RecordingPlaintextAuthenticator(
-            username: self.validUsername,
-            password: self.validPassword
+            username: Self.validUsername,
+            password: Self.validPassword
         )
         var configuration = self.makeConfiguration()
         configuration.authenticator = authenticator
@@ -146,9 +149,7 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
 
         let iterations = 50
         let group = DispatchGroup()
-        let lock = NSLock()
-        var errors = [Swift.Error]()
-        var rowCounts = [Int]()
+        let results = NIOLockedValueBox<(rowCounts: [Int], errors: [Swift.Error])>(([], []))
 
         for _ in 0..<iterations {
             group.enter()
@@ -156,18 +157,15 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
                 defer { group.leave() }
                 do {
                     let count = Array(try client.query("select release_version from system.local").wait()).count
-                    lock.lock()
-                    rowCounts.append(count)
-                    lock.unlock()
+                    results.withLockedValue { $0.rowCounts.append(count) }
                 } catch {
-                    lock.lock()
-                    errors.append(error)
-                    lock.unlock()
+                    results.withLockedValue { $0.errors.append(error) }
                 }
             }
         }
         group.wait()
 
+        let (rowCounts, errors) = results.withLockedValue { ($0.rowCounts, $0.errors) }
         XCTAssertEqual(errors.count, 0, "concurrent queries through the shared authenticator: \(errors)")
         XCTAssertEqual(rowCounts.count, iterations)
         XCTAssertTrue(rowCounts.allSatisfy { $0 == 1 }, "every query returns exactly one row")
@@ -218,8 +216,8 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
 
         func connectQueryAndShutdown() throws {
             let authenticator = DeinitCountingAuthenticator(
-                username: self.validUsername,
-                password: self.validPassword,
+                username: Self.validUsername,
+                password: Self.validPassword,
                 deinitCounter: deinitCounter
             )
             var configuration = self.makeConfiguration()

@@ -198,9 +198,12 @@ final class SSLConfigurationTests: XCTestCase {
         return ssl
     }
 
-    private func makeCluster(_ configuration: CassandraClient.Configuration) throws -> Cluster {
+    /// Builds the cluster and discards it. `Cluster` is not `Sendable` — the library builds it on the event
+    /// loop for that reason — so the result is dropped there rather than carried back by `wait()`. The tests
+    /// assert on whether building throws; none of them use the cluster.
+    private func makeCluster(_ configuration: CassandraClient.Configuration) throws {
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { try? eventLoopGroup.syncShutdownGracefully() }
-        return try configuration.makeCluster(on: eventLoopGroup.next()).wait()
+        try configuration.makeCluster(on: eventLoopGroup.next()).map { _ in }.wait()
     }
 }
