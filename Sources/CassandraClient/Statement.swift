@@ -295,9 +295,26 @@ extension CassandraClient {
             return cass_statement_bind_collection(self.rawPointer, index, collection)
         }
 
-        /// Sets the paging size of the returned paginated results.
+        /// Sets the maximum number of rows the server returns per page for this statement.
+        ///
+        /// This bounds the `execute` variants that take a `Statement` and no `pageSize`, which
+        /// otherwise return every row: the result becomes a single page, and pairing this with
+        /// ``setPagingStateToken(_:)`` walks the rest by hand. The `execute` variants that do take a
+        /// `pageSize` set it from that argument, overwriting whatever is set here. The `query`
+        /// variants build their own statement, so this never reaches them.
+        ///
+        /// - Parameter pagingSize: Rows per page. Must be in `1...Int32.max`; a non-positive size
+        ///   disables paging in the driver rather than limiting the page, and is rejected here.
+        ///
+        /// - Note: The `EventLoopFuture` `execute` takes the statement as `sending`, so a hand-rolled
+        ///   loop needs a new `Statement` for each page.
         public func setPagingSize(_ pagingSize: Int) throws {
-            try checkResult { cass_statement_set_paging_size(self.rawPointer, Int32(clamping: pagingSize)) }
+            guard let size = Int32(exactly: pagingSize), size > 0 else {
+                throw CassandraClient.Error.badParams(
+                    "Paging size must be between 1 and \(Int32.max), got \(pagingSize)"
+                )
+            }
+            try checkResult { cass_statement_set_paging_size(self.rawPointer, size) }
         }
 
         /// Sets the starting page of the returned paginated results.
