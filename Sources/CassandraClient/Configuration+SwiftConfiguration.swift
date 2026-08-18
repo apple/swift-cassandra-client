@@ -29,7 +29,7 @@ extension CassandraClient.Configuration {
     ///   `configReader` on each cluster creation rather than captured, so a reloading provider's new seeds
     ///   apply to subsequent connections. A re-read that fails validation fails that connection.
     /// - `port` (int, optional, default: 9042): Port the cluster listens on, 1 through 65535.
-    /// - `protocolVersion` (int, optional, default: 4): Native protocol version, 1 through 5.
+    /// - `protocolVersion` (int, optional, default: 4): Native protocol version, either 3 or 4.
     /// - `username` (string, optional): Username for plain text authentication. Unused when ``authenticator`` is set in code.
     /// - `password` (string, optional, secret): Password for plain text authentication. Unused when ``authenticator`` is set in code.
     /// - `keyspace` (string, optional): Keyspace the session connects to.
@@ -80,9 +80,14 @@ extension CassandraClient.Configuration {
             )
         }
 
+        // The driver accepts only these two: 1 and 2 are below its lowest supported version and 5 is
+        // beta-only, so all three would fail at cluster creation.
+        let supportedProtocolVersions: [ProtocolVersion] = [.v3, .v4]
         let rawProtocolVersion = configReader.int(forKey: "protocolVersion", default: 4)
-        guard let protocolVersion = Int32(exactly: rawProtocolVersion).flatMap(ProtocolVersion.init(rawValue:)) else {
-            let valids = ProtocolVersion.allCases.map(\.rawValue.description).joined(separator: ", ")
+        guard let protocolVersion = Int32(exactly: rawProtocolVersion).flatMap(ProtocolVersion.init(rawValue:)),
+            supportedProtocolVersions.contains(protocolVersion)
+        else {
+            let valids = supportedProtocolVersions.map(\.rawValue.description).joined(separator: ", ")
             throw CassandraClient.ConfigurationError(
                 message: "'protocolVersion' \(rawProtocolVersion) is invalid. Valid values: \(valids)"
             )
@@ -126,9 +131,9 @@ extension CassandraClient.Configuration {
         self.randomizedContactPoints = configReader.bool(forKey: "randomizedContactPoints")
         self.compact = configReader.bool(forKey: "compact")
 
-        self.consistency = configReader.string(forKey: "consistency")
-        self.serialConsistency = configReader.string(forKey: "serialConsistency")
-        self.prepareStrategy = configReader.string(forKey: "prepareStrategy")
+        self.consistency = try configReader.string(forKey: "consistency")
+        self.serialConsistency = try configReader.string(forKey: "serialConsistency")
+        self.prepareStrategy = try configReader.string(forKey: "prepareStrategy")
 
         if let value = configReader.bool(forKey: "metricsEnabled") {
             self.metricsEnabled = value
@@ -194,7 +199,7 @@ extension CassandraClient.Configuration.SSL {
         self.init()
 
         self.trustedCertificates = configReader.stringArray(forKey: "trustedCertificates")
-        if let verifyFlag = configReader.string(forKey: "verifyFlag", as: VerifyFlag.self) {
+        if let verifyFlag = try configReader.string(forKey: "verifyFlag", asOrThrow: VerifyFlag.self) {
             self.verifyFlag = verifyFlag
         }
 
@@ -307,6 +312,22 @@ extension ConfigReader {
             )
         }
         return narrowed
+    }
+
+    fileprivate func string<T: RawRepresentable>(
+        forKey key: ConfigKey,
+        asOrThrow: T.Type = T.self
+    ) throws -> T? where T.RawValue == String {
+        guard let string = self.string(forKey: key) else {
+            return nil  // Value doesn't exist, fine
+        }
+        // Value does exist, must be valid
+        guard let value = T(rawValue: string) else {
+            throw CassandraClient.ConfigurationError(
+                message: "'\(key)' is not a valid \(T.self): \(string)"
+            )
+        }
+        return value
     }
 }
 #endif

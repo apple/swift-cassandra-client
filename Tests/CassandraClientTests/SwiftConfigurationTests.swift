@@ -56,7 +56,7 @@ struct SwiftConfigurationTests {
         let config = try self.makeConfiguration([
             "contactPoints": .init(.stringArray(["localhost", "192.168.1.1"]), isSecret: false),
             "port": 9043,
-            "protocolVersion": 5,
+            "protocolVersion": 3,
             "username": "cassandra",
             "password": "secret",
             "keyspace": "test",
@@ -106,7 +106,7 @@ struct SwiftConfigurationTests {
 
         #expect(try self.contactPoints(of: config) == ["localhost", "192.168.1.1"])
         #expect(config.port == 9043)
-        #expect(config.protocolVersion == .v5)
+        #expect(config.protocolVersion == .v3)
         #expect(config.username == "cassandra")
         #expect(config.password == "secret")
         #expect(config.keyspace == "test")
@@ -274,11 +274,62 @@ struct SwiftConfigurationTests {
         }
     }
 
+    @Test(arguments: [1, 2, 5])
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func protocolVersionTheDriverDoesNotSupportThrows(version: Int) {
+        // These are all ProtocolVersion cases, but the driver rejects them, so they are caught here
+        // rather than at connect time.
+        #expect(throws: CassandraClient.ConfigurationError.self) {
+            try self.makeConfiguration(adding: ["protocolVersion": .init(.int(version), isSecret: false)])
+        }
+    }
+
+    @Test(arguments: [3, 4])
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func supportedProtocolVersionsAreAccepted(version: Int) throws {
+        let config = try self.makeConfiguration(
+            adding: ["protocolVersion": .init(.int(version), isSecret: false)]
+        )
+        #expect(config.protocolVersion.rawValue == Int32(version))
+    }
+
     @Test
     @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func outOfRangeUInt32Throws() {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(adding: ["connectTimeoutMillis": -1])
+        }
+    }
+
+    // MARK: - Enumerated string values
+
+    @Test(
+        arguments: [
+            "consistency",
+            "serialConsistency",
+            "prepareStrategy",
+            "ssl.verifyFlag",
+        ] as [AbsoluteConfigKey]
+    )
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func unrecognizedEnumeratedValueThrows(key: AbsoluteConfigKey) throws {
+        let error = #expect(throws: CassandraClient.ConfigurationError.self) {
+            // 'ssl.enabled' so that the SSL scope, and with it 'ssl.verifyFlag', is read at all.
+            try self.makeConfiguration(adding: ["ssl.enabled": true, key: "notAValidValue"])
+        }
+        // The offending key is named, so which of several enumerated keys was wrong is unambiguous.
+        // Scoped keys are reported relative to their scope, hence the last component only.
+        let message = try #require(error).message
+        #expect(message.contains(try #require(key.components.last)))
+        #expect(message.contains("notAValidValue"))
+    }
+
+    @Test
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func serialConsistencyRejectsANonSerialLevel() {
+        // "quorum" is a valid 'consistency' but not a valid 'serialConsistency'.
+        #expect(throws: CassandraClient.ConfigurationError.self) {
+            try self.makeConfiguration(adding: ["serialConsistency": "quorum"])
         }
     }
 
