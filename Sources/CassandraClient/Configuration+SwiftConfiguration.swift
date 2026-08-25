@@ -197,8 +197,8 @@ extension CassandraClient.Configuration.SSL {
     /// - `enabled` (bool, optional, default: false): Whether SSL is enabled. If `false`, the initializer
     ///   returns `nil`.
     /// - `trustedCertificates` (string array, optional): PEM encoded certificates used to verify the peer.
-    /// - `verifyFlag` (string, optional, default: "default"): Verification performed on the peer's
-    ///   certificate, one of "default", "none", "peerCert", "peerIdentity" or "peerIdentityDNS".
+    /// - `verifyFlag` (string, optional, default: "peerIdentity"): Verification performed on the peer's
+    ///   certificate, one of "none", "peerCert", "peerIdentity" or "peerIdentityDNS".
     /// - `cert` (string, optional): PEM encoded client certificate chain.
     /// - `privateKey` (string, optional, secret): PEM encoded client private key.
     /// - `privateKeyPassword` (string, secret): Password for `privateKey`. Required when `privateKey` is set.
