@@ -242,6 +242,14 @@ extension CassandraClient {
                 try cluster.setCredentials(username: username, password: password)
             }
             if let ssl = self.ssl {
+                // The driver matches DNS identity against a hostname it only resolves when hostname
+                // resolution is on; without it peers reached by IP carry no hostname and every
+                // handshake fails the subject match.
+                if ssl.verifyFlag == .peerIdentityDNS, self.hostnameResolution != true {
+                    throw CassandraClient.Error.badParams(
+                        "SSL verifyFlag .peerIdentityDNS requires hostnameResolution to be true"
+                    )
+                }
                 try cluster.setSSL(try ssl.makeSSLContext())
             }
             if let value = self.numIOThreads {
@@ -315,13 +323,33 @@ extension CassandraClient {
             return cluster
         }
 
+        /// A warning to log when SSL is enabled but the peer's identity is not verified, otherwise
+        /// `nil`. The driver raises its own anti-pattern warning for this, but only for the
+        /// no-verification case and only from a startup message a non-DSE cluster never triggers.
+        internal var insecureSSLWarning: String? {
+            guard let ssl = self.ssl else { return nil }
+            switch ssl.verifyFlag {
+            case .none:
+                return
+                    "SSL is enabled with verifyFlag .none: the peer's certificate is not checked at "
+                    + "all, leaving the connection open to interception"
+            case .peerCert:
+                return
+                    "SSL is enabled with verifyFlag .peerCert: the peer's identity is not verified, "
+                    + "so any certificate chaining to trustedCertificates is accepted for any host"
+            case .peerIdentity, .peerIdentityDNS:
+                return nil
+            }
+        }
+
         public var description: String {
             """
             [\(Configuration.self):
             port: \(self.port),
             username: \(self.username ?? "none"),
             password: *****,
-            authenticator: \(self.authenticator == nil ? "none" : "custom")]
+            authenticator: \(self.authenticator == nil ? "none" : "custom"),
+            ssl: \(self.ssl.map { "enabled, verify \($0.verifyFlag)" } ?? "disabled")]
             """
         }
     }
@@ -492,28 +520,70 @@ internal final class Cluster {
 extension CassandraClient.Configuration {
     public struct SSL: Sendable {
         public var trustedCertificates: [String]?
-        public var verifyFlag: VerifyFlag = .default
+        public var verifyFlag: VerifyFlag = .peerIdentity
         public var cert: String?
         public var privateKey: (key: String, password: String)?
 
         /// Verification performed on the peer's certificate.
-        public enum VerifyFlag: String, Sendable {
-            /// Use DataStax driver's default, which is .peerCert
-            case `default`
-
+        ///
+        /// The driver checks chain validity and peer identity independently, so the identity cases
+        /// request both. ``VerifyFlag/peerCert`` accepts any certificate that chains to
+        /// ``trustedCertificates`` whatever its subject, which does not protect against a
+        /// network-position attacker holding another certificate from the same issuer;
+        /// ``VerifyFlag/none`` checks nothing at all.
+        ///
+        /// Every case except ``VerifyFlag/none`` validates the chain against ``trustedCertificates``
+        /// alone. The driver loads no system trust anchors, so leaving that property `nil` fails
+        /// verification rather than falling back to the platform's certificate store.
+        public enum VerifyFlag: String, Sendable, Equatable, CaseIterable {
             /// No verification is performed
             case none
-            /// Certificate is present and valid
+            /// Certificate is present and valid. The peer's identity is not checked.
             case peerCert
-            /// IP address matches the certificate's common name or one of its subject alternative names.
-            /// This implies the certificate is also present.
+            /// Certificate is present and valid, and the IP address the driver connected to matches
+            /// an `iPAddress` subject alternative name on the certificate. That address is the
+            /// resolved contact point for the node the driver reaches directly, and the
+            /// `system.peers` `rpc_address` for each node discovered from the cluster, so a peer's
+            /// certificate has to name its `rpc_address` even when that is not a configured contact
+            /// point. Matching consumes no hostname, so
+            /// ``CassandraClient/Configuration/hostnameResolution`` only adds a reverse lookup per
+            /// connection here.
             case peerIdentity
-            /// Hostname matches the certificate's common name or one of its subject alternative names.
-            /// This implies the certificate is also present. Hostname resolution must also be enabled.
+            /// Certificate is present and valid, and the peer's hostname matches a `dNSName` subject
+            /// alternative name on the certificate, or its common name when the certificate carries
+            /// no subject alternative names at all. Requires
+            /// ``CassandraClient/Configuration/hostnameResolution`` to be `true`, because the driver
+            /// reaches peers it discovers from the cluster by IP address and resolves their hostname
+            /// only when that is enabled.
+            ///
+            /// That reverse lookup does not require a PTR record. An address without one resolves to
+            /// its own numeric form, which then fails the subject match and is reported as a
+            /// certificate mismatch rather than a missing PTR record.
             case peerIdentityDNS
         }
 
         public init() {}
+
+        /// The driver verify flags for ``verifyFlag``. The driver reads these as a bitmask and runs
+        /// `SSL_get_verify_result` only when `CASS_SSL_VERIFY_PEER_CERT` is set, so the identity
+        /// cases set it alongside the subject-match bit; setting a subject-match bit alone would
+        /// match the subject without validating the chain.
+        internal var cassVerifyFlags: Int32 {
+            switch self.verifyFlag {
+            case .none:
+                return Int32(CASS_SSL_VERIFY_NONE.rawValue)
+            case .peerCert:
+                return Int32(CASS_SSL_VERIFY_PEER_CERT.rawValue)
+            case .peerIdentity:
+                return Int32(
+                    CASS_SSL_VERIFY_PEER_CERT.rawValue | CASS_SSL_VERIFY_PEER_IDENTITY.rawValue
+                )
+            case .peerIdentityDNS:
+                return Int32(
+                    CASS_SSL_VERIFY_PEER_CERT.rawValue | CASS_SSL_VERIFY_PEER_IDENTITY_DNS.rawValue
+                )
+            }
+        }
 
         func makeSSLContext() throws -> SSLContext {
             let sslContext = SSLContext()
@@ -524,18 +594,7 @@ extension CassandraClient.Configuration {
                 }
             }
 
-            switch self.verifyFlag {
-            case .none:
-                sslContext.setVerifyFlags(CASS_SSL_VERIFY_NONE)
-            case .peerCert:
-                sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_CERT)
-            case .peerIdentity:
-                sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_IDENTITY)
-            case .peerIdentityDNS:
-                sslContext.setVerifyFlags(CASS_SSL_VERIFY_PEER_IDENTITY_DNS)
-            case .default:
-                ()  // use DataStax driver's default
-            }
+            sslContext.setVerifyFlags(self.cassVerifyFlags)
 
             if let cert = self.cert {
                 try sslContext.setCert(cert)
@@ -552,6 +611,9 @@ extension CassandraClient.Configuration {
 internal final class SSLContext {
     let rawPointer: OpaquePointer
 
+    /// The verify flags last applied through ``setVerifyFlags(_:)``.
+    private(set) var verifyFlags: Int32 = Int32(CASS_SSL_VERIFY_PEER_CERT.rawValue)
+
     init() {
         self.rawPointer = cass_ssl_new()
     }
@@ -565,9 +627,11 @@ internal final class SSLContext {
         try self.checkResult { cass_ssl_add_trusted_cert(self.rawPointer, cert) }
     }
 
-    /// Sets verification performed on the peer's certificate.
-    func setVerifyFlags(_ flags: CassSslVerifyFlags_) {
-        cass_ssl_set_verify_flags(self.rawPointer, Int32(flags.rawValue))
+    /// Sets verification performed on the peer's certificate. `flags` is a bitwise OR of
+    /// `CassSslVerifyFlags` values. The C API offers no readback, so the mask is retained here.
+    func setVerifyFlags(_ flags: Int32) {
+        self.verifyFlags = flags
+        cass_ssl_set_verify_flags(self.rawPointer, flags)
     }
 
     /// Sets client-side certificate chain. This is used to authenticate the client on the server-side.

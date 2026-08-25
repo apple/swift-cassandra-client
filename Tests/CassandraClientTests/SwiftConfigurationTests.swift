@@ -375,7 +375,7 @@ struct SwiftConfigurationTests {
         let config = try self.makeConfiguration(adding: ["ssl.enabled": true])
         let ssl = try #require(config.ssl)
         #expect(ssl.trustedCertificates == nil)
-        #expect(ssl.verifyFlag == .default)
+        #expect(ssl.verifyFlag == .peerIdentity)
         #expect(ssl.cert == nil)
         #expect(ssl.privateKey == nil)
     }
