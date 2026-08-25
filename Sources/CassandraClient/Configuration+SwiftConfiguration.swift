@@ -14,6 +14,7 @@
 
 #if compiler(>=6.2)
 import Configuration
+import Logging
 
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Configuration {
@@ -56,7 +57,8 @@ extension CassandraClient.Configuration {
     /// - `metricsPollIntervalMillis` (int, optional): Metrics poller cadence in milliseconds. `0` leaves ``metricsEnabled`` on but stops the poller.
     /// - `metricsSessionName` (string, optional): Value of the `session` dimension on emitted metrics.
     /// - `ssl` (scoped, optional): SSL configuration read by ``CassandraClient/Configuration/SSL/init(configReader:)``.
-    ///   Only applied if `ssl.enabled` is `true`.
+    ///   Only applied if `ssl.enabled` is `true`. If it is not, but other `ssl` keys are set, those keys are
+    ///   ignored and a warning is logged to `logger`.
     /// - `loadBalancingStrategy` (scoped, optional): Load balancing strategy read by
     ///   ``CassandraClient/Configuration/LoadBalancingStrategy/init(configReader:)``. Only applied if
     ///   `loadBalancingStrategy.strategy` is present.
@@ -67,7 +69,11 @@ extension CassandraClient.Configuration {
     ///
     /// - Throws: If a value is out of range or is not one of the accepted values for its key, or a required key is missing. `contactPoints` is
     ///   validated here too, but because it is re-read it can also fail later, via the callback passed to ``contactPointsProvider``.
-    public init(configReader: ConfigReader) throws {
+    ///
+    /// - Parameters:
+    ///   - configReader: The reader to read configuration from.
+    ///   - logger: Logger for configuration warnings, such as SSL properties set while SSL is disabled
+    public init(configReader: ConfigReader, logger: Logger) throws {
         // Read once here so a malformed list is a configuration error at init rather than a connect-time
         // failure. The value is deliberately discarded: the provider below re-reads on every cluster
         // creation so that a reloading provider's new seeds take effect without a process restart.
@@ -143,8 +149,14 @@ extension CassandraClient.Configuration {
         }
         self.metricsSessionName = configReader.string(forKey: "metricsSessionName")
 
-        if let ssl = try SSL(configReader: configReader.scoped(to: "ssl")) {
+        let sslConfigReader = configReader.scoped(to: "ssl")
+        if let ssl = try SSL(configReader: sslConfigReader) {
             self.ssl = ssl
+        } else {
+            SSL.warnAboutIgnoredKeys(
+                configReader: sslConfigReader,
+                logger: logger
+            )
         }
         if let strategy = try LoadBalancingStrategy(
             configReader: configReader.scoped(to: "loadBalancingStrategy")
@@ -208,6 +220,39 @@ extension CassandraClient.Configuration.SSL {
             let password = try configReader.requiredString(forKey: "privateKeyPassword", isSecret: true)
             self.privateKey = (key: privateKey, password: password)
         }
+    }
+
+    /// Warns about SSL keys that are set but ignored because SSL is not enabled.
+    ///
+    /// Configuring certificates and then connecting in plain text is potentially a mistake, so we should make the user aware
+    internal static func warnAboutIgnoredKeys(configReader: ConfigReader, logger: Logger) {
+        var ignoredKeys: [String] = []
+        if configReader.stringArray(forKey: "trustedCertificates") != nil {
+            ignoredKeys.append("trustedCertificates")
+        }
+        if configReader.string(forKey: "verifyFlag") != nil {
+            ignoredKeys.append("verifyFlag")
+        }
+        if configReader.string(forKey: "cert") != nil {
+            ignoredKeys.append("cert")
+        }
+        if configReader.string(forKey: "privateKey", isSecret: true) != nil {
+            ignoredKeys.append("privateKey")
+        }
+        if configReader.string(forKey: "privateKeyPassword", isSecret: true) != nil {
+            ignoredKeys.append("privateKeyPassword")
+        }
+        guard !ignoredKeys.isEmpty else {
+            return
+        }
+        logger.warning(
+            "SSL properties are set but 'ssl.enabled' is not true, so they are ignored.",
+            metadata: [
+                CassandraClient.ConfigurationLogKey.ignoredKeys: .string(
+                    ignoredKeys.map { "ssl.\($0)" }.joined(separator: ", ")
+                )
+            ]
+        )
     }
 }
 

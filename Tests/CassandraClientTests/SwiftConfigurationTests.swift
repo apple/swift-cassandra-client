@@ -14,6 +14,7 @@
 
 #if compiler(>=6.2)
 import Configuration
+import Logging
 import NIOConcurrencyHelpers
 import Testing
 
@@ -24,7 +25,10 @@ struct SwiftConfigurationTests {
     private func makeConfiguration(
         _ values: [AbsoluteConfigKey: ConfigValue]
     ) throws -> CassandraClient.Configuration {
-        try CassandraClient.Configuration(configReader: ConfigReader(provider: InMemoryProvider(values: values)))
+        try CassandraClient.Configuration(
+            configReader: ConfigReader(provider: InMemoryProvider(values: values)),
+            logger: .init(label: "test")
+        )
     }
 
     /// A configuration with only the required keys set, for tests that add one key at a time.
@@ -37,6 +41,23 @@ struct SwiftConfigurationTests {
         ]
         all.merge(values) { _, new in new }
         return try self.makeConfiguration(all)
+    }
+
+    /// As ``makeConfiguration(adding:)``, but captures what the initializer logs.
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    private func makeConfigurationCapturingLogs(
+        adding values: [AbsoluteConfigKey: ConfigValue]
+    ) throws -> (CassandraClient.Configuration, TestLogCapture) {
+        var all: [AbsoluteConfigKey: ConfigValue] = [
+            "contactPoints": .init(.stringArray(["localhost"]), isSecret: false)
+        ]
+        all.merge(values) { _, new in new }
+        let (logger, capture) = makeCapturingLogger()
+        let configuration = try CassandraClient.Configuration(
+            configReader: ConfigReader(provider: InMemoryProvider(values: all)),
+            logger: logger
+        )
+        return (configuration, capture)
     }
 
     /// Resolves the contact points the configuration was built with. The provider synthesised from
@@ -203,7 +224,10 @@ struct SwiftConfigurationTests {
         let provider = MutableInMemoryProvider(
             initialValues: ["contactPoints": .init(.stringArray(["seed-one"]), isSecret: false)]
         )
-        let config = try CassandraClient.Configuration(configReader: ConfigReader(provider: provider))
+        let config = try CassandraClient.Configuration(
+            configReader: ConfigReader(provider: provider),
+            logger: .init(label: "test")
+        )
         #expect(try self.contactPoints(of: config) == ["seed-one"])
 
         provider.setValue(
@@ -219,7 +243,10 @@ struct SwiftConfigurationTests {
         let provider = MutableInMemoryProvider(
             initialValues: ["contactPoints": .init(.stringArray(["seed-one"]), isSecret: false)]
         )
-        let config = try CassandraClient.Configuration(configReader: ConfigReader(provider: provider))
+        let config = try CassandraClient.Configuration(
+            configReader: ConfigReader(provider: provider),
+            logger: .init(label: "test")
+        )
         #expect(try self.contactPoints(of: config) == ["seed-one"])
 
         // Reloaded into an invalid state: the connection must fail rather than reuse "seed-one".
@@ -359,6 +386,38 @@ struct SwiftConfigurationTests {
         #expect(throws: (any Error).self) {
             try self.makeConfiguration(adding: ["ssl.enabled": true, "ssl.privateKey": "client-key"])
         }
+    }
+
+    @Test(arguments: [nil, false] as [Bool?])
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func sslPropertiesSetWhileDisabledWarns(enabled: Bool?) throws {
+        var values: [AbsoluteConfigKey: ConfigValue] = [
+            "ssl.trustedCertificates": .init(.stringArray(["cert-one"]), isSecret: false),
+            "ssl.verifyFlag": "peerIdentityDNS",
+            "ssl.cert": "client-cert",
+            "ssl.privateKey": .init(.string("client-key"), isSecret: true),
+            "ssl.privateKeyPassword": .init(.string("key-password"), isSecret: true),
+        ]
+        if let enabled {
+            values["ssl.enabled"] = .init(.bool(enabled), isSecret: false)
+        }
+        let (config, logs) = try self.makeConfigurationCapturingLogs(adding: values)
+
+        #expect(config.ssl == nil)
+        let warning = try #require(logs.all.first { $0.level == .warning })
+        #expect(logs.all.filter { $0.level == .warning }.count == 1)
+        #expect(
+            warning.metadata[CassandraClient.ConfigurationLogKey.ignoredKeys]?.description
+                == "ssl.trustedCertificates, ssl.verifyFlag, ssl.cert, ssl.privateKey, ssl.privateKeyPassword"
+        )
+    }
+
+    @Test
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func sslDisabledWithNoSSLPropertiesDoesNotWarn() throws {
+        let (config, logs) = try self.makeConfigurationCapturingLogs(adding: ["ssl.enabled": false])
+        #expect(config.ssl == nil)
+        #expect(logs.all.filter { $0.level >= .warning }.isEmpty)
     }
 
     // MARK: - Load balancing

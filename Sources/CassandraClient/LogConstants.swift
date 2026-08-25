@@ -25,6 +25,11 @@ extension CassandraClient {
         static let boundValues = "request.boundValues"
     }
 
+    /// Structured-log metadata key names for configuration diagnostics.
+    internal enum ConfigurationLogKey {
+        static let ignoredKeys = "configuration.ignoredKeys"
+    }
+
     /// Structured-log metadata key names for encryption. Values are unchanged from their original
     /// definition (shipped keys — consumers may filter on them), just relocated here (by-kind).
     internal enum EncryptionLogKey {
