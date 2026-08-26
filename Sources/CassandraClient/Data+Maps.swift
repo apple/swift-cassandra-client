@@ -331,16 +331,7 @@ extension CassandraClient.Column {
             let error = cass_value_get_bool(pointer, &value)
             return error == CASS_OK ? (value == cass_true) as? T : nil
         case is String.Type:
-            var stringPtr: UnsafePointer<CChar>?
-            var stringSize = 0
-            let error = cass_value_get_string(pointer, &stringPtr, &stringSize)
-            guard let ptr = stringPtr, error == CASS_OK else {
-                return nil
-            }
-            let buffer = UnsafeBufferPointer(start: ptr, count: stringSize)
-            return buffer.withMemoryRebound(to: UInt8.self) {
-                String(decoding: $0, as: UTF8.self) as? T
-            }
+            return toString(cassValue: pointer) as? T
         case is Foundation.UUID.Type:
             var value = CassUuid()
             let error = cass_value_get_uuid(pointer, &value)
