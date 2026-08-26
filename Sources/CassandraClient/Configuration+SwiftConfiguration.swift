@@ -24,6 +24,10 @@ extension CassandraClient.Configuration {
     /// property at its default, and every value is read once here — later provider updates do not affect the
     /// returned configuration. `contactPoints` is the only exception.
     ///
+    /// To supply the contact points in code instead — e.g. from service discovery — use
+    /// ``init(configReader:contactPointsProvider:logger:)``, which reads every other key exactly as this
+    /// initializer does.
+    ///
     /// ## Configuration keys:
     /// - `contactPoints` (string array, required): Initial contact points of the Cassandra cluster. Must hold
     ///   at least one entry, none of them blank. Unlike every other key, this one is re-read from
@@ -79,6 +83,68 @@ extension CassandraClient.Configuration {
         // creation so that a reloading provider's new seeds take effect without a process restart.
         _ = try Self.contactPoints(from: configReader)
 
+        let (port, protocolVersion) = try Self.portAndProtocolVersion(from: configReader)
+        self.init(
+            contactPointsProvider: { callback in
+                // A re-read that no longer validates fails the connection rather than falling back to the
+                // seeds from init: silently connecting with stale seeds is far harder to diagnose.
+                callback(Result { try Self.contactPoints(from: configReader) })
+            },
+            port: port,
+            protocolVersion: protocolVersion
+        )
+
+        try self.read(from: configReader, logger: logger)
+    }
+
+    /// Initializes ``CassandraClient/Configuration`` from a `ConfigReader`, with the cluster's contact
+    /// points supplied in code rather than read from configuration.
+    ///
+    /// Use this initializer when the contact points come from somewhere other than configuration — service
+    /// discovery, for example. Every key documented on ``init(configReader:logger:)`` is read in the same way,
+    /// except `contactPoints`, which is ignored here. A warning is logged to `logger` if it is set.
+    ///
+    /// - Throws: If a value is out of range or is not one of the accepted values for its key, or a required
+    ///   key is missing.
+    ///
+    /// - Parameters:
+    ///   - configReader: The reader to read configuration from.
+    ///   - contactPointsProvider: Provides the initial `ContactPoints` of the Cassandra cluster, and is
+    ///     invoked once per cluster creation. This can be a subset since each Cassandra instance is capable
+    ///     of discovering its peers.
+    ///   - logger: Logger for configuration warnings, such as SSL properties set while SSL is disabled
+    public init(
+        configReader: ConfigReader,
+        contactPointsProvider:
+            @escaping @Sendable (@escaping @Sendable (Result<ContactPoints, Swift.Error>) -> Void) ->
+            Void,
+        logger: Logger
+    ) throws {
+        if configReader.stringArray(forKey: "contactPoints") != nil {
+            logger.warning(
+                "'contactPoints' is set but the contact points are supplied in code, so the key is ignored.",
+                metadata: [
+                    CassandraClient.ConfigurationLogKey.ignoredKeys: .string("contactPoints")
+                ]
+            )
+        }
+
+        let (port, protocolVersion) = try Self.portAndProtocolVersion(from: configReader)
+        self.init(
+            contactPointsProvider: contactPointsProvider,
+            port: port,
+            protocolVersion: protocolVersion
+        )
+
+        try self.read(from: configReader, logger: logger)
+    }
+
+    /// Reads and validates `port` and `protocolVersion`, which the designated initializer requires up front.
+    ///
+    /// - Throws: If either value is out of range, or `protocolVersion` is one the driver rejects.
+    private static func portAndProtocolVersion(
+        from configReader: ConfigReader
+    ) throws -> (port: Int32, protocolVersion: ProtocolVersion) {
         let rawPort = configReader.int(forKey: "port", default: 9042)
         guard let port = Int32(exactly: rawPort), (1...65535).contains(port) else {
             throw CassandraClient.ConfigurationError(
@@ -99,16 +165,12 @@ extension CassandraClient.Configuration {
             )
         }
 
-        self.init(
-            contactPointsProvider: { callback in
-                // A re-read that no longer validates fails the connection rather than falling back to the
-                // seeds from init: silently connecting with stale seeds is far harder to diagnose.
-                callback(Result { try Self.contactPoints(from: configReader) })
-            },
-            port: port,
-            protocolVersion: protocolVersion
-        )
+        return (port, protocolVersion)
+    }
 
+    /// Reads every property other than the contact points, `port` and `protocolVersion`, which each
+    /// initializer handles itself.
+    private mutating func read(from configReader: ConfigReader, logger: Logger) throws {
         self.username = configReader.string(forKey: "username")
         self.password = configReader.string(forKey: "password", isSecret: true)
         self.keyspace = configReader.string(forKey: "keyspace")
