@@ -1067,7 +1067,7 @@ extension CassandraClient {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
 
             do {
-                try statement.setPagingSize(pageSize)
+                try statement.setPagingSize(Int(pageSize))
             } catch {
                 if let cassError = error as? CassandraClient.Error {
                     CassandraClient.RequestLog.logFailure(
