@@ -217,6 +217,12 @@ extension CassandraClient {
         public func isNull() -> Bool {
             cass_value_is_null(self.rawPointer) == cass_true
         }
+
+        /// Whether this column's CQL type is textual, so a `nil` from ``string`` means the stored bytes
+        /// are not valid UTF-8 rather than that the column holds another type.
+        internal var isTextType: Bool {
+            isTextValueType(cassValue: self.rawPointer)
+        }
     }
 
     /// A reusable page token that can be used by `Statement` to resume querying
@@ -226,7 +232,7 @@ extension CassandraClient {
     ///   bytes, so a token can only be vended by ``CassandraClient/Rows/opaquePagingStateToken()``
     ///   and cannot be serialized through this library. Adding a public initializer or a public
     ///   bytes accessor would let a caller move a paging state across a trust boundary.
-    public struct OpaquePagingStateToken: Equatable, Sendable {
+    public struct OpaquePagingStateToken: Sendable, Hashable {
         let token: [UInt8]
 
         func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
@@ -238,12 +244,7 @@ extension CassandraClient {
 // MARK: - Utils
 
 func toString(cassValue: OpaquePointer) -> String? {
-    let valueType = cass_value_type(cassValue)
-    guard
-        valueType == CASS_VALUE_TYPE_ASCII
-            || valueType == CASS_VALUE_TYPE_TEXT
-            || valueType == CASS_VALUE_TYPE_VARCHAR
-    else {
+    guard isTextValueType(cassValue: cassValue) else {
         return nil
     }
     var value: UnsafePointer<CChar>?
@@ -256,6 +257,13 @@ func toString(cassValue: OpaquePointer) -> String? {
     return stringBuffer.withMemoryRebound(to: UInt8.self) {
         String(bytes: $0, encoding: .utf8)
     }
+}
+
+private func isTextValueType(cassValue: OpaquePointer) -> Bool {
+    let valueType = cass_value_type(cassValue)
+    return valueType == CASS_VALUE_TYPE_ASCII
+        || valueType == CASS_VALUE_TYPE_TEXT
+        || valueType == CASS_VALUE_TYPE_VARCHAR
 }
 
 // MARK: - Int8

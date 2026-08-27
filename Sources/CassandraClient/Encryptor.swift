@@ -26,7 +26,7 @@ extension CassandraClient {
     ///
     /// Renaming keyspace, table, or column after data has been encrypted
     /// will make that data permanently unreadable.
-    public struct EncryptionContext {
+    public struct EncryptionContext: Hashable {
         public let keyspace: String
         public let table: String
         public let column: String
@@ -43,7 +43,7 @@ extension CassandraClient {
         internal var contextString: String { "\(self.keyspace).\(self.table).\(self.column)" }
 
         /// Base context without a column name. Use ``forColumn(_:)`` to produce a full ``EncryptionContext``.
-        public struct Base: Sendable {
+        public struct Base: Sendable, Hashable {
             public let keyspace: String
             public let table: String
             public let primaryKey: PrimaryKey
@@ -78,7 +78,7 @@ extension CassandraClient {
     /// This ensures composite keys are unambiguous — for example,
     /// `PrimaryKey(from: .string("ab"), .string("c"))` produces different bytes
     /// from `PrimaryKey(from: .string("a"), .string("bc"))`.
-    public struct PrimaryKey: Sendable, Equatable {
+    public struct PrimaryKey: Sendable, Hashable {
         internal let data: Data
 
         public init(from components: CassandraClient.KeyComponent...) {
@@ -685,7 +685,7 @@ extension CassandraClient {
     /// Type tag for key columns used in column registration.
     ///
     /// New column types can be added without breaking existing consumers.
-    public struct KeyColumnType: Sendable, Equatable {
+    public struct KeyColumnType: Sendable, Hashable {
         internal let rawValue: String
 
         public static let string = KeyColumnType(rawValue: "string")
@@ -704,9 +704,9 @@ extension CassandraClient {
     ///
     /// Register a schema via ``Configuration/registerEncryptionSchema(_:)`` so the decoder
     /// can build ``EncryptionContext/Base`` per row without an `encryptionContextBuilder` closure.
-    public struct EncryptionSchema: Sendable {
+    public struct EncryptionSchema: Sendable, Hashable {
         /// A column in the table's primary key, used to build the PrimaryKey for DEK derivation.
-        public struct KeyColumn: Sendable {
+        public struct KeyColumn: Sendable, Hashable {
             public let name: String
             public let type: KeyColumnType
 
@@ -720,13 +720,18 @@ extension CassandraClient {
         public let table: String
         public let keyColumns: [KeyColumn]
         /// Names of all encrypted regular columns in the table.
+        ///
+        /// Used only by write-path binding validation; see ``Statement/Options/encryptionTable``
+        /// for what each execution path enforces. Decryption is driven by the declared property
+        /// type on the decoded model, so a schema registered only to build row contexts for reads
+        /// can pass an empty set.
         public let encryptedColumns: Set<String>
 
         public init(
             keyspace: String,
             table: String,
             keyColumns: [KeyColumn],
-            encryptedColumns: Set<String> = []
+            encryptedColumns: Set<String>
         ) throws {
             let keyColumnNames = Set(keyColumns.map(\.name))
             let overlap = keyColumnNames.intersection(encryptedColumns)

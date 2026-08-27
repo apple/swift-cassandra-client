@@ -203,7 +203,7 @@ import NIOCore  // for async-await bridge
     ) async throws
 
     /// Terminate the session and free resources.
-    @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdownAsync()")
+    @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
     func shutdown() throws
 
     /// Terminate the session and free resources.
@@ -836,7 +836,7 @@ extension CassandraClient {
             }
         }
 
-        @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdownAsync()")
+        @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
         func shutdown() throws {
             enum Action {
                 case alreadyShut

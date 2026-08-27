@@ -17,7 +17,7 @@ import Foundation
 
 extension CassandraClient {
     /// The type of a batch operation.
-    public struct BatchType: Sendable, Equatable {
+    public struct BatchType: Sendable, Hashable {
         let rawValue: CassBatchType
 
         /// All statements are applied atomically with a write to the batch log.
@@ -29,13 +29,16 @@ extension CassandraClient {
     }
 
     /// A batch of statements to execute in Cassandra.
+    ///
+    /// Not `Sendable`: a `Batch` must not be used concurrently, and `~Copyable` enforces single
+    /// ownership so it cannot be reused after execution.
     public struct Batch: ~Copyable {
         internal let rawPointer: OpaquePointer
         internal let resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)?
 
         internal init(
             configuration: Configuration,
-            resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)? = nil
+            resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)?
         ) throws {
             self.rawPointer = cass_batch_new(configuration.type.rawValue)
             self.resolver = resolver
@@ -132,6 +135,10 @@ extension CassandraClient {
         }
     }
 }
+
+// `Batch` is intentionally not `Sendable`; see the type's documentation.
+@available(*, unavailable)
+extension CassandraClient.Batch: Sendable {}
 
 private func checkResult(body: () -> CassError) throws {
     let result = body()

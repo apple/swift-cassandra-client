@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 internal import CDataStaxDriver
+import Foundation
 
 extension CassandraClient {
     /// Possible ``CassandraClient`` errors.
@@ -797,6 +798,11 @@ extension CassandraClient {
     }
 }
 
+extension CassandraClient.Error: LocalizedError {
+    /// Backs `localizedDescription`, which otherwise reports a generic Foundation message.
+    public var errorDescription: String? { self.description }
+}
+
 extension CassandraClient {
     public struct ConfigurationError: Swift.Error, CustomStringConvertible {
         public let message: String
@@ -805,6 +811,11 @@ extension CassandraClient {
             "Configuration error: \(self.message)"
         }
     }
+}
+
+extension CassandraClient.ConfigurationError: LocalizedError {
+    /// Backs `localizedDescription`, which otherwise reports a generic Foundation message.
+    public var errorDescription: String? { self.description }
 }
 
 extension CassandraClient {

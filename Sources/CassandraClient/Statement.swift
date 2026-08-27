@@ -490,9 +490,11 @@ extension CassandraClient {
         }
 
         public struct Options: Sendable, CustomStringConvertible {
-            /// Sets the statement's consistency level. Default is `.localOne`.
+            /// Sets the statement's consistency level. `nil` inherits
+            /// ``CassandraClient/Configuration/consistency``.
             public var consistency: CassandraClient.Consistency?
-            /// Sets the statement's request timeout in milliseconds. Default is `CASS_UINT64_MAX`
+            /// Sets the statement's request timeout in milliseconds. `nil` inherits
+            /// ``CassandraClient/Configuration/requestTimeoutMillis``.
             public var requestTimeout: UInt64?
 
             /// Type-erased backing store for ``encryptionContextBuilder``.
@@ -523,6 +525,14 @@ extension CassandraClient {
             /// - Important: The query must SELECT all primary key columns registered in the schema.
             ///   The decoder reads these columns from each result row to build the ``PrimaryKey`` for key derivation.
             ///   Omitting a key column will cause decryption to fail at runtime.
+            ///
+            /// - Important: What binding validation enforces depends on the execution path.
+            ///   Prepared statement execution maps each parameter to its column via statement metadata
+            ///   and checks both directions: a registered column must receive an encrypted value, and an
+            ///   unregistered one must not. Other execution paths have no parameter column names, so they
+            ///   check only that each encrypted value's ``EncryptionContext`` names a registered column —
+            ///   a plaintext value bound to a registered column is written as-is. Neither path verifies
+            ///   that a value's context names the column it is actually bound to.
             @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionTable: String? {
                 get { self._encryptionTable }

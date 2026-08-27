@@ -1013,7 +1013,8 @@ final class EncryptionIntegrationTests: XCTestCase {
         let schema = try CassandraClient.EncryptionSchema(
             keyspace: keyspace,
             table: tableName,
-            keyColumns: [.init(name: "user_id", type: .string)]
+            keyColumns: [.init(name: "user_id", type: .string)],
+            encryptedColumns: []
         )
         self.configuration.registerEncryptionSchema(schema)
 
