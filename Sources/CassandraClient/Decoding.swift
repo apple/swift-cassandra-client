@@ -81,6 +81,10 @@ extension CassandraClient {
         /// distinct causes into `nil` — a column the row lacks, a NULL value, a stored type that cannot
         /// convert, and a text column whose bytes are not valid UTF-8 — so probe the untyped accessor
         /// to tell them apart.
+        ///
+        /// The probe repeats the lookup the caller just made. That is deliberate: it runs only once that
+        /// lookup has already returned `nil`, so it never costs the success path, and classifying here
+        /// rather than at each call site keeps every one of them a single `throw`.
         private func columnFailure(_ type: Any.Type, forKey key: Key) -> Swift.DecodingError {
             guard let column: Column = self.row.column(key.stringValue) else {
                 return .columnMissing(forKey: key, codingPath: self.codingPath)
