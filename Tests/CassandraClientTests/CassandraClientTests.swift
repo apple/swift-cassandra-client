@@ -427,7 +427,7 @@ final class Tests: XCTestCase {
         XCTAssertLessThanOrEqual(
             secondIDs.count,
             pageSize,
-            "the resumed page should be bounded the same way"
+            "the resumed page should not exceed the page size"
         )
         XCTAssertFalse(secondIDs.isEmpty, "the resumed page should not be empty")
         XCTAssertTrue(
