@@ -47,8 +47,8 @@ extension CassandraClient {
     internal enum TraceAttributeKey {
         /// Current OTel key (`db.cassandra.consistency_level` is deprecated upstream in favor of this).
         static let consistencyLevel = "cassandra.consistency.level"
-        /// Shared failure classification — the same concept logging emits as `request.errorCategory` and
-        /// metrics tag as `errorCategory`; value is the ``CassandraClient/Error`` category (`category.rawValue`).
+        /// Shared failure classification — the same concept logging emits as `request.errorCategory`;
+        /// value is the ``CassandraClient/Error`` category (`category.rawValue`).
         static let errorCategory = "cassandra.error.category"
     }
 }

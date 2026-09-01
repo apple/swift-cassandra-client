@@ -15,7 +15,7 @@
 internal import CDataStaxDriver
 
 /// ``CassandraClient`` metrics.
-public struct CassandraMetrics: Sendable, Codable {
+public struct CassandraMetrics: Sendable, Hashable, Codable {
     // MARK: - Requests
 
     /// Minimum in microseconds
