@@ -71,6 +71,53 @@ struct SwiftConfigurationTests {
         return try #require(result.withLockedValue { $0 }).get()
     }
 
+    /// As ``makeConfiguration(_:)``, but with the contact points supplied in code.
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    private func makeConfiguration(
+        _ values: [AbsoluteConfigKey: ConfigValue],
+        contactPointsProvider:
+            @escaping @Sendable (
+                @escaping @Sendable (Result<CassandraClient.Configuration.ContactPoints, Swift.Error>) -> Void
+            ) -> Void
+    ) throws -> CassandraClient.Configuration {
+        try CassandraClient.Configuration(
+            configReader: ConfigReader(provider: InMemoryProvider(values: values)),
+            contactPointsProvider: contactPointsProvider,
+            logger: .init(label: "test")
+        )
+    }
+
+    /// As ``makeConfiguration(_:contactPointsProvider:)``, but captures what the initializer logs.
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    private func makeConfigurationCapturingLogs(
+        _ values: [AbsoluteConfigKey: ConfigValue],
+        contactPointsProvider:
+            @escaping @Sendable (
+                @escaping @Sendable (Result<CassandraClient.Configuration.ContactPoints, Swift.Error>) -> Void
+            ) -> Void
+    ) throws -> (CassandraClient.Configuration, TestLogCapture) {
+        let (logger, capture) = makeCapturingLogger()
+        let configuration = try CassandraClient.Configuration(
+            configReader: ConfigReader(provider: InMemoryProvider(values: values)),
+            contactPointsProvider: contactPointsProvider,
+            logger: logger
+        )
+        return (configuration, capture)
+    }
+
+    /// A provider that yields a fixed set of contact points
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    private static func staticProvider(
+        _ contactPoints: CassandraClient.Configuration.ContactPoints
+    )
+        -> @Sendable (@escaping @Sendable (Result<CassandraClient.Configuration.ContactPoints, Swift.Error>) -> Void)
+        -> Void
+    {
+        { callback in callback(.success(contactPoints)) }
+    }
+
+    private struct DiscoveryFailure: Swift.Error {}
+
     @Test
     @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func allPropertiesAreSetFromConfig() throws {
@@ -274,6 +321,74 @@ struct SwiftConfigurationTests {
         #expect(throws: (any Error).self) {
             try self.makeConfiguration(values)
         }
+    }
+
+    // MARK: - Contact points supplied in code
+
+    @Test
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func contactPointsProviderSuppliesTheContactPoints() throws {
+        let (config, logs) = try self.makeConfigurationCapturingLogs(
+            [:],
+            contactPointsProvider: Self.staticProvider(["discovered-one", "discovered-two"])
+        )
+        #expect(try self.contactPoints(of: config) == ["discovered-one", "discovered-two"])
+        #expect(logs.all.filter { $0.level >= .warning }.isEmpty)
+    }
+
+    @Test
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func contactPointsProviderFailureIsSurfacedToTheCallback() throws {
+        // Discovery failing is the normal transient state for a provider supplied in code, so the error must
+        // reach the caller rather than be swallowed into an empty contact point list.
+        let config = try self.makeConfiguration(
+            [:],
+            contactPointsProvider: { callback in callback(.failure(DiscoveryFailure())) }
+        )
+        #expect(throws: DiscoveryFailure.self) {
+            try self.contactPoints(of: config)
+        }
+    }
+
+    @Test
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func otherPropertiesAreStillReadWhenContactPointsAreSuppliedInCode() throws {
+        let config = try self.makeConfiguration(
+            [
+                "port": 9043,
+                "protocolVersion": 3,
+                "keyspace": "test",
+                "consistency": "localQuorum",
+                "ssl.enabled": true,
+                "ssl.verifyFlag": "peerCert",
+                "loadBalancingStrategy.strategy": "dataCenterAware",
+                "loadBalancingStrategy.localDataCenter": "dc1",
+            ],
+            contactPointsProvider: Self.staticProvider(["discovered"])
+        )
+
+        #expect(config.port == 9043)
+        #expect(config.protocolVersion == .v3)
+        #expect(config.keyspace == "test")
+        #expect(config.consistency == .localQuorum)
+        #expect(config.ssl?.verifyFlag == .peerCert)
+        #expect(config.loadBalancingStrategy == .dataCenterAware(.init(localDataCenter: "dc1")))
+    }
+
+    @Test
+    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+    func configuredContactPointsAreIgnoredAndWarnedAboutWhenSuppliedInCode() throws {
+        let (config, logs) = try self.makeConfigurationCapturingLogs(
+            ["contactPoints": .init(.stringArray(["from-config"]), isSecret: false)],
+            contactPointsProvider: Self.staticProvider(["from-provider"])
+        )
+
+        #expect(try self.contactPoints(of: config) == ["from-provider"])
+        let warning = try #require(logs.all.first { $0.level == .warning })
+        #expect(logs.all.filter { $0.level == .warning }.count == 1)
+        #expect(
+            warning.metadata[CassandraClient.ConfigurationLogKey.ignoredKeys]?.description == "contactPoints"
+        )
     }
 
     // MARK: - Port and protocol version
