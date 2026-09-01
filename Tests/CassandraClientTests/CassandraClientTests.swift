@@ -371,6 +371,71 @@ final class Tests: XCTestCase {
         XCTAssertEqual(id1.int32, id2.int32)
     }
 
+    /// A page size set on the statement itself bounds the result of a plain (non-paginated) execute,
+    /// which is what lets a caller drive paging by hand: read a page, keep its token, resume from it.
+    func testPagingSizeOnStatement() throws {
+        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+        try self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+            .wait()
+
+        let options = CassandraClient.Statement.Options(consistency: .localQuorum)
+        let count = 50
+        let pageSize = 10
+        var futures = [EventLoopFuture<Void>]()
+        for index in 0..<count {
+            futures.append(
+                self.cassandraClient.run(
+                    "insert into \(tableName) (id, data) values (?, ?);",
+                    parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
+                    options: options
+                )
+            )
+        }
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
+        XCTAssertNoThrow(try EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next()).wait())
+
+        let query = "select id, data from \(tableName);"
+
+        // Control: the same execute on a statement with no page size returns every row.
+        let unboundedStatement = try CassandraClient.Statement(query: query)
+        let allRows = try self.cassandraClient.execute(statement: unboundedStatement, on: nil).wait()
+        XCTAssertEqual(allRows.count, count, "a statement with no page size should return every row")
+
+        let firstStatement = try CassandraClient.Statement(query: query)
+        try firstStatement.setPagingSize(pageSize)
+        let firstPage = try self.cassandraClient.execute(statement: firstStatement, on: nil).wait()
+        let firstIDs = firstPage.compactMap { $0.column(0)?.int32 }
+        // Cassandra may return a short page, so the bound is what matters, not an exact count.
+        XCTAssertLessThanOrEqual(
+            firstIDs.count,
+            pageSize,
+            "the page size set on the statement should bound the page"
+        )
+        XCTAssertFalse(firstIDs.isEmpty, "the page should not be empty")
+
+        // Stop here if the page was not bounded: the result then has no paging state, and reading its
+        // token would throw over the assertion failure above rather than reporting it.
+        guard !firstIDs.isEmpty, firstIDs.count < count else { return }
+
+        // Resuming from the first page's token with the same page size yields the following page.
+        let secondStatement = try CassandraClient.Statement(query: query)
+        try secondStatement.setPagingSize(pageSize)
+        try secondStatement.setPagingStateToken(try firstPage.opaquePagingStateToken())
+        let secondPage = try self.cassandraClient.execute(statement: secondStatement, on: nil).wait()
+        let secondIDs = secondPage.compactMap { $0.column(0)?.int32 }
+        XCTAssertLessThanOrEqual(
+            secondIDs.count,
+            pageSize,
+            "the resumed page should not exceed the page size"
+        )
+        XCTAssertFalse(secondIDs.isEmpty, "the resumed page should not be empty")
+        XCTAssertTrue(
+            Set(firstIDs).isDisjoint(with: Set(secondIDs)),
+            "the resumed page should not repeat rows from the first page"
+        )
+    }
+
     /// Exhaustion edge (EventLoopFuture API): once every page has been consumed,
     /// `hasMorePages` reads `false` and a further `nextPage()` fails with
     /// `CassandraClient.Error.rowsExhausted`.

@@ -139,7 +139,8 @@ public final class CassandraClient: CassandraSession, Sendable {
 
     /// Execute a ``Statement`` using the default ``CassandraSession`` on the given `EventLoop` or create a new one.
     ///
-    /// **All** rows are returned.
+    /// **All** rows are returned, unless the statement sets a page size with
+    /// ``Statement/setPagingSize(_:)``, which limits the result to a single page.
     ///
     /// - Parameters:
     ///   - statement: The ``Statement`` to execute.
@@ -163,7 +164,8 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///
     /// - Parameters:
     ///   - statement: The ``Statement`` to execute.
-    ///   - pageSize: The maximum number of rows returned per page.
+    ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
+    ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
     ///   - eventLoop: The `EventLoop` to use, or create a new one.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
@@ -477,7 +479,8 @@ public final class CassandraClient: CassandraSession, Sendable {
 extension CassandraClient {
     /// Execute a ``Statement`` using the default ``CassandraSession``.
     ///
-    /// **All** rows are returned.
+    /// **All** rows are returned, unless the statement sets a page size with
+    /// ``Statement/setPagingSize(_:)``, which limits the result to a single page.
     ///
     /// - Parameters:
     ///   - statement: The ``Statement`` to execute.
@@ -495,7 +498,8 @@ extension CassandraClient {
     ///
     /// - Parameters:
     ///   - statement: The ``Statement`` to execute.
-    ///   - pageSize: The maximum number of rows returned per page.
+    ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
+    ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The ``PaginatedRows``.
