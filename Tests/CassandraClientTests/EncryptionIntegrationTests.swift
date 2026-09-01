@@ -384,12 +384,14 @@ final class EncryptionIntegrationTests: XCTestCase {
 
         // Read back using Codable path
         var readOptions = CassandraClient.Statement.Options()
+        // Bound outside the builder: it is `@Sendable`, and a test case is not.
+        let contextKeyspace = self.configuration.keyspace!
         readOptions.encryptionContextBuilder = { row in
             guard let uid: String = row.column("user_id") else {
                 throw CassandraClient.Error.badParams("user_id not found in row")
             }
             return CassandraClient.EncryptionContext.Base(
-                keyspace: self.configuration.keyspace!,
+                keyspace: contextKeyspace,
                 table: tableName,
                 primaryKey: .init(from: .string(uid))
             )

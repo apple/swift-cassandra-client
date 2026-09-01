@@ -182,9 +182,6 @@ let package = Package(
                 // The tests bootstrap swift-distributed-tracing's shipped in-memory tracer.
                 .product(name: "Tracing", package: "swift-distributed-tracing"),
                 .product(name: "InMemoryTracing", package: "swift-distributed-tracing"),
-            ],
-            swiftSettings: [
-                .swiftLanguageMode(.v5)
             ]
         ),
     ],

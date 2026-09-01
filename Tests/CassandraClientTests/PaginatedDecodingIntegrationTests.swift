@@ -27,6 +27,10 @@ import XCTest
 ///
 /// The fixture puts every row in one partition behind a clustering key, so pages come back in `ck` order
 /// and the ordering and mid-stream failure assertions are deterministic.
+///
+/// `selectAll` is `static` and each test binds the client to a local, so the async bodies never capture
+/// `self` — a test case is not `Sendable`. The local is a snapshot taken before the handoff: a test that
+/// reassigned `cassandraClient` mid-body would not see the new value there.
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 final class PaginatedDecodingIntegrationTests: XCTestCase {
     private static let partition: Int32 = 1
@@ -84,6 +88,19 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         self.cassandraClient = nil  // FIXME: for tsan
     }
 
+    /// The bound values for one fixture row, built fresh per row: `run` takes `parameters` as `sending`,
+    /// and the futures below are collected and awaited together.
+    private static func insertParameters(
+        index: Int,
+        nullPayloadAt: Int?
+    ) -> [CassandraClient.Statement.Value] {
+        [
+            .int32(Self.partition),
+            .int32(Int32(index)),
+            index == nullPayloadAt ? .null : .string("payload-\(index)"),
+        ]
+    }
+
     /// Create the fixture table and insert `count` rows into one partition with `ck` 0..<count.
     /// `nullPayloadAt` writes a null `payload` at that clustering key.
     private func makeTable(rows count: Int, nullPayloadAt: Int? = nil) throws -> String {
@@ -95,12 +112,10 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
         var futures = [EventLoopFuture<Void>]()
         for index in 0..<count {
-            let payload: CassandraClient.Statement.Value =
-                index == nullPayloadAt ? .null : .string("payload-\(index)")
             futures.append(
                 self.cassandraClient.run(
                     "insert into \(table) (pk, ck, payload) values (?, ?, ?);",
-                    parameters: [.int32(Self.partition), .int32(Int32(index)), payload],
+                    parameters: Self.insertParameters(index: index, nullPayloadAt: nullPayloadAt),
                     options: options
                 )
             )
@@ -111,7 +126,7 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         return table
     }
 
-    private func selectAll(_ table: String) -> String {
+    private static func selectAll(_ table: String) -> String {
         "select pk, ck, payload from \(table) where pk = \(Self.partition);"
     }
 
@@ -123,16 +138,17 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         let count = 25  // > pageSize: 3 pages
         let table = try self.makeTable(rows: count)
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
                 let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, Item> =
-                    try await self.cassandraClient.query(self.selectAll(table), pageSize: Self.pageSize)
+                    try await client.query(Self.selectAll(table), pageSize: Self.pageSize)
                 var decoded: [Item] = []
                 for try await item in paged {
                     decoded.append(item)
                 }
 
-                let buffered: [Item] = try await self.cassandraClient.query(self.selectAll(table))
+                let buffered: [Item] = try await client.query(Self.selectAll(table))
                 XCTAssertEqual(decoded.count, count, "every row should be yielded")
                 XCTAssertEqual(decoded, buffered, "paged decoding should match the buffered decoding query")
                 XCTAssertEqual(
@@ -157,10 +173,11 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         let count = 25  // > pageSize: 3 pages
         let table = try self.makeTable(rows: count)
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
-                let paged = try await self.cassandraClient.query(
-                    self.selectAll(table),
+                let paged = try await client.query(
+                    Self.selectAll(table),
                     pageSize: Self.pageSize,
                     withModelType: Item.self
                 )
@@ -169,8 +186,8 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
                     decoded.append(item)
                 }
 
-                let buffered = try await self.cassandraClient.query(
-                    self.selectAll(table),
+                let buffered = try await client.query(
+                    Self.selectAll(table),
                     withModelType: Item.self
                 )
                 XCTAssertEqual(decoded.count, count, "every row should be yielded")
@@ -193,10 +210,11 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         let failingIndex = 15  // second page, so a full page is consumed before the failure
         let table = try self.makeTable(rows: count, nullPayloadAt: failingIndex)
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
                 let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, Item> =
-                    try await self.cassandraClient.query(self.selectAll(table), pageSize: Self.pageSize)
+                    try await client.query(Self.selectAll(table), pageSize: Self.pageSize)
                 var decoded: [Item] = []
                 do {
                     for try await item in paged {
@@ -223,10 +241,11 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
     func testSurfacesDecodeFailureOnFirstRow() throws {
         let table = try self.makeTable(rows: 25, nullPayloadAt: 0)
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
                 let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, Item> =
-                    try await self.cassandraClient.query(self.selectAll(table), pageSize: Self.pageSize)
+                    try await client.query(Self.selectAll(table), pageSize: Self.pageSize)
                 var decoded: [Item] = []
                 do {
                     for try await item in paged {
@@ -246,10 +265,11 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
     func testEmptyResult() throws {
         let table = try self.makeTable(rows: 0)
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
                 let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, Item> =
-                    try await self.cassandraClient.query(self.selectAll(table), pageSize: Self.pageSize)
+                    try await client.query(Self.selectAll(table), pageSize: Self.pageSize)
                 var decoded: [Item] = []
                 for try await item in paged {
                     decoded.append(item)
@@ -265,10 +285,11 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         let count = 4  // < pageSize
         let table = try self.makeTable(rows: count)
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
                 let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, Item> =
-                    try await self.cassandraClient.query(self.selectAll(table), pageSize: Self.pageSize)
+                    try await client.query(Self.selectAll(table), pageSize: Self.pageSize)
                 var decoded: [Item] = []
                 for try await item in paged {
                     decoded.append(item)
@@ -285,10 +306,11 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         let count = Int(Self.pageSize) * 2
         let table = try self.makeTable(rows: count)
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
                 let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, Item> =
-                    try await self.cassandraClient.query(self.selectAll(table), pageSize: Self.pageSize)
+                    try await client.query(Self.selectAll(table), pageSize: Self.pageSize)
                 var decoded: [Item] = []
                 for try await item in paged {
                     decoded.append(item)
@@ -306,10 +328,11 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         let table = try self.makeTable(rows: 25)
         let consumed = 12  // stops inside the second page
 
+        let client = self.cassandraClient!
         runAsyncAndWaitFor(
             {
                 let paged: AsyncThrowingMapSequence<CassandraClient.PaginatedRows, Item> =
-                    try await self.cassandraClient.query(self.selectAll(table), pageSize: Self.pageSize)
+                    try await client.query(Self.selectAll(table), pageSize: Self.pageSize)
                 var decoded: [Item] = []
                 for try await item in paged {
                     decoded.append(item)
