@@ -295,8 +295,26 @@ extension CassandraClient {
             return cass_statement_bind_collection(self.rawPointer, index, collection)
         }
 
-        func setPagingSize(_ pagingSize: Int32) throws {
-            try checkResult { cass_statement_set_paging_size(self.rawPointer, pagingSize) }
+        /// Sets the maximum number of rows the server returns per page for this statement.
+        ///
+        /// This bounds the `execute` variants that take a `Statement` and no `pageSize`, which
+        /// otherwise return every row: the result becomes a single page, and pairing this with
+        /// ``setPagingStateToken(_:)`` walks the rest by hand. The `execute` variants that do take a
+        /// `pageSize` set it from that argument, overwriting whatever is set here. The `query`
+        /// variants build their own statement, so this never reaches them.
+        ///
+        /// - Parameter pagingSize: Rows per page. Must be in `1...Int32.max`; a non-positive size
+        ///   disables paging in the driver rather than limiting the page, and is rejected here.
+        ///
+        /// - Note: The `EventLoopFuture` `execute` takes the statement as `sending`, so a hand-rolled
+        ///   loop needs a new `Statement` for each page.
+        public func setPagingSize(_ pagingSize: Int) throws {
+            guard let size = Int32(exactly: pagingSize), size > 0 else {
+                throw CassandraClient.Error.badParams(
+                    "Paging size must be between 1 and \(Int32.max), got \(pagingSize)"
+                )
+            }
+            try checkResult { cass_statement_set_paging_size(self.rawPointer, size) }
         }
 
         /// Sets the starting page of the returned paginated results.
@@ -490,9 +508,11 @@ extension CassandraClient {
         }
 
         public struct Options: Sendable, CustomStringConvertible {
-            /// Sets the statement's consistency level. Default is `.localOne`.
+            /// Sets the statement's consistency level. `nil` inherits
+            /// ``CassandraClient/Configuration/consistency``.
             public var consistency: CassandraClient.Consistency?
-            /// Sets the statement's request timeout in milliseconds. Default is `CASS_UINT64_MAX`
+            /// Sets the statement's request timeout in milliseconds. `nil` inherits
+            /// ``CassandraClient/Configuration/requestTimeoutMillis``.
             public var requestTimeout: UInt64?
 
             /// Type-erased backing store for ``encryptionContextBuilder``.
@@ -523,6 +543,14 @@ extension CassandraClient {
             /// - Important: The query must SELECT all primary key columns registered in the schema.
             ///   The decoder reads these columns from each result row to build the ``PrimaryKey`` for key derivation.
             ///   Omitting a key column will cause decryption to fail at runtime.
+            ///
+            /// - Important: What binding validation enforces depends on the execution path.
+            ///   Prepared statement execution maps each parameter to its column via statement metadata
+            ///   and checks both directions: a registered column must receive an encrypted value, and an
+            ///   unregistered one must not. Other execution paths have no parameter column names, so they
+            ///   check only that each encrypted value's ``EncryptionContext`` names a registered column —
+            ///   a plaintext value bound to a registered column is written as-is. Neither path verifies
+            ///   that a value's context names the column it is actually bound to.
             @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionTable: String? {
                 get { self._encryptionTable }

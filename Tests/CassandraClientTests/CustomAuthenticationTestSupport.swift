@@ -47,7 +47,7 @@ struct ThrowingAuthenticator: CassandraClient.Authenticator {
 
 /// Byte-reverses each challenge and records challenges and the success token, for the challenge/success
 /// round-trip that no live `PasswordAuthenticator` exchange reaches.
-final class RecordingChallengeAuthenticator: CassandraClient.Authenticator, @unchecked Sendable {
+final class RecordingChallengeAuthenticator: CassandraClient.Authenticator {
     private let state = NIOLockedValueBox<(challenges: [[UInt8]], successToken: [UInt8]?)>(([], nil))
 
     func initialResponse() throws -> [UInt8]? { [] }
@@ -67,7 +67,7 @@ final class RecordingChallengeAuthenticator: CassandraClient.Authenticator, @unc
 
 /// Plaintext credentials plus lock-protected invocation counts. Serves the success-observability test
 /// (`onSuccessFired`) and the shared-instance concurrency test (counts under fan-out).
-final class RecordingPlaintextAuthenticator: CassandraClient.Authenticator, @unchecked Sendable {
+final class RecordingPlaintextAuthenticator: CassandraClient.Authenticator {
     let username: String
     let password: String
     private let counts = NIOLockedValueBox<(initial: Int, success: Int)>((0, 0))
@@ -93,7 +93,7 @@ final class RecordingPlaintextAuthenticator: CassandraClient.Authenticator, @unc
 
 /// Increments an external, box-outliving counter in `deinit`, to witness the driver's data-cleanup
 /// releasing the retained box on session teardown.
-final class DeinitCountingAuthenticator: CassandraClient.Authenticator, @unchecked Sendable {
+final class DeinitCountingAuthenticator: CassandraClient.Authenticator {
     let username: String
     let password: String
     private let deinitCounter: NIOLockedValueBox<Int>

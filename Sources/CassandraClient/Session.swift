@@ -40,7 +40,8 @@ import NIOCore  // for async-await bridge
 
     /// Execute a prepared statement.
     ///
-    /// **All** rows are returned.
+    /// **All** rows are returned, unless the statement sets a page size with
+    /// ``CassandraClient/Statement/setPagingSize(_:)``, which limits the result to a single page.
     ///
     /// - Parameters:
     ///   - statement: The ``CassandraClient/Statement`` to execute.
@@ -61,7 +62,8 @@ import NIOCore  // for async-await bridge
     ///
     /// - Parameters:
     ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - pageSize: The maximum number of rows returned per page.
+    ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
+    ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
     ///   - eventLoop: The `EventLoop` to use. Optional.
     ///   - logger: The `Logger` to use. Optional.
     ///
@@ -114,7 +116,8 @@ import NIOCore  // for async-await bridge
 
     /// Execute a prepared statement.
     ///
-    /// **All** rows are returned.
+    /// **All** rows are returned, unless the statement sets a page size with
+    /// ``CassandraClient/Statement/setPagingSize(_:)``, which limits the result to a single page.
     ///
     /// - Parameters:
     ///   - statement: The ``CassandraClient/Statement`` to execute.
@@ -134,7 +137,8 @@ import NIOCore  // for async-await bridge
     ///
     /// - Parameters:
     ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - pageSize: The maximum number of rows returned per page.
+    ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
+    ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
@@ -203,7 +207,7 @@ import NIOCore  // for async-await bridge
     ) async throws
 
     /// Terminate the session and free resources.
-    @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdownAsync()")
+    @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
     func shutdown() throws
 
     /// Terminate the session and free resources.
@@ -253,7 +257,8 @@ extension CassandraSession {
 
     /// Execute a prepared statement.
     ///
-    /// **All** rows are returned.
+    /// **All** rows are returned, unless the statement sets a page size with
+    /// ``CassandraClient/Statement/setPagingSize(_:)``, which limits the result to a single page.
     ///
     /// - Parameters:
     ///   - statement: The ``CassandraClient/Statement`` to execute.
@@ -429,6 +434,8 @@ extension CassandraSession {
     }
 
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
+    ///
+    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
     ///
     /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
     public func query(
@@ -836,7 +843,7 @@ extension CassandraClient {
             }
         }
 
-        @available(*, noasync, message: "Can block indefinitely, prefer shutdown()", renamed: "shutdownAsync()")
+        @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
         func shutdown() throws {
             enum Action {
                 case alreadyShut
@@ -1067,7 +1074,7 @@ extension CassandraClient {
             let eventLoop = eventLoop ?? self.eventLoopGroup.next()
 
             do {
-                try statement.setPagingSize(pageSize)
+                try statement.setPagingSize(Int(pageSize))
             } catch {
                 if let cassError = error as? CassandraClient.Error {
                     CassandraClient.RequestLog.logFailure(
@@ -1657,6 +1664,8 @@ extension CassandraSession {
     }
 
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
+    ///
+    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query(
         _ query: String,
@@ -1677,6 +1686,8 @@ extension CassandraSession {
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`,
     /// decoding each row into `T` as the sequence is iterated, rather than materializing the whole
     /// decoded result set as an array.
+    ///
+    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
     ///
     /// - Note: Unlike the raw ``query(_:parameters:pageSize:options:logger:)`` sequence, decoded values
     ///   are independent Swift values and remain valid after the sequence is advanced.
@@ -1706,6 +1717,8 @@ extension CassandraSession {
     /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
     /// but spells out the decoded type explicitly at the call site, e.g.
     /// `try await session.query("select ...", pageSize: 100, withModelType: Model.self)`.
+    ///
+    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query<T: Decodable & Sendable>(
         _ query: String,
@@ -1902,7 +1915,7 @@ extension CassandraClient.Session {
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
         do {
-            try statement.setPagingSize(pageSize)
+            try statement.setPagingSize(Int(pageSize))
         } catch {
             if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(

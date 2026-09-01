@@ -16,6 +16,7 @@ import CoreMetrics
 import Foundation
 import Logging
 import MetricsTestKit
+import NIOConcurrencyHelpers
 import XCTest
 
 @testable import CassandraClient
@@ -409,8 +410,7 @@ final class EncryptorTests: XCTestCase {
         let iterations = 100
 
         let group = DispatchGroup()
-        var errors = [Error]()
-        let errorLock = NSLock()
+        let errors = NIOLockedValueBox<[Error]>([])
 
         for i in 0..<iterations {
             group.enter()
@@ -426,20 +426,19 @@ final class EncryptorTests: XCTestCase {
                     let encrypted = try encryptor.encrypt(plaintext, context: context)
                     let decrypted = try encryptor.decrypt(encrypted, context: context)
                     if decrypted != plaintext {
-                        errorLock.lock()
-                        errors.append(CassandraClient.Error.decryptionError("Data mismatch on iteration \(i)"))
-                        errorLock.unlock()
+                        errors.withLockedValue {
+                            $0.append(CassandraClient.Error.decryptionError("Data mismatch on iteration \(i)"))
+                        }
                     }
                 } catch {
-                    errorLock.lock()
-                    errors.append(error)
-                    errorLock.unlock()
+                    errors.withLockedValue { $0.append(error) }
                 }
             }
         }
 
         group.wait()
-        XCTAssertEqual(errors.count, 0, "Concurrent errors: \(errors)")
+        let collected = errors.withLockedValue { $0 }
+        XCTAssertEqual(collected.count, 0, "Concurrent errors: \(collected)")
     }
 
     // MARK: - Salt
