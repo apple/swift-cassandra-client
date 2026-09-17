@@ -589,20 +589,11 @@ extension CassandraClient {
             public init(
                 consistency: CassandraClient.Consistency? = nil,
                 requestTimeout: UInt64? = nil,
-                isIdempotent: Bool?
+                isIdempotent: Bool? = nil
             ) {
                 self.consistency = consistency
                 self.requestTimeout = requestTimeout
                 self.isIdempotent = isIdempotent
-            }
-
-            /// Creates options that leave ``isIdempotent`` unset, so the driver keeps treating the
-            /// statement as unsafe to replay.
-            ///
-            /// `isIdempotent` is required rather than defaulted on the initializer that takes it, so
-            /// that passing it selects that initializer and omitting it selects this one.
-            public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: UInt64? = nil) {
-                self.init(consistency: consistency, requestTimeout: requestTimeout, isIdempotent: nil)
             }
 
             public var description: String {

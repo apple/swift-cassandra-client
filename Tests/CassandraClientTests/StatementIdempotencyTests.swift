@@ -34,6 +34,9 @@ final class StatementIdempotencyTests: XCTestCase {
     func testDefaultsToUnset() {
         XCTAssertNil(CassandraClient.Statement.Options().isIdempotent)
         XCTAssertNil(CassandraClient.Statement.Options(consistency: .quorum).isIdempotent)
+        XCTAssertNil(
+            CassandraClient.Statement.Options(consistency: .quorum, requestTimeout: 1000).isIdempotent
+        )
     }
 
     /// `nil` and `false` are distinct inputs that reach the driver differently (one leaves the
@@ -56,27 +59,6 @@ final class StatementIdempotencyTests: XCTestCase {
         XCTAssertEqual(options.isIdempotent, true)
         XCTAssertEqual(options.consistency, .quorum)
         XCTAssertEqual(options.requestTimeout, 1000)
-    }
-
-    /// The initializer that predates the idempotency option stays available as its own overload, so
-    /// existing callers keep resolving it. Referencing both without applying them pins that: an
-    /// unapplied initializer drops its default arguments, so each annotation below only type-checks
-    /// against an initializer that really takes those parameters.
-    func testBothInitializersRemainAvailable() {
-        typealias Options = CassandraClient.Statement.Options
-        typealias Consistency = CassandraClient.Consistency
-
-        let withoutIdempotency: (Consistency?, UInt64?) -> Options = Options.init
-        let withIdempotency: (Consistency?, UInt64?, Bool?) -> Options = Options.init
-
-        XCTAssertNil(withoutIdempotency(.quorum, 1000).isIdempotent)
-        XCTAssertEqual(withIdempotency(.quorum, 1000, true).isIdempotent, true)
-    }
-
-    /// The shorter initializer has to keep leaving idempotency unset rather than picking a value, so
-    /// that callers written before the option existed still get the driver's default.
-    func testOriginalInitializerLeavesIdempotencyUnset() {
-        XCTAssertNil(CassandraClient.Statement.Options(consistency: .quorum, requestTimeout: 1000).isIdempotent)
     }
 
     /// The option is applied while the statement is being built, alongside consistency and the
