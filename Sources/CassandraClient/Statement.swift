@@ -537,6 +537,10 @@ extension CassandraClient {
             ///   result as running it once. Counter updates, lightweight transactions, and appends to
             ///   collections are not idempotent, and replaying one corrupts the value it touches.
             ///   Plain reads, and writes that set fixed values, are.
+            ///
+            /// - Note: This has no effect on a statement added to a ``CassandraClient/Batch``. The
+            ///   driver decides whether to replay a batch from the batch's own setting, so use
+            ///   ``CassandraClient/Batch/Configuration/isIdempotent`` for that.
             public var isIdempotent: Bool?
 
             /// Type-erased backing store for ``encryptionContextBuilder``.
