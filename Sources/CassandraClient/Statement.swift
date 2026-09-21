@@ -234,6 +234,12 @@ extension CassandraClient {
             if let requestTimeout = options.requestTimeout {
                 try checkResult { cass_statement_set_request_timeout(self.rawPointer, requestTimeout) }
             }
+
+            if let isIdempotent = options.isIdempotent {
+                try checkResult {
+                    cass_statement_set_is_idempotent(self.rawPointer, isIdempotent ? cass_true : cass_false)
+                }
+            }
         }
 
         /// Encrypt plaintext and bind the result as bytes at the given parameter index.
@@ -514,6 +520,28 @@ extension CassandraClient {
             /// Sets the statement's request timeout in milliseconds. `nil` inherits
             /// ``CassandraClient/Configuration/requestTimeoutMillis``.
             public var requestTimeout: UInt64?
+            /// Whether the statement is safe to run more than once.
+            ///
+            /// A statement left unset is treated as unsafe to replay, which holds the driver back
+            /// from two recovery behaviors:
+            ///
+            /// - When a coordinator reports that it is overloaded, shutting down, or hit an internal
+            ///   error, the driver hands the request to the next host in its query plan instead of
+            ///   failing the call. Without this, a single node draining during a rolling restart
+            ///   surfaces as an error even though the rest of the cluster can serve the request.
+            /// - Speculative execution, configured by
+            ///   ``CassandraClient/Configuration/speculativeExecutionPolicy``, has no effect at all
+            ///   until a statement is marked safe to replay.
+            ///
+            /// - Important: Only mark a statement idempotent when running it twice leaves the same
+            ///   result as running it once. Counter updates, lightweight transactions, and appends to
+            ///   collections are not idempotent, and replaying one corrupts the value it touches.
+            ///   Plain reads, and writes that set fixed values, are.
+            ///
+            /// - Note: This has no effect on a statement added to a ``CassandraClient/Batch``. The
+            ///   driver decides whether to replay a batch from the batch's own setting, so use
+            ///   ``CassandraClient/Batch/Configuration/isIdempotent`` for that.
+            public var isIdempotent: Bool?
 
             /// Type-erased backing store for ``encryptionContextBuilder``.
             private var _encryptionContextBuilder: (any Sendable)?
@@ -562,16 +590,22 @@ extension CassandraClient {
                 self._encryptionContextBuilder != nil || self._encryptionTable != nil
             }
 
-            public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: UInt64? = nil) {
+            public init(
+                consistency: CassandraClient.Consistency? = nil,
+                requestTimeout: UInt64? = nil,
+                isIdempotent: Bool? = nil
+            ) {
                 self.consistency = consistency
                 self.requestTimeout = requestTimeout
+                self.isIdempotent = isIdempotent
             }
 
             public var description: String {
                 """
                 Options {
                 consistency: \(String(describing: self.consistency)),
-                requestTimeout: \(String(describing: self.requestTimeout))
+                requestTimeout: \(String(describing: self.requestTimeout)),
+                isIdempotent: \(String(describing: self.isIdempotent))
                 }
                 """
             }
