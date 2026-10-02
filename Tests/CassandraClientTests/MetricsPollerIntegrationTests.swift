@@ -44,10 +44,11 @@ final class MetricsPollerIntegrationTests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        configuration.username = env["CASSANDRA_USER"]
-        configuration.password = env["CASSANDRA_PASSWORD"]
-        configuration.connectTimeoutMillis = UInt32(10_000)
-        configuration.requestTimeoutMillis = UInt32(24_000)
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            configuration.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
+        }
+        configuration.connectTimeout = .milliseconds(10_000)
+        configuration.requestTimeout = .milliseconds(24_000)
         return configuration
     }
 
@@ -83,7 +84,7 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         let dims = [("session", session)]
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = true
-        configuration.metricsPollIntervalMillis = 100
+        configuration.metricsPollInterval = .milliseconds(100)
         configuration.metricsSessionName = session
 
         let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
@@ -126,7 +127,7 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         let dims = [("session", session)]
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = true
-        configuration.metricsPollIntervalMillis = 50
+        configuration.metricsPollInterval = .milliseconds(50)
         configuration.metricsSessionName = session
 
         let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
@@ -147,7 +148,7 @@ final class MetricsPollerIntegrationTests: XCTestCase {
     func testDisabledCreatesNoGauges() throws {
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = false
-        configuration.metricsPollIntervalMillis = 50
+        configuration.metricsPollInterval = .milliseconds(50)
         configuration.metricsSessionName = "v4"
 
         let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
@@ -165,14 +166,14 @@ final class MetricsPollerIntegrationTests: XCTestCase {
     // metricsEnabled but interval nil or 0 => poller off, no gauges.
     func testNilAndZeroIntervalDisablePoller() throws {
         try self.assertIntervalDisablesPoller(nil)
-        try self.assertIntervalDisablesPoller(0)
+        try self.assertIntervalDisablesPoller(.zero)
     }
 
-    private func assertIntervalDisablesPoller(_ interval: UInt32?) throws {
+    private func assertIntervalDisablesPoller(_ interval: Duration?) throws {
         self.testMetrics.reset()
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = true
-        configuration.metricsPollIntervalMillis = interval
+        configuration.metricsPollInterval = interval
         configuration.metricsSessionName = "v5"
 
         let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
@@ -198,7 +199,7 @@ final class MetricsPollerIntegrationTests: XCTestCase {
 
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = true
-        configuration.metricsPollIntervalMillis = 50
+        configuration.metricsPollInterval = .milliseconds(50)
         configuration.metricsSessionName = session
         // Withhold the contact points: capture the completion and signal, but don't call it yet.
         configuration.contactPointsProvider = { completion in

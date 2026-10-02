@@ -26,12 +26,10 @@ public final class CassandraClient: CassandraSession, Sendable {
         self.eventLoopGroupContainer.value
     }
 
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     public var encryptor: CassandraClient.Encryptor? {
         self.configuration.encryptor
     }
 
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     public var encryptionSchemas: [String: CassandraClient.EncryptionSchema] {
         self.configuration.encryptionSchemas
     }
@@ -110,7 +108,6 @@ public final class CassandraClient: CassandraSession, Sendable {
         }
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func shutdownAsync() async throws {
         if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
             .exchanged
@@ -379,7 +376,6 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: A ``PreparedStatement``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func prepare(
         _ query: String,
         encryptionTable: String? = nil,
@@ -397,7 +393,6 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The resulting ``Rows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(
         prepared: PreparedStatement,
         parameters: [Statement.Value] = [],
@@ -421,7 +416,6 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The decoded rows.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute<T: Decodable>(
         prepared: PreparedStatement,
         parameters: [Statement.Value] = [],
@@ -450,7 +444,6 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - model: The type to decode each row into.
     ///
     /// - Returns: The decoded rows.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute<T: Decodable>(
         prepared: PreparedStatement,
         parameters: [Statement.Value] = [],
@@ -487,7 +480,6 @@ extension CassandraClient {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The resulting ``Rows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(statement: Statement, logger: Logger? = .none) async throws -> Rows {
         try await self.defaultSession.execute(statement: statement, logger: logger)
     }
@@ -503,7 +495,6 @@ extension CassandraClient {
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///
     /// - Returns: The ``PaginatedRows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(
         statement: sending Statement,
         pageSize: Int32,
@@ -524,7 +515,6 @@ extension CassandraClient {
     ///   - configuration: Options to apply to the batch.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - build: Closure that adds statements to the batch.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func batch(
         configuration: Batch.Configuration = .init(),
         logger: Logger? = .none,
@@ -539,7 +529,6 @@ extension CassandraClient {
     ///   - keyspace: If `nil`, the client's default keyspace is used.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - closure: The closure to invoke, passing in the newly created session.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func withSession(
         keyspace: String?,
         logger: Logger? = .none,
@@ -556,7 +545,6 @@ extension CassandraClient {
     ///   - handler: The closure to invoke, passing in the newly created session.
     ///
     /// - Returns: The result of the closure.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func withSession<T>(
         keyspace: String?,
         logger: Logger? = .none,

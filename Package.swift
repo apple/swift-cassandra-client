@@ -1,4 +1,4 @@
-// swift-tools-version:6.1
+// swift-tools-version:6.2.3
 
 import PackageDescription
 
@@ -96,6 +96,7 @@ do {
 
 let package = Package(
     name: "swift-cassandra-client",
+    platforms: [.macOS(.v15), .iOS(.v18), .tvOS(.v18), .watchOS(.v11), .visionOS(.v2)],
     products: [
         .library(name: "CassandraClient", targets: ["CassandraClient"])
     ],
@@ -188,14 +189,12 @@ let package = Package(
     cxxLanguageStandard: .cxx17
 )
 
-#if compiler(>=6.2)
 package.dependencies.append(
     .package(url: "https://github.com/apple/swift-configuration.git", from: "1.0.0", traits: [])
 )
 for target in package.targets where ["CassandraClient", "CassandraClientTests"].contains(target.name) {
     target.dependencies.append(.product(name: "Configuration", package: "swift-configuration"))
 }
-#endif
 
 // ---    STANDARD CROSS-REPO SETTINGS DO NOT EDIT   --- //
 for target in package.targets {
