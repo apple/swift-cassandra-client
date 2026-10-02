@@ -19,7 +19,6 @@ import XCTest
 
 @testable import CassandraClient
 
-@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 final class EncryptionIntegrationTests: XCTestCase {
     var cassandraClient: CassandraClient!
     var configuration: CassandraClient.Configuration!
@@ -40,11 +39,15 @@ final class EncryptionIntegrationTests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        self.configuration.username = env["CASSANDRA_USER"]
-        self.configuration.password = env["CASSANDRA_PASSWORD"]
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            self.configuration.authenticator = CassandraClient.PasswordAuthenticator(
+                username: username,
+                password: password
+            )
+        }
         self.configuration.keyspace = keyspace
-        self.configuration.requestTimeoutMillis = UInt32(24_000)
-        self.configuration.connectTimeoutMillis = UInt32(10_000)
+        self.configuration.requestTimeout = .milliseconds(24_000)
+        self.configuration.connectTimeout = .milliseconds(10_000)
 
         XCTAssertNoThrow(
             self.encryptor = try CassandraClient.Encryptor(

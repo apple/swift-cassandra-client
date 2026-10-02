@@ -31,7 +31,6 @@ import XCTest
 /// `selectAll` is `static` and each test binds the client to a local, so the async bodies never capture
 /// `self` — a test case is not `Sendable`. The local is a snapshot taken before the handoff: a test that
 /// reassigned `cassandraClient` mid-body would not see the new value there.
-@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 final class PaginatedDecodingIntegrationTests: XCTestCase {
     private static let partition: Int32 = 1
     private static let pageSize: Int32 = 10
@@ -59,11 +58,12 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        configuration.username = env["CASSANDRA_USER"]
-        configuration.password = env["CASSANDRA_PASSWORD"]
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            configuration.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
+        }
         configuration.keyspace = keyspace
-        configuration.requestTimeoutMillis = UInt32(24_000)
-        configuration.connectTimeoutMillis = UInt32(10_000)
+        configuration.requestTimeout = .milliseconds(24_000)
+        configuration.connectTimeout = .milliseconds(10_000)
         self.keyspace = keyspace
 
         var logger = Logger(label: "test")

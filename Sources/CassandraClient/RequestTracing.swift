@@ -25,7 +25,6 @@ extension CassandraClient {
         /// The operation closure returns a `Result` rather than throwing so that `withSpan`'s built-in error
         /// recording never runs — it would serialize the raw `Error.description`, which embeds the
         /// server-provided message (PII). We record only the code label + shared category ourselves.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         static func traced<Value>(
             _ operation: SpanName,
             query: String?,
