@@ -16,136 +16,12 @@ internal import CDataStaxDriver
 import Dispatch
 import Foundation
 import Logging
-import NIO
 import NIOConcurrencyHelpers
-import NIOCore  // for async-await bridge
 
-/// API for executing statements against Cassandra.
-public protocol CassandraSession: Sendable {
-    /// Encryptor for transparent column encryption.
-    var encryptor: CassandraClient.Encryptor? { get }
-
-    /// Registered encrypted column schemas for automatic context building.
-    var encryptionSchemas: [String: CassandraClient.EncryptionSchema] { get }
-
-    /// The default keyspace for this session, used to resolve unqualified table names.
-    var keyspace: String? { get }
-
-    /// The default `Logger` for this session/client, used when a call site passes no explicit logger.
-    var logger: Logger { get }
-
-    /// Execute a prepared statement.
-    ///
-    /// **All** rows are returned, unless the statement sets a page size with
-    /// ``CassandraClient/Statement/setPagingSize(_:)``, which limits the result to a single page.
-    ///
-    /// - Parameters:
-    ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: The resulting ``CassandraClient/Rows``.
-    func execute(
-        statement: CassandraClient.Statement,
-        logger: Logger?
-    ) async throws
-        -> CassandraClient.Rows
-
-    /// Execute a prepared statement.
-    ///
-    /// Resulting rows are paginated.
-    ///
-    /// - Parameters:
-    ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
-    ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
-    func execute(
-        statement: sending CassandraClient.Statement,
-        pageSize: Int32,
-        logger: Logger?
-    )
-        async throws -> CassandraClient.PaginatedRows
-
-    /// Prepare a CQL query for repeated execution.
-    ///
-    /// The server parses and validates the query once. The returned ``CassandraClient/PreparedStatement``
-    /// can then be bound with different parameters and executed multiple times without re-parsing.
-    ///
-    /// - Parameters:
-    ///   - query: The CQL query string with `?` placeholders.
-    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: A ``CassandraClient/PreparedStatement``.
-    func prepare(
-        _ query: String,
-        encryptionTable: String?,
-        logger: Logger?
-    ) async throws -> CassandraClient.PreparedStatement
-
-    /// Execute a prepared statement with bound parameters.
-    ///
-    /// - Parameters:
-    ///   - prepared: The ``CassandraClient/PreparedStatement`` to execute.
-    ///   - parameters: The values to bind to the statement's `?` placeholders.
-    ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: The resulting ``CassandraClient/Rows``.
-    func execute(
-        prepared: CassandraClient.PreparedStatement,
-        parameters: [CassandraClient.Statement.Value],
-        options: CassandraClient.Statement.Options,
-        logger: Logger?
-    ) async throws -> CassandraClient.Rows
-
-    func batch(
-        configuration: CassandraClient.Batch.Configuration,
-        logger: Logger?,
-        _ build: (inout CassandraClient.Batch) async throws -> Void
-    ) async throws
-
-    /// Terminate the session and free resources.
-    @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
-    func shutdown() throws
-
-    /// Terminate the session and free resources.
-    func shutdownAsync() async throws
-
-    /// Get metrics for this session.
-    func getMetrics() -> CassandraMetrics
-}
-
-// This extension ensures we don't break the API by adding the shutdownAsync function
-// We should remove it before 1.0
-extension CassandraSession {
-    /// Terminate the session and free resources.
-    @available(*, deprecated, message: "You must implement this function to shutdown async")
-    func shutdownAsync() async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(
-                    with: Result {
-                        try self.shutdown()
-                    }
-                )
-            }
-        }
-    }
-}
-
-private let encryptionLogger = Logger(label: "cassandra.encryption")
-
-extension CassandraSession {
-    /// Fallback for conformers that don't provide their own logger. `CassandraClient` and `Session` witness
-    /// this with their configured logger, so this only applies to third-party conformances.
-    public var logger: Logger { Logger(label: "com.apple.cassandra") }
-
-    private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger?) {
+extension CassandraClient.Session {
+    private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger) {
         if count > 0, options.hasEncryptionOptions {
-            (logger ?? encryptionLogger).debug(
+            logger.debug(
                 "Decrypted rows",
                 metadata: [
                     CassandraClient.EncryptionLogKey.rowsDecrypted: "\(count)"
@@ -156,7 +32,7 @@ extension CassandraSession {
 
 }
 
-extension CassandraSession {
+extension CassandraClient.Session {
     private func makeDecoder(
         row: CassandraClient.Row,
         options: CassandraClient.Statement.Options
@@ -230,18 +106,6 @@ final class CassFuture<T>: Sendable {
                 continuation.resume(with: result)
             }
         }
-    }
-
-    @available(*, noasync, message: "Can block indefinitely, prefer await()", renamed: "await()")
-    func syncWait() throws -> T where T: Sendable {
-        let resultBox = NIOLockedValueBox<Result<T, any Error>?>(nil)
-        let semaphore = DispatchSemaphore(value: 0)
-        self.setResultCallback { result in
-            resultBox.withLockedValue { $0 = result }
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return try resultBox.withLockedValue { $0! }.get()
     }
 
     private func setResultCallback(
@@ -382,171 +246,70 @@ struct CassSession: Sendable, ~Copyable {
 }
 
 extension CassandraClient {
-    internal final class Session: CassandraSession, Sendable {
-        public var encryptor: CassandraClient.Encryptor? {
+    internal final class Session: Sendable {
+        var encryptor: CassandraClient.Encryptor? {
             self.configuration.encryptor
         }
 
-        public var encryptionSchemas: [String: CassandraClient.EncryptionSchema] {
+        var encryptionSchemas: [String: CassandraClient.EncryptionSchema] {
             self.configuration.encryptionSchemas
         }
 
-        public var keyspace: String? {
+        var keyspace: String? {
             self.configuration.keyspace
         }
 
         private let configuration: Configuration
-        public let logger: Logger
         private let _state = NIOLockedValueBox(State.idle)
-        private let _poller = NIOLockedValueBox(PollerHandle())
+        /// Completed once: succeeded when `connect(logger:)` connects, failed if the connect fails. Requests that
+        /// arrive before the session is connected wait on it.
+        private let ready = OneShotSignal()
+        /// Set by `stopMetricsPoller()` when shutdown begins; a poller tick records gauges only while it is
+        /// `false`. See `runMetricsPoller()`.
+        private let _pollerStopped = NIOLockedValueBox(false)
 
         private let underlying: CassSession
 
-        /// The running metrics poller task, plus a stop flag. Guarded by `_poller`.
-        private struct PollerHandle {
-            var task: Task<Void, Never>?
-            /// Set by `stopMetricsPoller()` under the lock; the tick reads the driver snapshot and
-            /// records gauges only while this is `false`, so no gauge is recorded once shutdown begins.
-            var stopped = false
-        }
-
         private enum State {
+            /// `run()` hasn't started connecting.
             case idle
-            case connecting(ConnectionTask)
+            /// `run()` is connecting.
+            case connecting
             case connected
-            case disconnecting(ConnectionTask)
-            case disconnectingFuture(EventLoopFuture<Void>)
+            /// `run()` is closing the session.
+            case disconnecting
             case disconnected
         }
 
-        internal init(
-            configuration: Configuration,
-            logger: Logger
-        ) {
+        internal init(configuration: Configuration) {
             self.configuration = configuration
-            self.logger = logger
             self.underlying = .init()
         }
 
         deinit {
-            guard case .disconnected = (self._state.withLockedValue { $0 }) else {
+            switch self._state.withLockedValue({ $0 }) {
+            case .idle, .disconnected:
+                return
+            case .connecting, .connected, .disconnecting:
                 preconditionFailure(
-                    "Session not shut down before the deinit. Please call session.shutdown() when no longer needed."
+                    "Session not shut down before the deinit. Let run() finish before releasing the client."
                 )
             }
         }
 
-        @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
-        func shutdown() throws {
-            enum Action {
-                case alreadyShut
-                case disconnectThenMarkShut(EventLoopPromise<Void>)
-                case wait(EventLoopFuture<Void>)
-            }
-            let action: Action = self._state.withLockedValue { state in
-                switch state {
-                case .connected:
-                    let promise = MultiThreadedEventLoopGroup.singleton.next().makePromise(of: Void.self)
-                    state = .disconnectingFuture(promise.futureResult)
-                    return .disconnectThenMarkShut(promise)
-                case .disconnecting:
-                    preconditionFailure("Cannot call sync shutdown after async shutdown")
-                case .disconnectingFuture(let existing):
-                    return .wait(existing)
-                case .idle, .connecting, .disconnected:
-                    state = .disconnected
-                    return .alreadyShut
-                }
-            }
-            switch action {
-            case .alreadyShut:
-                return
-            case .wait(let future):
-                try future.wait()
-            case .disconnectThenMarkShut(let promise):
-                self.stopMetricsPoller()
-                let future = self.underlying.close()
-                do {
-                    try future.syncWait()
-                    promise.succeed()
-                } catch {
-                    promise.fail(error)
-                }
-                self._state.withLockedValue { state in
-                    switch state {
-                    case .disconnectingFuture:
-                        state = .disconnected
-                    default:
-                        preconditionFailure("State changed from disconnecting to not disconnecting unexpectedly")
-                    }
-                }
-            }
-        }
-
+        /// Close the session. Called once, by `run()`, after the session has connected.
         func shutdownAsync() async throws {
-            enum Action {
-                case alreadyShut
-                case waitThenMarkShut(ConnectionTask)
-                case wait(ConnectionTask)
-                case waitFuture(EventLoopFuture<Void>)
-            }
-            let action: Action = self._state.withLockedValue { state in
-                switch state {
-                case .connected:
-                    let task = ConnectionTask(
-                        Task {
-                            try await self.disconnect()
-                        }
-                    )
-                    state = .disconnecting(task)
-                    return .waitThenMarkShut(task)
-                case .disconnecting(let existing):
-                    return .wait(existing)
-                case .disconnectingFuture(let existing):
-                    return .waitFuture(existing)
-                case .idle, .connecting, .disconnected:
-                    state = .disconnected
-                    return .alreadyShut
+            self._state.withLockedValue { state in
+                guard case .connected = state else {
+                    preconditionFailure("Session closed while \(state), expected connected")
                 }
+                state = .disconnecting
             }
-            switch action {
-            case .alreadyShut:
-                return
-            case .waitThenMarkShut(let task):
-                // Defer state change: always change the state to disconnected even if task.value throws
-                defer {
-                    self._state.withLockedValue { state in
-                        switch state {
-                        case .disconnecting, .disconnectingFuture:
-                            state = .disconnected
-                        default:
-                            preconditionFailure("State changed from disconnecting to not disconnecting unexpectedly")
-                        }
-                    }
-                }
-                try await task.task.value
-            case .waitFuture(let future):
-                try await future.get()
-            case .wait(let task):
-                try await task.task.value
+            defer {
+                self._state.withLockedValue { $0 = .disconnected }
             }
-        }
-
-        private func handleConnectionSucceeded() throws {
-            try self._state.withLockedValue { state in
-                switch state {
-                case .connecting:
-                    state = .connected
-                case .disconnected, .disconnecting, .disconnectingFuture:
-                    // Shut down while connecting, stay disconnected
-                    throw Error.disconnected
-                case .idle, .connected:
-                    // Unreachable: exactly one request moves `.idle` -> connecting and is
-                    // the sole caller here, so the state is always a connecting state or
-                    // `.disconnected`.
-                    assertionFailure("handleConnectionSucceeded called in unexpected state \(state)")
-                }
-            }
+            self.stopMetricsPoller()
+            try await self.underlying.close().await()
         }
 
         private func lookupPrimaryKeyColumnNames(tableName: String) throws -> [String] {
@@ -710,118 +473,71 @@ extension CassandraClient {
             }
         }
 
-        private func disconnect() async throws {
-            self.stopMetricsPoller()
-            let future = self.underlying.close()
-            try await future.await()
-        }
-
         func getMetrics() -> CassandraMetrics {
             self.underlying.getMetrics()
         }
 
-        /// Start the driver-snapshot metrics poller, if enabled.
+        /// Poll the driver's metrics snapshot on the configured cadence until the calling task is cancelled.
+        /// Returns at once when metrics are disabled or the interval is `nil` or not positive.
         ///
-        /// Called from the connect starter's branch once the compare-and-set to `.connected` wins.
-        /// Spawns an async `Task` that sleeps then polls on the configured cadence, then stores it
-        /// under `_poller` only if the session is still `.connected` and no poller is already running;
-        /// otherwise the just-spawned task is cancelled, so a `shutdown()` racing between spawn and
-        /// store can't leak a task.
-        private func startMetricsPoller() {
+        /// A tick records gauges only while the session is connected and shutdown has not begun. The snapshot
+        /// is read inside the `_pollerStopped` lock, and `stopMetricsPoller()` sets the flag under that lock
+        /// before `close()`, so no tick overlaps `close()` and none records once shutdown begins. `_state` and
+        /// `_pollerStopped` are never held together.
+        func runMetricsPoller() async {
             guard self.configuration.metricsEnabled,
                 let interval = self.configuration.metricsPollInterval,
                 interval > .zero
             else { return }
 
-            let gauges = SnapshotGauges(sessionName: self.configuration.metricsSessionName)
-
-            // `weak self` avoids Session -> _poller -> Task -> closure -> Session keeping the session
-            // (and its ticks) alive forever on a consumer that never calls `shutdown()`.
-            let task = Task<Void, Never> { [weak self] in
-                while !Task.isCancelled {
-                    do {
-                        try await Task.sleep(for: interval)
-                    } catch {
-                        break  // cancelled during sleep
-                    }
-                    guard let self else { break }
-                    // Read the snapshot and record the gauges inside the `_poller` lock, gated on the
-                    // stop flag. `stopMetricsPoller()` sets `stopped` under this same lock, so once
-                    // shutdown begins no further tick reads the driver snapshot or records a gauge; and
-                    // because `stopMetricsPoller()` runs before `underlying.close()`, acquiring the lock
-                    // there blocks until any in-flight tick finishes — the read can't overlap `close()`.
-                    // (No `await` under the lock; `_poller` is never held while `_state` is held.)
-                    let didRecord = self._poller.withLockedValue { poller -> Bool in
-                        guard !poller.stopped else { return false }
-                        gauges.record(self.getMetrics())
-                        return true
-                    }
-                    if !didRecord { break }
+            // Created on the first recording tick, so no gauge exists before the session connects.
+            var gauges: SnapshotGauges?
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
                 }
-            }
-
-            // Store the just-spawned task under `_poller` only if the session is still `.connected` and
-            // no poller is already running; otherwise cancel it, so a `shutdown()` racing between spawn
-            // and store can't leak a task. Lock order is always `_state` before `_poller`.
-            let stored = self._state.withLockedValue { state -> Bool in
-                guard case .connected = state else { return false }
-                return self._poller.withLockedValue { poller in
-                    guard poller.task == nil, !poller.stopped else { return false }
-                    poller.task = task
-                    return true
+                let isConnected = self._state.withLockedValue { state in
+                    if case .connected = state { return true }
+                    return false
                 }
-            }
-            if !stored {
-                task.cancel()
+                guard isConnected else { continue }
+                self._pollerStopped.withLockedValue { stopped in
+                    guard !stopped else { return }
+                    let recorder = gauges ?? SnapshotGauges(sessionName: self.configuration.metricsSessionName)
+                    recorder.record(self.getMetrics())
+                    gauges = recorder
+                }
             }
         }
 
-        /// Stop the metrics poller before the session closes.
-        ///
-        /// Sets `stopped` and cancels the task under `_poller`. Because the poller tick reads the driver
-        /// snapshot and records gauges *inside* the `_poller` lock, acquiring the lock here blocks until
-        /// any in-flight tick finishes, and the `stopped` flag prevents any later tick from recording —
-        /// so no gauge is recorded once shutdown begins and no tick can overlap `underlying.close()`.
-        /// `shutdown()` and the async `disconnect()` call this before `close()`, never while holding `_state`.
+        /// Stop the metrics poller before the session closes. Acquiring the lock waits for an in-flight tick.
         private func stopMetricsPoller() {
-            let task = self._poller.withLockedValue { poller -> Task<Void, Never>? in
-                poller.stopped = true
-                let task = poller.task
-                poller.task = nil
-                return task
-            }
-            task?.cancel()
-        }
-
-        fileprivate struct ConnectionTask: Sendable {
-            let task: Task<Void, Swift.Error>
-
-            init(_ task: Task<Void, Swift.Error>) {
-                self.task = task
-            }
+            self._pollerStopped.withLockedValue { $0 = true }
         }
     }
 }
 
-// MARK: - Cassandra session with async-await support
+// MARK: - Queries
 
-extension CassandraSession {
-    /// Run  insert / update / delete or DDL commands where no result is expected
-    public func run(
+extension CassandraClient.Session {
+    /// Execute insert / update / delete or DDL commands where no result is expected.
+    func execute(
         _ command: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger
     ) async throws {
         _ = try await self.query(command, parameters: parameters, options: options, logger: logger)
     }
 
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
-    public func query<T>(
+    func query<T>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none,
+        logger: Logger,
         transform: @escaping (CassandraClient.Row) -> T?
     ) async throws -> [T] {
         let rows = try await self.query(
@@ -834,11 +550,11 @@ extension CassandraSession {
     }
 
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
-    public func query<T: Decodable>(
+    func query<T: Decodable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> [T] {
         let rows = try await self.query(
             query,
@@ -858,11 +574,11 @@ extension CassandraSession {
     /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
     /// but spells out the decoded type explicitly at the call site, e.g.
     /// `try await session.query("select ...", withModelType: Model.self)`.
-    public func query<T: Decodable>(
+    func query<T: Decodable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none,
+        logger: Logger,
         withModelType model: T.Type
     ) async throws -> [T] {
         try await self.query(query, parameters: parameters, options: options, logger: logger)
@@ -873,11 +589,11 @@ extension CassandraSession {
     /// - Important:
     ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
     ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
-    public func query(
+    func query(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> CassandraClient.Rows {
         let statement: CassandraClient.Statement
         statement = try self.makeStatement(query: query, parameters: parameters, options: options)
@@ -887,12 +603,12 @@ extension CassandraSession {
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
     ///
     /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
-    public func query(
+    func query(
         _ query: String,
         parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> CassandraClient.PaginatedRows {
         let statement: CassandraClient.Statement
         statement = try self.makeStatement(query: query, parameters: parameters, options: options)
@@ -907,12 +623,12 @@ extension CassandraSession {
     ///
     /// - Note: Unlike the raw ``query(_:parameters:pageSize:options:logger:)`` sequence, decoded values
     ///   are independent Swift values and remain valid after the sequence is advanced.
-    public func query<T: Decodable & Sendable>(
+    func query<T: Decodable & Sendable>(
         _ query: String,
         parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> AsyncThrowingMapSequence<CassandraClient.PaginatedRows, T> {
         let paginatedRows = try await self.query(
             query,
@@ -934,12 +650,12 @@ extension CassandraSession {
     /// `try await session.query("select ...", pageSize: 100, withModelType: Model.self)`.
     ///
     /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
-    public func query<T: Decodable & Sendable>(
+    func query<T: Decodable & Sendable>(
         _ query: String,
         parameters: sending [CassandraClient.Statement.Value] = [],
         pageSize: Int32,
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none,
+        logger: Logger,
         withModelType model: T.Type
     ) async throws -> AsyncThrowingMapSequence<CassandraClient.PaginatedRows, T> {
         try await self.query(
@@ -951,31 +667,12 @@ extension CassandraSession {
         )
     }
 
-    /// Prepare a CQL query for repeated execution.
-    public func prepare(
-        _ query: String,
-        encryptionTable: String? = nil,
-        logger: Logger? = .none
-    ) async throws -> CassandraClient.PreparedStatement {
-        try await self.prepare(query, encryptionTable: encryptionTable, logger: logger)
-    }
-
-    /// Execute a prepared statement with bound parameters.
-    public func execute(
-        prepared: CassandraClient.PreparedStatement,
-        parameters: [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
-    ) async throws -> CassandraClient.Rows {
-        try await self.execute(prepared: prepared, parameters: parameters, options: options, logger: logger)
-    }
-
     /// Execute a prepared statement and decode each row into a `Decodable` type.
-    public func execute<T: Decodable>(
+    func execute<T: Decodable>(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> [T] {
         var effectiveOptions = options
         if effectiveOptions.encryptionTable == nil {
@@ -999,11 +696,11 @@ extension CassandraSession {
     /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
     /// but spells out the decoded type explicitly at the call site, e.g.
     /// `try await session.execute(prepared: statement, withModelType: Model.self)`.
-    public func execute<T: Decodable>(
+    func execute<T: Decodable>(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none,
+        logger: Logger,
         withModelType model: T.Type
     ) async throws -> [T] {
         try await self.execute(
@@ -1016,49 +713,41 @@ extension CassandraSession {
 }
 
 extension CassandraClient.Session {
-    /// What `withConnection should do after inspecting the connection state
-    private enum AsyncConnectionAction {
-        /// We started the connection; await it, then mark the session connected.
-        case startedConnecting(ConnectionTask)
-        /// Someone else started the connection as a task; just await it.
-        case awaitConnecting(ConnectionTask)
-        /// Already connected.
+    /// What a request does, decided under the state lock.
+    private enum ConnectionAction {
         case ready
-        /// Session has been shut down.
+        case wait(runStarted: Bool)
         case disconnected
     }
 
-    /// Ensure the session is connected, then invoke `body`.
+    /// Ensure the session is connected, then invoke `body`. Before `run()` has connected, the request waits for it.
     private func withConnection<T>(
-        logger: Logger?,
+        logger: Logger,
         _ body: (Logger) async throws -> T
     ) async throws -> T {
-        let logger = logger ?? self.logger
-
-        let action: AsyncConnectionAction = self._state.withLockedValue { state in
+        let action: ConnectionAction = self._state.withLockedValue { state in
             switch state {
-            case .idle:
-                let connectionTask = ConnectionTask(self.connect(logger: logger))
-                state = .connecting(connectionTask)
-                return .startedConnecting(connectionTask)
-            case .connecting(let task):
-                return .awaitConnecting(task)
             case .connected:
                 return .ready
-            case .disconnected, .disconnecting, .disconnectingFuture:
+            case .idle:
+                return .wait(runStarted: false)
+            case .connecting:
+                return .wait(runStarted: true)
+            case .disconnecting, .disconnected:
                 return .disconnected
             }
         }
 
         switch action {
-        case .startedConnecting(let task):
-            try await task.task.value
-            try self.handleConnectionSucceeded()
-            self.startMetricsPoller()
-        case .awaitConnecting(let task):
-            try await task.task.value
         case .ready:
             break
+        case .wait(let runStarted):
+            if !runStarted {
+                logger.warning(
+                    "Request waiting for the client to connect. Requests need `CassandraClient.run()` to be running."
+                )
+            }
+            try await self.ready.wait()
         case .disconnected:
             throw CassandraClient.Error.disconnected
         }
@@ -1069,7 +758,7 @@ extension CassandraClient.Session {
     // executes over one statement concurrently, and this preserves the safe execute-await-reuse pattern.
     func execute(
         statement: CassandraClient.Statement,
-        logger: Logger? = .none
+        logger: Logger
     ) async throws
         -> CassandraClient.Rows
     {
@@ -1107,7 +796,7 @@ extension CassandraClient.Session {
     func execute(
         statement: sending CassandraClient.Statement,
         pageSize: Int32,
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> CassandraClient.PaginatedRows {
         do {
             try statement.setPagingSize(Int(pageSize))
@@ -1118,7 +807,7 @@ extension CassandraClient.Session {
                     query: statement.query,
                     consistency: nil,
                     startedAt: nil,
-                    logger: logger ?? self.logger
+                    logger: logger
                 )
             }
             throw error
@@ -1128,7 +817,7 @@ extension CassandraClient.Session {
 
     func execute(
         batch: consuming CassandraClient.Batch,
-        logger: Logger?
+        logger: Logger
     ) async throws {
         // Use optionalBatch to prove to compiler that we only take it once
         var optionalBatch: CassandraClient.Batch? = batch
@@ -1160,9 +849,9 @@ extension CassandraClient.Session {
     ///   - configuration: Options to apply to the batch.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - build: Closure that adds statements to the batch.
-    public func batch(
+    func batch(
         configuration: CassandraClient.Batch.Configuration = .init(),
-        logger: Logger? = .none,
+        logger: Logger,
         _ build: (inout CassandraClient.Batch) async throws -> Void
     ) async throws {
         let resolver:
@@ -1203,7 +892,7 @@ extension CassandraClient.Session {
                     query: "batch",
                     consistency: nil,
                     startedAt: nil,
-                    logger: logger ?? self.logger
+                    logger: logger
                 )
             }
             throw error
@@ -1214,7 +903,7 @@ extension CassandraClient.Session {
     func prepare(
         _ query: String,
         encryptionTable: String? = nil,
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> CassandraClient.PreparedStatement {
         let prepared: CassPrepared = try await self.withConnection(logger: logger) { logger in
             logger.debug("preparing: \(query)")
@@ -1247,7 +936,7 @@ extension CassandraClient.Session {
                         query: query,
                         consistency: nil,
                         startedAt: nil,
-                        logger: logger ?? self.logger
+                        logger: logger
                     )
                 }
                 throw error
@@ -1267,7 +956,7 @@ extension CassandraClient.Session {
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
         options: CassandraClient.Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger
     ) async throws -> CassandraClient.Rows {
         let statement: CassandraClient.Statement
         do {
@@ -1295,7 +984,7 @@ extension CassandraClient.Session {
                     query: prepared.query,
                     consistency: nil,
                     startedAt: nil,
-                    logger: logger ?? self.logger
+                    logger: logger
                 )
             }
             throw error
@@ -1303,26 +992,49 @@ extension CassandraClient.Session {
         return try await self.execute(statement: statement, logger: logger)
     }
 
-    private func connect(logger: Logger) -> Task<Void, Swift.Error> {
-        Task {
-            logger.debug("connecting to: \(self.configuration)")
-            if let warning = self.configuration.insecureSSLWarning {
-                logger.warning("\(warning)")
+    /// Mark the session as connecting. Called once, when `run()` claims the client and before `connect(logger:)`,
+    /// so a request that arrives in between knows `run()` has started.
+    func beginConnecting() {
+        self._state.withLockedValue { state in
+            guard case .idle = state else {
+                preconditionFailure("Session connecting while \(state), expected idle")
             }
-            let startedAt = DispatchTime.now()
+            state = .connecting
+        }
+    }
+
+    /// Connect the session. Called once, by `run()`; requests that arrive meanwhile wait on `ready`.
+    func connect(logger: Logger) async throws {
+        self._state.withLockedValue { state in
+            guard case .connecting = state else {
+                preconditionFailure("Session connected while \(state), expected connecting")
+            }
+        }
+
+        logger.debug("connecting to: \(self.configuration)")
+        if let warning = self.configuration.insecureSSLWarning {
+            logger.warning("\(warning)")
+        }
+        do {
             // Instrument makeCluster + connect together so cluster-build failures are logged too.
-            return try await CassandraClient.RequestLog.instrumented(
-                startedAt: startedAt,
+            try await CassandraClient.RequestLog.instrumented(
+                startedAt: DispatchTime.now(),
                 query: nil,
                 consistency: nil,
                 threshold: nil,
                 logger: logger
             ) {
                 let cluster = try await self.configuration.makeCluster()
-                return try await self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
-                    .await()
+                try await self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace).await()
             }
+        } catch {
+            self._state.withLockedValue { $0 = .disconnected }
+            self.ready.complete(.failure(error))
+            throw error
         }
+
+        self._state.withLockedValue { $0 = .connected }
+        self.ready.complete(.success(()))
     }
 }
 

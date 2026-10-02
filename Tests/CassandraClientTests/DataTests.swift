@@ -25,7 +25,8 @@ import XCTest
 /// succeeds for non-string columns, causing callers to receive binary garbage for blobs, ints,
 /// UDTs, and frozen collections.
 final class DataTests: XCTestCase {
-    var cassandraClient: CassandraClient!
+    var running: RunningClient!
+    var cassandraClient: CassandraClient { self.running.client }
 
     override func setUp() async throws {
         try await super.setUp()
@@ -42,26 +43,22 @@ final class DataTests: XCTestCase {
             configuration.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
         }
         configuration.keyspace = keyspace
-        self.cassandraClient = CassandraClient(configuration: configuration)
-        try await self.cassandraClient.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
+        try await createKeyspace(keyspace, configuration: configuration)
+        self.running = RunningClient(configuration: configuration)
     }
 
     override func tearDown() async throws {
         try await super.tearDown()
-        try await self.cassandraClient.shutdownAsync()
-        self.cassandraClient = nil
+        try await self.running?.stop()
+        self.running = nil
     }
 
     func testStringReturnsValueForTextColumns() async throws {
         let tableName = "test_col_string_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "create table \(tableName) (id int primary key, a ascii, b text, c varchar);"
         )
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, a, b, c) values (1, 'ascii', 'text', 'varchar');"
         )
 
@@ -75,7 +72,7 @@ final class DataTests: XCTestCase {
 
     func testStringReturnsNilForNonTextColumns() async throws {
         let tableName = "test_col_string_nil_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             """
             create table \(tableName) (
                 id int primary key,
@@ -91,7 +88,7 @@ final class DataTests: XCTestCase {
             """
         )
         let uuid = UUID()
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, col_int, col_bigint, col_blob, col_utf8_blob, col_uuid, col_bool, col_float, col_double) values (?, ?, ?, ?, ?, ?, ?, ?, ?);",
             parameters: [
                 .int32(1),

@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
-import Logging
 import NIOConcurrencyHelpers
 import XCTest
 
@@ -61,10 +60,6 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         return configuration
     }
 
-    private func makeClient(_ configuration: CassandraClient.Configuration) -> CassandraClient {
-        CassandraClient(configuration: configuration, logger: Logger(label: "test.custom-auth"))
-    }
-
     /// A failed handshake surfaces as `Error.badCredentials`. Compares `shortDescription` since the driver's
     /// message text is not fixed.
     private func assertAuthFailure(_ error: Swift.Error, file: StaticString = #filePath, line: UInt = #line) {
@@ -80,6 +75,30 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         )
     }
 
+    /// Runs a client whose connect must fail authentication: a request waiting on the connect fails, and
+    /// `withClient` rethrows the connect error from `run()`.
+    private func assertConnectFailsAuthentication(
+        _ configuration: CassandraClient.Configuration,
+        _ message: @autoclosure () -> String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        await assertThrowsErrorAsync(
+            try await CassandraClient.withClient(configuration: configuration) { client in
+                await assertThrowsErrorAsync(
+                    try await client.query("select release_version from system.local"),
+                    file: file,
+                    line: line
+                )
+            },
+            message(),
+            file: file,
+            line: line
+        ) { error in
+            self.assertAuthFailure(error, file: file, line: line)
+        }
+    }
+
     /// A valid authenticator connects, `SELECT` returns, and `onSuccess` fired (the success callback).
     func testAuthenticatorConnectsAndSucceeds() async throws {
         try self.requireAuthEnforcement()
@@ -89,11 +108,10 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         )
         var configuration = self.makeConfiguration()
         configuration.authenticator = authenticator
-        let client = self.makeClient(configuration)
-        defer { XCTAssertNoThrow(try client.shutdown()) }
-
-        let rows = try await client.query("select release_version from system.local")
-        XCTAssertEqual(Array(rows).count, 1, "system.local returns exactly one row")
+        try await CassandraClient.withClient(configuration: configuration) { client in
+            let rows = try await client.query("select release_version from system.local")
+            XCTAssertEqual(Array(rows).count, 1, "system.local returns exactly one row")
+        }
         XCTAssertTrue(authenticator.onSuccessFired, "onSuccess must fire once the server reports success")
     }
 
@@ -105,12 +123,7 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
             username: Self.validUsername,
             password: "wrong-\(UUID().uuidString)"
         )
-        let client = self.makeClient(configuration)
-        defer { XCTAssertNoThrow(try client.shutdown()) }
-
-        await assertThrowsErrorAsync(try await client.query("select release_version from system.local")) { error in
-            self.assertAuthFailure(error)
-        }
+        await self.assertConnectFailsAuthentication(configuration)
     }
 
     /// The built-in password authenticator connects with valid credentials and is rejected with bogus
@@ -122,22 +135,16 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
             username: Self.validUsername,
             password: Self.validPassword
         )
-        let client = self.makeClient(configuration)
-        defer { XCTAssertNoThrow(try client.shutdown()) }
-
-        let rows = try await client.query("select release_version from system.local")
-        XCTAssertEqual(Array(rows).count, 1)
+        try await CassandraClient.withClient(configuration: configuration) { client in
+            let rows = try await client.query("select release_version from system.local")
+            XCTAssertEqual(Array(rows).count, 1)
+        }
 
         configuration.authenticator = CassandraClient.PasswordAuthenticator(
             username: "bogus-\(UUID().uuidString)",
             password: "bogus-\(UUID().uuidString)"
         )
-        let rejected = self.makeClient(configuration)
-        defer { XCTAssertNoThrow(try rejected.shutdown()) }
-
-        await assertThrowsErrorAsync(try await rejected.query("select release_version from system.local")) { error in
-            self.assertAuthFailure(error)
-        }
+        await self.assertConnectFailsAuthentication(configuration)
     }
 
     /// One shared authenticator instance under concurrent fan-out: all queries succeed and its shared,
@@ -152,21 +159,22 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         var configuration = self.makeConfiguration()
         configuration.authenticator = authenticator
         configuration.numIOThreads = 4
-        let client = self.makeClient(configuration)
-        defer { XCTAssertNoThrow(try client.shutdown()) }
-
         let iterations = 50
-        let outcomes = await withTaskGroup(of: Result<Int, Swift.Error>.self) { group in
-            for _ in 0..<iterations {
-                group.addTask {
-                    do {
-                        return .success(Array(try await client.query("select release_version from system.local")).count)
-                    } catch {
-                        return .failure(error)
+        let outcomes = try await CassandraClient.withClient(configuration: configuration) { client in
+            await withTaskGroup(of: Result<Int, Swift.Error>.self) { group in
+                for _ in 0..<iterations {
+                    group.addTask {
+                        do {
+                            return .success(
+                                Array(try await client.query("select release_version from system.local")).count
+                            )
+                        } catch {
+                            return .failure(error)
+                        }
                     }
                 }
+                return await group.reduce(into: []) { $0.append($1) }
             }
-            return await group.reduce(into: []) { $0.append($1) }
         }
 
         let rowCounts = outcomes.compactMap { try? $0.get() }
@@ -189,12 +197,7 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = ThrowingAuthenticator()
-        let client = self.makeClient(configuration)
-        defer { XCTAssertNoThrow(try client.shutdown()) }
-
-        await assertThrowsErrorAsync(try await client.query("select release_version from system.local")) { error in
-            self.assertAuthFailure(error)
-        }
+        await self.assertConnectFailsAuthentication(configuration)
     }
 
     /// The enforcement guard: a no-authenticator, no-credential connect must be rejected. If it connects,
@@ -204,15 +207,10 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = nil
-        let client = self.makeClient(configuration)
-        defer { XCTAssertNoThrow(try client.shutdown()) }
-
-        await assertThrowsErrorAsync(
-            try await client.query("select release_version from system.local"),
+        await self.assertConnectFailsAuthentication(
+            configuration,
             "CASSANDRA_REQUIRE_AUTH is set but the cluster accepted a no-credential connect — auth is not enforced, so the auth tests cannot be trusted"
-        ) { error in
-            self.assertAuthFailure(error)
-        }
+        )
     }
 
     /// After a connect/query/close, the retained authenticator box is released — its `deinit` runs — showing
@@ -228,15 +226,9 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
             )
             var configuration = self.makeConfiguration()
             configuration.authenticator = authenticator
-            let client = self.makeClient(configuration)
-            let rowCount: Int
-            do {
-                rowCount = Array(try await client.query("select release_version from system.local")).count
-            } catch {
-                try? await client.shutdownAsync()
-                throw error
+            let rowCount = try await CassandraClient.withClient(configuration: configuration) { client in
+                Array(try await client.query("select release_version from system.local")).count
             }
-            try? await client.shutdownAsync()
             XCTAssertEqual(rowCount, 1)
         }
         try await connectQueryAndShutdown()
