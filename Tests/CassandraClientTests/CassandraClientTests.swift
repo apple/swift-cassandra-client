@@ -42,11 +42,15 @@ final class Tests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        self.configuration.username = env["CASSANDRA_USER"]
-        self.configuration.password = env["CASSANDRA_PASSWORD"]
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            self.configuration.authenticator = CassandraClient.PasswordAuthenticator(
+                username: username,
+                password: password
+            )
+        }
         self.configuration.keyspace = keyspace
-        self.configuration.requestTimeoutMillis = UInt32(24_000)  // Default: 12_000 ms
-        self.configuration.connectTimeoutMillis = UInt32(10_000)  // Default: 5_000 ms
+        self.configuration.requestTimeout = .milliseconds(24_000)  // Default: 12_000 ms
+        self.configuration.connectTimeout = .milliseconds(10_000)  // Default: 5_000 ms
 
         var logger = Logger(label: "test")
         logger.logLevel = .debug
@@ -88,7 +92,6 @@ final class Tests: XCTestCase {
         XCTAssertEqual(Array(result).count, count)
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testAsyncSession() throws {
         let client = self.cassandraClient!
         let config = self.configuration!
@@ -129,7 +132,6 @@ final class Tests: XCTestCase {
         XCTAssertNoThrow(try cassandraClient.run("create table test (data bigint primary key);").wait())
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testWithAsyncSession() throws {
         let config = self.configuration!
         runAsyncAndWaitFor {
@@ -516,7 +518,6 @@ final class Tests: XCTestCase {
 
     /// Exhaustion edge (async API): the `async`/`await` `nextPage()` path is separate code from the
     /// EventLoopFuture path, so it gets its own exhaustion assertion.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testPaginationExhaustionAsync() throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(
@@ -577,7 +578,6 @@ final class Tests: XCTestCase {
     /// and consumed on another. This verifies that capability: the result is built from a query and
     /// then fully iterated inside a detached task on a different executor. Single-consumer, so it
     /// respects the documented usage contract — it just moves the one consumer off the creating context.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testPaginatedRowsCrossThreadHandoff() throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(
@@ -692,7 +692,6 @@ final class Tests: XCTestCase {
     /// the other reaches its synchronous claim and is rejected. The lock serializes the two claims, and
     /// the network await is far slower than task dispatch, so exactly one call fails with
     /// `concurrentPaginationUnsupported` and the other returns a valid page.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testConcurrentNextPageAsyncRejected() throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         XCTAssertNoThrow(
@@ -792,7 +791,6 @@ final class Tests: XCTestCase {
         }
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testQueryAsyncIterator() throws {
         let client = self.cassandraClient!
         runAsyncAndWaitFor(
@@ -879,7 +877,6 @@ final class Tests: XCTestCase {
         }
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testQueryAsyncBuffered() throws {
         let client = self.cassandraClient!
         runAsyncAndWaitFor(
@@ -1711,11 +1708,12 @@ final class Tests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        serialConfig.username = env["CASSANDRA_USER"]
-        serialConfig.password = env["CASSANDRA_PASSWORD"]
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            serialConfig.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
+        }
         serialConfig.keyspace = keyspace
-        serialConfig.requestTimeoutMillis = UInt32(24_000)
-        serialConfig.connectTimeoutMillis = UInt32(10_000)
+        serialConfig.requestTimeout = .milliseconds(24_000)
+        serialConfig.connectTimeout = .milliseconds(10_000)
         serialConfig.serialConsistency = .serial
 
         var logger = Logger(label: "test")
@@ -1888,7 +1886,6 @@ final class Tests: XCTestCase {
         XCTAssertEqual(Array(result).count, 10)
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testBatchInsertionAsync() throws {
         let client = self.cassandraClient!
         runAsyncAndWaitFor {
@@ -2005,7 +2002,6 @@ final class Tests: XCTestCase {
         }
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testPreparedStatementAsyncRoundtrip() throws {
         let client = self.cassandraClient!
         runAsyncAndWaitFor {
@@ -2047,7 +2043,6 @@ final class Tests: XCTestCase {
         XCTAssertEqual(result, [Person(id: 1, name: "alice")])
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testQueryDecodingWithModelTypeAsync() throws {
         let client = self.cassandraClient!
         runAsyncAndWaitFor {
@@ -2083,7 +2078,6 @@ final class Tests: XCTestCase {
         XCTAssertEqual(result, [Person(id: 1, name: "alice")])
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testPreparedStatementDecodingWithModelTypeAsync() throws {
         let client = self.cassandraClient!
         let config = self.configuration!
@@ -2116,7 +2110,6 @@ private struct Person: Codable, Equatable {
 
 extension XCTestCase {
     // TODO: remove once XCTest supports async functions
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func runAsyncAndWaitFor(
         _ closure: @escaping @Sendable () async throws -> Void,
         _ timeout: TimeInterval = 3.0

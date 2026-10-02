@@ -18,7 +18,7 @@ import NIO
 // TODO: add more config option per C++ cluster impl
 extension CassandraClient {
     /// Configuration for the ``CassandraClient``.
-    public struct Configuration: Sendable, CustomStringConvertible {
+    public struct Configuration: Sendable {
         public typealias ContactPoints = [String]
 
         /// Provides the initial `ContactPoints` of the Cassandra cluster.
@@ -26,26 +26,37 @@ extension CassandraClient {
         public var contactPointsProvider:
             @Sendable (@escaping @Sendable (Result<ContactPoints, Swift.Error>) -> Void) -> Void
 
+        /// The port the cluster listens on.
         public var port: Int32
+        /// The native protocol version used to talk to the cluster.
         public var protocolVersion: ProtocolVersion
-        public var username: String?
-        public var password: String?
 
-        /// A custom SASL authenticator. When set, it takes precedence over ``username``/``password``.
-        /// The instance is shared across all connections and invoked concurrently; see
-        /// ``CassandraClient/Authenticator``.
+        /// Authenticates each connection. `nil` connects without authentication.
+        ///
+        /// Use ``CassandraClient/PasswordAuthenticator`` for username and password authentication, or a
+        /// custom ``CassandraClient/Authenticator`` for other SASL mechanisms. The instance is shared across
+        /// all connections and invoked concurrently; see ``CassandraClient/Authenticator``.
         public var authenticator: (any CassandraClient.Authenticator)? = nil
 
+        /// SSL configuration. `nil` connects in plain text.
         public var ssl: SSL?
+        /// The keyspace the session connects to, used to resolve unqualified table names.
         public var keyspace: String?
+        /// Number of driver I/O threads. `nil` leaves the driver's default.
         public var numIOThreads: UInt32?
-        public var connectTimeoutMillis: UInt32?
-        public var requestTimeoutMillis: UInt32?
-        public var resolveTimeoutMillis: UInt32?
+        /// Timeout for establishing a connection, rounded up to whole milliseconds. `nil` leaves the
+        /// driver's default.
+        public var connectTimeout: Duration?
+        /// Default timeout for a request, rounded up to whole milliseconds. `nil` leaves the driver's
+        /// default. A statement or batch can override it.
+        public var requestTimeout: Duration?
+        /// Timeout for resolving a contact point's hostname, rounded up to whole milliseconds. `nil` leaves
+        /// the driver's default.
+        public var resolveTimeout: Duration?
 
-        /// Logs a successful query at `.debug` when its latency reaches this threshold (ms). `nil` disables
-        /// the check; `0` logs every success.
-        public var slowQueryThresholdMillis: UInt32? = nil
+        /// Logs a successful query at `.debug` when its latency reaches this threshold. `nil` disables the
+        /// check; `.zero`, or a negative duration, logs every success.
+        public var slowQueryThreshold: Duration? = nil
 
         /// Includes bound parameter values in request logs when `true`. Off by default — values are potential PII.
         public var logBoundValues: Bool = false
@@ -55,27 +66,49 @@ extension CassandraClient {
         /// Maximum length of each bound value in a log record when ``logBoundValues`` is set.
         internal static let maxLoggedValueLength = 50
 
+        /// Number of connections kept open per host. `nil` leaves the driver's default.
         public var coreConnectionsPerHost: UInt32?
-        public var tcpNodelay: Bool?
-        public var tcpKeepalive: Bool?
-        public var tcpKeepaliveDelaySeconds: UInt32 = 0
-        public var connectionHeartbeatInterval: UInt32?
-        public var connectionIdleTimeout: UInt32?
-        public var schema: Bool?
-        public var hostnameResolution: Bool?
-        public var randomizedContactPoints: Bool?
+        /// Whether to disable Nagle's algorithm on each connection. Default `true`.
+        public var tcpNodelay: Bool = true
+        /// Whether to enable TCP keepalive on each connection. Default `false`.
+        public var tcpKeepalive: Bool = false
+        /// Delay before the first keepalive probe, rounded up to whole seconds. Used only when
+        /// ``tcpKeepalive`` is `true`. Default `.zero`.
+        public var tcpKeepaliveDelay: Duration = .zero
+        /// Interval between heartbeat messages on an idle connection, rounded up to whole seconds. `.zero`
+        /// disables heartbeats. `nil` leaves the driver's default.
+        public var connectionHeartbeatInterval: Duration?
+        /// Time without a heartbeat response after which a connection is closed, rounded up to whole
+        /// seconds. `nil` leaves the driver's default.
+        public var connectionIdleTimeout: Duration?
+        /// Whether the driver retrieves and updates schema metadata. Default `true`.
+        ///
+        /// Encryption context inference reads primary key columns from this metadata, so turning it off
+        /// breaks automatic encryption context resolution for prepared statements.
+        public var isSchemaMetadataEnabled: Bool = true
+        /// Whether to resolve each cluster host's hostname with a reverse DNS lookup. Default `false`.
+        ///
+        /// Required by ``SSL/CertificateVerification/fullVerification``, which matches the certificate
+        /// against that hostname.
+        public var hostnameResolution: Bool = false
+        /// Whether to shuffle the resolved contact points before connecting. Default `true`.
+        public var randomizedContactPoints: Bool = true
+        /// The speculative execution policy. `nil` leaves the driver's default.
         public var speculativeExecutionPolicy: SpeculativeExecutionPolicy?
+        /// When statements are prepared on hosts other than the one that handled the request. `nil` leaves
+        /// the driver's default.
         public var prepareStrategy: PrepareStrategy?
-        public var compact: Bool?
+        /// Whether to send the `NO_COMPACT` startup option, which puts `COMPACT STORAGE` tables into
+        /// compatibility mode. Default `false`.
+        public var isNoCompactEnabled: Bool = false
 
         /// Enables driver metrics emission. Default `false` (off).
         /// When enabled, the session polls the driver's snapshot and pushes gauges to swift-metrics.
         public var metricsEnabled: Bool = false
 
-        /// Poller cadence in milliseconds. Default `10000` (10s). `nil` or `0` disables the poller
-        /// while leaving ``metricsEnabled`` on; a `0` interval would busy-loop the poller.
-        /// Requires macOS 12 / iOS 15 or newer; on older platforms the poller does not start.
-        public var metricsPollIntervalMillis: UInt32? = 10000
+        /// Poller cadence. Default 10 seconds. `nil`, `.zero` or a negative duration disables the poller while
+        /// leaving ``metricsEnabled`` on; a zero interval would busy-loop the poller.
+        public var metricsPollInterval: Duration? = .seconds(10)
 
         /// Optional session name attached as a `session` dimension on every emitted metric.
         /// Set this to disambiguate metrics when more than one metrics-enabled session runs in a
@@ -83,29 +116,14 @@ extension CassandraClient {
         public var metricsSessionName: String? = nil
 
         /// Encryptor for transparent column encryption.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        public var encryptor: Encryptor? {
-            get { self._encryptor as? Encryptor }
-            set { self._encryptor = newValue }
-        }
-
-        private var _encryptor: (any Sendable)?
+        public var encryptor: Encryptor?
 
         /// Registered encryption schemas.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        public var encryptionSchemas: [String: EncryptionSchema] {
-            get { self._encryptionSchemas as! [String: EncryptionSchema] }
-            set { self._encryptionSchemas = newValue }
-        }
-
-        private var _encryptionSchemas: any Sendable = [String: EncryptionSchema]()
+        public var encryptionSchemas: [String: EncryptionSchema] = [:]
 
         /// Register an encryption schema for automatic context building during decoding.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public mutating func registerEncryptionSchema(_ schema: EncryptionSchema) {
-            var schemas = self.encryptionSchemas
-            schemas[schema.registryKey] = schema
-            self.encryptionSchemas = schemas
+            self.encryptionSchemas[schema.registryKey] = schema
         }
 
         /// Sets the cluster's consistency level. Default is `.localOne`.
@@ -157,16 +175,34 @@ extension CassandraClient {
 
         }
 
+        /// When the driver starts additional executions of an idempotent request that has not yet completed.
+        #if hasAttribute(nonexhaustive)
+        @nonexhaustive
+        #endif
         public enum SpeculativeExecutionPolicy: Sendable, Hashable {
-            case constant(delayInMillseconds: Int64, maxExecutions: Int32)
+            /// Starts up to `maxExecutions` additional executions, each `delay` after the previous one. The
+            /// delay is rounded up to whole milliseconds.
+            case constant(delay: Duration, maxExecutions: Int32)
+            /// Starts no speculative executions.
             case disabled
         }
 
+        /// Where statements are prepared beyond the host that handled the prepare request.
+        #if hasAttribute(nonexhaustive)
+        @nonexhaustive
+        #endif
         public enum PrepareStrategy: String, Sendable, Hashable {
+            /// Prepares the statement on every host.
             case allHosts
+            /// Prepares already-prepared statements on a host when it becomes available again or is added to the
+            /// cluster.
             case upOrAddHost
         }
 
+        /// The native protocol version used to talk to the cluster.
+        #if hasAttribute(nonexhaustive)
+        @nonexhaustive
+        #endif
         public enum ProtocolVersion: Int32, Sendable, CaseIterable {
             case v1 = 1
             case v2 = 2
@@ -208,7 +244,6 @@ extension CassandraClient {
             return clusterPromise.futureResult
         }
 
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         internal func makeCluster() async throws -> Cluster {
             try await withCheckedThrowingContinuation { continuation in
                 self.contactPointsProvider { result in
@@ -236,18 +271,18 @@ extension CassandraClient {
 
             try cluster.setPort(self.port)
             try cluster.setProtocolVersion(self.protocolVersion.rawValue)
-            if let authenticator = self.authenticator {
+            if let authenticator = self.authenticator as? CassandraClient.PasswordAuthenticator {
+                try cluster.setCredentials(username: authenticator.username, password: authenticator.password)
+            } else if let authenticator = self.authenticator {
                 try cluster.setAuthenticator(authenticator)
-            } else if let username = self.username, let password = self.password {
-                try cluster.setCredentials(username: username, password: password)
             }
             if let ssl = self.ssl {
                 // The driver matches DNS identity against a hostname it only resolves when hostname
                 // resolution is on; without it peers reached by IP carry no hostname and every
                 // handshake fails the subject match.
-                if ssl.verifyFlag == .peerIdentityDNS, self.hostnameResolution != true {
+                if ssl.certificateVerification == .fullVerification, !self.hostnameResolution {
                     throw CassandraClient.Error.badParams(
-                        "SSL verifyFlag .peerIdentityDNS requires hostnameResolution to be true"
+                        "SSL certificateVerification .fullVerification requires hostnameResolution to be true"
                     )
                 }
                 try cluster.setSSL(try ssl.makeSSLContext())
@@ -255,46 +290,42 @@ extension CassandraClient {
             if let value = self.numIOThreads {
                 try cluster.setNumThreadsIO(value)
             }
-            if let value = self.connectTimeoutMillis {
-                try cluster.setConnectTimeout(value)
+            if let value = self.connectTimeout {
+                try cluster.setConnectTimeout(try value.driverMilliseconds(UInt32.self, name: "connectTimeout"))
             }
-            if let value = self.requestTimeoutMillis {
-                try cluster.setRequestTimeout(value)
+            if let value = self.requestTimeout {
+                try cluster.setRequestTimeout(try value.driverMilliseconds(UInt32.self, name: "requestTimeout"))
             }
-            if let value = self.resolveTimeoutMillis {
-                try cluster.setResolveTimeout(value)
+            if let value = self.resolveTimeout {
+                try cluster.setResolveTimeout(try value.driverMilliseconds(UInt32.self, name: "resolveTimeout"))
             }
             if let value = self.coreConnectionsPerHost {
                 try cluster.setCoreConnectionsPerHost(value)
             }
-            if let value = self.tcpNodelay {
-                try cluster.setTcpNodelay(value)
-            }
-            if let value = self.tcpKeepalive {
-                try cluster.setTcpKeepalive(value, delayInSeconds: self.tcpKeepaliveDelaySeconds)
-            }
+            try cluster.setTcpNodelay(self.tcpNodelay)
+            try cluster.setTcpKeepalive(
+                self.tcpKeepalive,
+                delayInSeconds: try self.tcpKeepaliveDelay.driverSeconds(name: "tcpKeepaliveDelay")
+            )
             if let value = self.connectionHeartbeatInterval {
-                try cluster.setConnectionHeartbeatInterval(value)
+                try cluster.setConnectionHeartbeatInterval(try value.driverSeconds(name: "connectionHeartbeatInterval"))
             }
             if let value = self.connectionIdleTimeout {
-                try cluster.setConnectionIdleTimeout(value)
+                try cluster.setConnectionIdleTimeout(try value.driverSeconds(name: "connectionIdleTimeout"))
             }
-            if let value = self.schema {
-                try cluster.setUseSchema(value)
-            }
-            if let value = self.hostnameResolution {
-                try cluster.setUseHostnameResolution(value)
-            }
+            try cluster.setUseSchema(self.isSchemaMetadataEnabled)
+            try cluster.setUseHostnameResolution(self.hostnameResolution)
             if let loadBalancingStrategy = self.loadBalancingStrategy {
                 try cluster.setLoadBalancingStrategy(loadBalancingStrategy)
             }
-            if let value = self.randomizedContactPoints {
-                try cluster.setUseRandomizedContactPoints(value)
-            }
+            try cluster.setUseRandomizedContactPoints(self.randomizedContactPoints)
             switch self.speculativeExecutionPolicy {
-            case .constant(let delayInMillseconds, let maxExecutions):
+            case .constant(let delay, let maxExecutions):
                 try cluster.setConstantSpeculativeExecutionPolicy(
-                    delayInMillseconds: delayInMillseconds,
+                    delayInMilliseconds: try delay.driverMilliseconds(
+                        Int64.self,
+                        name: "speculativeExecutionPolicy delay"
+                    ),
                     maxExecutions: maxExecutions
                 )
             case .disabled:
@@ -310,16 +341,13 @@ extension CassandraClient {
             case .none:
                 break
             }
-            if let value = self.compact {
-                try cluster.setNoCompact(!value)
-            }
+            try cluster.setNoCompact(self.isNoCompactEnabled)
             if let value = self.consistency {
                 try cluster.setConsistency(value.cassConsistency)
             }
             if let value = self.serialConsistency {
                 try cluster.setSerialConsistency(value.cassConsistency)
             }
-
             return cluster
         }
 
@@ -328,30 +356,51 @@ extension CassandraClient {
         /// no-verification case and only from a startup message a non-DSE cluster never triggers.
         internal var insecureSSLWarning: String? {
             guard let ssl = self.ssl else { return nil }
-            switch ssl.verifyFlag {
+            switch ssl.certificateVerification {
             case .none:
                 return
-                    "SSL is enabled with verifyFlag .none: the peer's certificate is not checked at "
-                    + "all, leaving the connection open to interception"
-            case .peerCert:
+                    "SSL is enabled with certificateVerification .none: the peer's certificate is not "
+                    + "checked at all, leaving the connection open to interception"
+            case .noHostnameVerification:
                 return
-                    "SSL is enabled with verifyFlag .peerCert: the peer's identity is not verified, "
-                    + "so any certificate chaining to trustedCertificates is accepted for any host"
-            case .peerIdentity, .peerIdentityDNS:
+                    "SSL is enabled with certificateVerification .noHostnameVerification: the peer's "
+                    + "identity is not verified, so any certificate chaining to trustedCertificates is "
+                    + "accepted for any host"
+            case .ipAddressVerification, .fullVerification:
                 return nil
             }
         }
+    }
+}
 
-        public var description: String {
-            """
-            [\(Configuration.self):
-            port: \(self.port),
-            username: \(self.username ?? "none"),
-            password: *****,
-            authenticator: \(self.authenticator == nil ? "none" : "custom"),
-            ssl: \(self.ssl.map { "enabled, verify \($0.verifyFlag)" } ?? "disabled")]
-            """
-        }
+// Redact secrets from every string form. The authenticator typically holds credentials and the SSL
+// configuration holds a private key and its password; default reflection would print them through any
+// interpolation, `dump(_:)` or `Mirror` of a configuration. Same approach as `Encrypted<T>`.
+extension CassandraClient.Configuration: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        """
+        [\(CassandraClient.Configuration.self):
+        port: \(self.port),
+        protocolVersion: \(self.protocolVersion),
+        keyspace: \(self.keyspace ?? "none"),
+        authenticator: \(self.authenticator == nil ? "none" : "<redacted>"),
+        ssl: \(self.ssl.map(\.description) ?? "disabled")]
+        """
+    }
+
+    public var debugDescription: String { self.description }
+
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                "port": self.port,
+                "protocolVersion": self.protocolVersion,
+                "keyspace": self.keyspace as Any,
+                "authenticator": self.authenticator == nil ? "none" : "<redacted>",
+                "ssl": self.ssl as Any,
+            ]
+        )
     }
 }
 
@@ -449,11 +498,11 @@ internal final class Cluster {
         }
     }
 
-    func setConstantSpeculativeExecutionPolicy(delayInMillseconds: Int64, maxExecutions: Int32) throws {
+    func setConstantSpeculativeExecutionPolicy(delayInMilliseconds: Int64, maxExecutions: Int32) throws {
         try self.checkResult {
             cass_cluster_set_constant_speculative_execution_policy(
                 self.rawPointer,
-                cass_int64_t(delayInMillseconds),
+                cass_int64_t(delayInMilliseconds),
                 maxExecutions
             )
         }
@@ -518,28 +567,39 @@ internal final class Cluster {
 // MARK: - SSL
 
 extension CassandraClient.Configuration {
+    /// SSL configuration for connections to the cluster.
     public struct SSL: Sendable {
+        /// PEM encoded certificates the peer's certificate chain is validated against. The driver loads no
+        /// system trust anchors, so `nil` fails every verification mode except
+        /// ``CertificateVerification/none``.
         public var trustedCertificates: [String]?
-        public var verifyFlag: VerifyFlag = .peerIdentity
+        /// Verification performed on the peer's certificate. Default ``CertificateVerification/ipAddressVerification``.
+        public var certificateVerification: CertificateVerification = .ipAddressVerification
+        /// PEM encoded client certificate chain, starting with the certificate itself, used to authenticate
+        /// the client to the server.
         public var cert: String?
+        /// PEM encoded client private key and its password, used to authenticate the client to the server.
         public var privateKey: (key: String, password: String)?
 
         /// Verification performed on the peer's certificate.
         ///
         /// The driver checks chain validity and peer identity independently, so the identity cases
-        /// request both. ``VerifyFlag/peerCert`` accepts any certificate that chains to
+        /// request both. ``noHostnameVerification`` accepts any certificate that chains to
         /// ``trustedCertificates`` whatever its subject, which does not protect against a
         /// network-position attacker holding another certificate from the same issuer;
-        /// ``VerifyFlag/none`` checks nothing at all.
+        /// ``none`` checks nothing at all.
         ///
-        /// Every case except ``VerifyFlag/none`` validates the chain against ``trustedCertificates``
+        /// Every case except ``none`` validates the chain against ``trustedCertificates``
         /// alone. The driver loads no system trust anchors, so leaving that property `nil` fails
         /// verification rather than falling back to the platform's certificate store.
-        public enum VerifyFlag: String, Sendable, Equatable, CaseIterable {
+        #if hasAttribute(nonexhaustive)
+        @nonexhaustive
+        #endif
+        public enum CertificateVerification: String, Sendable, Equatable, CaseIterable {
             /// No verification is performed
             case none
             /// Certificate is present and valid. The peer's identity is not checked.
-            case peerCert
+            case noHostnameVerification
             /// Certificate is present and valid, and the IP address the driver connected to matches
             /// an `iPAddress` subject alternative name on the certificate. That address is the
             /// resolved contact point for the node the driver reaches directly, and the
@@ -548,7 +608,7 @@ extension CassandraClient.Configuration {
             /// point. Matching consumes no hostname, so
             /// ``CassandraClient/Configuration/hostnameResolution`` only adds a reverse lookup per
             /// connection here.
-            case peerIdentity
+            case ipAddressVerification
             /// Certificate is present and valid, and the peer's hostname matches a `dNSName` subject
             /// alternative name on the certificate, or its common name when the certificate carries
             /// no subject alternative names at all. Requires
@@ -559,26 +619,26 @@ extension CassandraClient.Configuration {
             /// That reverse lookup does not require a PTR record. An address without one resolves to
             /// its own numeric form, which then fails the subject match and is reported as a
             /// certificate mismatch rather than a missing PTR record.
-            case peerIdentityDNS
+            case fullVerification
         }
 
         public init() {}
 
-        /// The driver verify flags for ``verifyFlag``. The driver reads these as a bitmask and runs
-        /// `SSL_get_verify_result` only when `CASS_SSL_VERIFY_PEER_CERT` is set, so the identity
+        /// The driver verify flags for ``certificateVerification``. The driver reads these as a bitmask and
+        /// runs `SSL_get_verify_result` only when `CASS_SSL_VERIFY_PEER_CERT` is set, so the identity
         /// cases set it alongside the subject-match bit; setting a subject-match bit alone would
         /// match the subject without validating the chain.
         internal var cassVerifyFlags: Int32 {
-            switch self.verifyFlag {
+            switch self.certificateVerification {
             case .none:
                 return Int32(CASS_SSL_VERIFY_NONE.rawValue)
-            case .peerCert:
+            case .noHostnameVerification:
                 return Int32(CASS_SSL_VERIFY_PEER_CERT.rawValue)
-            case .peerIdentity:
+            case .ipAddressVerification:
                 return Int32(
                     CASS_SSL_VERIFY_PEER_CERT.rawValue | CASS_SSL_VERIFY_PEER_IDENTITY.rawValue
                 )
-            case .peerIdentityDNS:
+            case .fullVerification:
                 return Int32(
                     CASS_SSL_VERIFY_PEER_CERT.rawValue | CASS_SSL_VERIFY_PEER_IDENTITY_DNS.rawValue
                 )
@@ -605,6 +665,34 @@ extension CassandraClient.Configuration {
 
             return sslContext
         }
+    }
+}
+
+extension CassandraClient.Configuration.SSL: CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable
+{
+    public var description: String {
+        """
+        [\(CassandraClient.Configuration.SSL.self):
+        certificateVerification: \(self.certificateVerification),
+        trustedCertificates: \(self.trustedCertificates?.count ?? 0),
+        cert: \(self.cert == nil ? "none" : "set"),
+        privateKey: \(self.privateKey == nil ? "none" : "<redacted>")]
+        """
+    }
+
+    public var debugDescription: String { self.description }
+
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: [
+                "trustedCertificates": self.trustedCertificates as Any,
+                "certificateVerification": self.certificateVerification,
+                "cert": self.cert as Any,
+                "privateKey": self.privateKey == nil ? "none" : "<redacted>",
+            ]
+        )
     }
 }
 
@@ -651,4 +739,85 @@ internal final class SSLContext {
             throw CassandraClient.Error(result, message: "Failed to configure SSL")
         }
     }
+}
+
+// MARK: - Duration conversion
+
+extension Duration {
+    /// Whole milliseconds for a driver parameter, rounded up so a nonzero duration never becomes zero.
+    ///
+    /// - Throws: ``CassandraClient/Error/badParams(_:)`` if the duration is negative or does not fit `T`.
+    internal func driverMilliseconds<T: FixedWidthInteger>(_: T.Type, name: String) throws -> T {
+        try self.roundedUp(unitsPerSecond: 1000, attosecondsPerUnit: 1_000_000_000_000_000, as: T.self, name: name)
+    }
+
+    /// Whole seconds for a driver parameter, rounded up so a nonzero duration never becomes zero.
+    ///
+    /// - Throws: ``CassandraClient/Error/badParams(_:)`` if the duration is negative or does not fit `UInt32`.
+    internal func driverSeconds(name: String) throws -> UInt32 {
+        try self.roundedUp(
+            unitsPerSecond: 1,
+            attosecondsPerUnit: 1_000_000_000_000_000_000,
+            as: UInt32.self,
+            name: name
+        )
+    }
+
+    private func roundedUp<T: FixedWidthInteger>(
+        unitsPerSecond: Int64,
+        attosecondsPerUnit: Int64,
+        as: T.Type,
+        name: String
+    ) throws -> T {
+        let (seconds, attoseconds) = self.components
+        guard self >= .zero else {
+            throw CassandraClient.Error.badParams("'\(name)' must not be negative, got \(self)")
+        }
+        var (units, overflow) = seconds.multipliedReportingOverflow(by: unitsPerSecond)
+        let partial = attoseconds / attosecondsPerUnit + (attoseconds % attosecondsPerUnit == 0 ? 0 : 1)
+        if !overflow {
+            (units, overflow) = units.addingReportingOverflow(partial)
+        }
+        guard !overflow, let value = T(exactly: units) else {
+            throw CassandraClient.Error.badParams("'\(name)' is out of range, got \(self)")
+        }
+        return value
+    }
+}
+
+// MARK: - Renamed before 1.0
+
+extension CassandraClient.Configuration {
+    @available(*, unavailable, renamed: "isSchemaMetadataEnabled")
+    public var schema: Bool {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+}
+
+extension CassandraClient.Configuration.SSL {
+    @available(*, unavailable, renamed: "CertificateVerification")
+    public typealias VerifyFlag = CertificateVerification
+
+    @available(*, unavailable, renamed: "certificateVerification")
+    public var verifyFlag: CertificateVerification {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+}
+
+extension CassandraClient.Configuration.SSL.CertificateVerification {
+    @available(*, unavailable, renamed: "noHostnameVerification")
+    public static var peerCert: Self { fatalError("unavailable") }
+
+    @available(*, unavailable, renamed: "ipAddressVerification")
+    public static var peerIdentity: Self { fatalError("unavailable") }
+
+    @available(*, unavailable, renamed: "fullVerification")
+    public static var peerIdentityDNS: Self { fatalError("unavailable") }
+}
+
+extension CassandraClient {
+    @available(*, unavailable, renamed: "CassandraClient.Batch.Kind")
+    public typealias BatchType = Batch.Kind
 }

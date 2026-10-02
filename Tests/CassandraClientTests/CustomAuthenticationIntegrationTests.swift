@@ -57,8 +57,8 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
             port: Self.environment["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        configuration.connectTimeoutMillis = 10_000
-        configuration.requestTimeoutMillis = 24_000
+        configuration.connectTimeout = .milliseconds(10_000)
+        configuration.requestTimeout = .milliseconds(24_000)
         return configuration
     }
 
@@ -114,22 +114,31 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         }
     }
 
-    /// A valid authenticator plus bogus `username`/`password` still connects — the authenticator takes
-    /// precedence over credentials in `makeCluster` (bogus credentials would otherwise fail the connect).
-    func testCustomAuthenticatorTakesPrecedenceOverCredentials() throws {
+    /// The built-in password authenticator connects with valid credentials and is rejected with bogus
+    /// ones. It goes through the driver's native credentials path rather than the SASL callbacks.
+    func testPasswordAuthenticator() throws {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
-        configuration.authenticator = PlaintextAuthenticator(
+        configuration.authenticator = CassandraClient.PasswordAuthenticator(
             username: Self.validUsername,
             password: Self.validPassword
         )
-        configuration.username = "bogus-\(UUID().uuidString)"
-        configuration.password = "bogus-\(UUID().uuidString)"
         let client = self.makeClient(configuration)
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
         let rows = try client.query("select release_version from system.local").wait()
         XCTAssertEqual(Array(rows).count, 1)
+
+        configuration.authenticator = CassandraClient.PasswordAuthenticator(
+            username: "bogus-\(UUID().uuidString)",
+            password: "bogus-\(UUID().uuidString)"
+        )
+        let rejected = self.makeClient(configuration)
+        defer { XCTAssertNoThrow(try rejected.shutdown()) }
+
+        XCTAssertThrowsError(try rejected.query("select release_version from system.local").wait()) { error in
+            self.assertAuthFailure(error)
+        }
     }
 
     /// One shared authenticator instance under concurrent fan-out: all queries succeed and its shared,
@@ -196,8 +205,6 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = nil
-        configuration.username = nil
-        configuration.password = nil
         let client = self.makeClient(configuration)
         defer { XCTAssertNoThrow(try client.shutdown()) }
 

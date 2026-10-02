@@ -154,7 +154,7 @@ final class CustomAuthenticationTests: XCTestCase {
 
     // MARK: - Configuration.description redaction
 
-    /// With an authenticator set, `description` shows `authenticator: custom` and none of the
+    /// With an authenticator set, `description` shows `authenticator: <redacted>` and none of the
     /// authenticator's internals (potential secrets).
     func testDescriptionRedactsAuthenticatorInternals() {
         let secret = "TOP_SECRET_TOKEN_\(UUID().uuidString)"
@@ -162,7 +162,7 @@ final class CustomAuthenticationTests: XCTestCase {
         configuration.authenticator = PlaintextAuthenticator(username: "u", password: secret)
 
         let description = configuration.description
-        XCTAssertTrue(description.contains("authenticator: custom"))
+        XCTAssertTrue(description.contains("authenticator: <redacted>"))
         XCTAssertFalse(description.contains(secret), "authenticator internals must not appear in description")
     }
 
