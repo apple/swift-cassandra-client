@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 internal import CDataStaxDriver
-import NIO
 
 // TODO: add more config option per C++ cluster impl
 extension CassandraClient {
@@ -211,7 +210,7 @@ extension CassandraClient {
             case v5 = 5
         }
 
-        @preconcurrency public init(
+        public init(
             contactPointsProvider:
                 @escaping @Sendable (@escaping @Sendable (Result<ContactPoints, Swift.Error>) -> Void) ->
                 Void,
@@ -221,27 +220,6 @@ extension CassandraClient {
             self.contactPointsProvider = contactPointsProvider
             self.port = port
             self.protocolVersion = protocolVersion
-        }
-
-        internal func makeCluster(on eventLoop: EventLoop) -> EventLoopFuture<Cluster> {
-            let clusterPromise = eventLoop.makePromise(of: Cluster.self)
-            self.contactPointsProvider { result in
-                switch result {
-                case .success(let contactPoints):
-                    // cluster is not Sendable, so it needs to be created on the eventloop
-                    eventLoop.execute {
-                        do {
-                            let cluster = try self.makeCluster(contactPoints: contactPoints)
-                            clusterPromise.assumeIsolated().succeed(cluster)
-                        } catch {
-                            clusterPromise.fail(error)
-                        }
-                    }
-                case .failure(let error):
-                    clusterPromise.fail(error)
-                }
-            }
-            return clusterPromise.futureResult
         }
 
         internal func makeCluster() async throws -> Cluster {
