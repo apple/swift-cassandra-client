@@ -65,15 +65,8 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         configuration.connectTimeout = .milliseconds(10_000)
         self.keyspace = keyspace
 
-        var logger = Logger(label: "test")
-        logger.logLevel = .debug
-
-        self.cassandraClient = CassandraClient(configuration: configuration, logger: logger)
-        try await self.cassandraClient.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
+        self.cassandraClient = CassandraClient(configuration: configuration)
+        try await createKeyspace(keyspace, configuration: configuration)
     }
 
     override func tearDown() async throws {
@@ -100,7 +93,7 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
     private func makeTable(rows count: Int, nullPayloadAt: Int? = nil) async throws -> String {
         let table = "test_paged_decode_\(DispatchTime.now().uptimeNanoseconds)"
         let client = self.cassandraClient!
-        try await client.run(
+        try await client.execute(
             "create table \(table) (pk int, ck int, payload text, primary key (pk, ck));"
         )
 
@@ -108,7 +101,7 @@ final class PaginatedDecodingIntegrationTests: XCTestCase {
         try await withThrowingTaskGroup(of: Void.self) { group in
             for index in 0..<count {
                 group.addTask {
-                    try await client.run(
+                    try await client.execute(
                         "insert into \(table) (pk, ck, payload) values (?, ?, ?);",
                         parameters: Self.insertParameters(index: index, nullPayloadAt: nullPayloadAt),
                         options: options

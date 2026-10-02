@@ -43,11 +43,7 @@ final class DataTests: XCTestCase {
         }
         configuration.keyspace = keyspace
         self.cassandraClient = CassandraClient(configuration: configuration)
-        try await self.cassandraClient.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
+        try await createKeyspace(keyspace, configuration: configuration)
     }
 
     override func tearDown() async throws {
@@ -58,10 +54,10 @@ final class DataTests: XCTestCase {
 
     func testStringReturnsValueForTextColumns() async throws {
         let tableName = "test_col_string_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "create table \(tableName) (id int primary key, a ascii, b text, c varchar);"
         )
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, a, b, c) values (1, 'ascii', 'text', 'varchar');"
         )
 
@@ -75,7 +71,7 @@ final class DataTests: XCTestCase {
 
     func testStringReturnsNilForNonTextColumns() async throws {
         let tableName = "test_col_string_nil_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             """
             create table \(tableName) (
                 id int primary key,
@@ -91,7 +87,7 @@ final class DataTests: XCTestCase {
             """
         )
         let uuid = UUID()
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, col_int, col_bigint, col_blob, col_utf8_blob, col_uuid, col_bool, col_float, col_double) values (?, ?, ?, ?, ?, ?, ?, ?, ?);",
             parameters: [
                 .int32(1),

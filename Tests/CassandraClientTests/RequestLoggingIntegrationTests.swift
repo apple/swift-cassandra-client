@@ -48,16 +48,17 @@ final class RequestLoggingIntegrationTests: XCTestCase {
         return config
     }
 
-    /// Create a client whose default logger captures, with slow-query logging on ("0" logs all successes).
+    /// Create a client with slow-query logging on ("0" logs all successes), and a capturing logger for the test
+    /// to bind with `withLogger`.
     private static func makeCapturingClient(
         logBoundValues: Bool = false
-    ) -> (CassandraClient, TestLogCapture, String) {
+    ) -> (CassandraClient, Logger, TestLogCapture, String) {
         var config = Self.makeConfig()
         config.slowQueryThreshold = .milliseconds(0)
         config.logBoundValues = logBoundValues
         let (logger, capture) = makeCapturingLogger()
-        let client = CassandraClient(configuration: config, logger: logger)
-        return (client, capture, config.keyspace!)
+        let client = CassandraClient(configuration: config)
+        return (client, logger, capture, config.keyspace!)
     }
 
     private static func createKeyspaceAndTable(
@@ -66,69 +67,65 @@ final class RequestLoggingIntegrationTests: XCTestCase {
         table: String,
         schema: String
     ) async throws {
-        try await client.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
-        let session = client.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
-        try await session.run("create table \(keyspace).\(table) \(schema)")
+        try await createKeyspace(keyspace, configuration: Self.makeConfig())
+        try await client.execute("create table \(keyspace).\(table) \(schema)")
     }
 
     /// A prepared statement's slow-query record shows the real CQL, not "(prepared)".
     func testPreparedStatementLogsRealCQL() throws {
         runAsyncAndWaitFor {
-            let (client, capture, keyspace) = Self.makeCapturingClient()
+            let (client, logger, capture, keyspace) = Self.makeCapturingClient()
             defer { XCTAssertNoThrow(try client.shutdown()) }
-            let table = "log_v6b_\(DispatchTime.now().uptimeNanoseconds)"
-            try await Self.createKeyspaceAndTable(
-                client,
-                keyspace: keyspace,
-                table: table,
-                schema: "(id bigint primary key, v text)"
-            )
+            try await withLogger(logger) { _ in
+                let table = "log_v6b_\(DispatchTime.now().uptimeNanoseconds)"
+                try await Self.createKeyspaceAndTable(
+                    client,
+                    keyspace: keyspace,
+                    table: table,
+                    schema: "(id bigint primary key, v text)"
+                )
 
-            let session = client.makeSession(keyspace: keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
-            let cql = "insert into \(table) (id, v) values (?, ?)"
-            let prepared = try await session.prepare(cql)
-            capture.clear()  // ignore setup logs
-            _ = try await session.execute(prepared: prepared, parameters: [.int64(1), .string("x")])
+                let cql = "insert into \(table) (id, v) values (?, ?)"
+                let prepared = try await client.prepare(cql)
+                capture.clear()  // ignore setup logs
+                _ = try await client.execute(prepared: prepared, parameters: [.int64(1), .string("x")])
 
-            let record = capture.all.first {
-                $0.level == .debug && $0.metadata[CassandraClient.LogKey.query] != nil
+                let record = capture.all.first {
+                    $0.level == .debug && $0.metadata[CassandraClient.LogKey.query] != nil
+                }
+                XCTAssertNotNil(record, "expected a slow-query record for the prepared execute")
+                XCTAssertEqual(record?.metadata[CassandraClient.LogKey.query], "\(cql)")
             }
-            XCTAssertNotNil(record, "expected a slow-query record for the prepared execute")
-            XCTAssertEqual(record?.metadata[CassandraClient.LogKey.query], "\(cql)")
         }
     }
 
     /// A batch's record carries the "batch" operation label (batch has no single query text).
     func testBatchLogsOperationLabel() throws {
         runAsyncAndWaitFor {
-            let (client, capture, keyspace) = Self.makeCapturingClient()
+            let (client, logger, capture, keyspace) = Self.makeCapturingClient()
             defer { XCTAssertNoThrow(try client.shutdown()) }
-            let table = "log_v6c_\(DispatchTime.now().uptimeNanoseconds)"
-            try await Self.createKeyspaceAndTable(
-                client,
-                keyspace: keyspace,
-                table: table,
-                schema: "(id int primary key, name text)"
-            )
-
-            capture.clear()
-            try await client.batch { batch in
-                try batch.add(
-                    statement: CassandraClient.Statement(
-                        query: "insert into \(table) (id, name) values (?, ?);",
-                        parameters: [.int32(1), .string("a")]
-                    )
+            try await withLogger(logger) { _ in
+                let table = "log_v6c_\(DispatchTime.now().uptimeNanoseconds)"
+                try await Self.createKeyspaceAndTable(
+                    client,
+                    keyspace: keyspace,
+                    table: table,
+                    schema: "(id int primary key, name text)"
                 )
-            }
 
-            let record = capture.all.first { $0.metadata[CassandraClient.LogKey.query] == "batch" }
-            XCTAssertNotNil(record, "expected a batch record labelled \"batch\"")
+                capture.clear()
+                try await client.batch { batch in
+                    try batch.add(
+                        statement: CassandraClient.Statement(
+                            query: "insert into \(table) (id, name) values (?, ?);",
+                            parameters: [.int32(1), .string("a")]
+                        )
+                    )
+                }
+
+                let record = capture.all.first { $0.metadata[CassandraClient.LogKey.query] == "batch" }
+                XCTAssertNotNil(record, "expected a batch record labelled \"batch\"")
+            }
         }
     }
 
@@ -143,13 +140,11 @@ final class RequestLoggingIntegrationTests: XCTestCase {
             config.keyspace = "test"
             config.connectTimeout = .milliseconds(2_000)
             let (logger, capture) = makeCapturingLogger()
-            let client = CassandraClient(configuration: config, logger: logger)
+            let client = CassandraClient(configuration: config)
             defer { XCTAssertNoThrow(try client.shutdown()) }
-            let session = client.makeSession(keyspace: "test")
-            defer { XCTAssertNoThrow(try session.shutdown()) }
 
             do {
-                try await session.run("select release_version from system.local")
+                try await client.execute("select release_version from system.local", logger: logger)
                 XCTFail("expected a connect failure")
             } catch {
                 // expected
@@ -163,34 +158,37 @@ final class RequestLoggingIntegrationTests: XCTestCase {
     /// A preflight (binding) failure is logged even though it throws before the request is sent.
     func testPreflightFailureLogged() throws {
         runAsyncAndWaitFor {
-            let (client, capture, keyspace) = Self.makeCapturingClient()
+            let (client, logger, capture, keyspace) = Self.makeCapturingClient()
             defer { XCTAssertNoThrow(try client.shutdown()) }
-            let table = "log_v1c_\(DispatchTime.now().uptimeNanoseconds)"
-            try await Self.createKeyspaceAndTable(
-                client,
-                keyspace: keyspace,
-                table: table,
-                schema: "(id bigint primary key, v text)"
-            )
-
-            let session = client.makeSession(keyspace: keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
-            let prepared = try await session.prepare("insert into \(table) (id, v) values (?, ?)")
-            capture.clear()
-
-            do {
-                // Bind more parameters than the statement has placeholders -> preflight bind failure.
-                _ = try await session.execute(
-                    prepared: prepared,
-                    parameters: [.int64(1), .string("x"), .string("extra")]
+            try await withLogger(logger) { _ in
+                let table = "log_v1c_\(DispatchTime.now().uptimeNanoseconds)"
+                try await Self.createKeyspaceAndTable(
+                    client,
+                    keyspace: keyspace,
+                    table: table,
+                    schema: "(id bigint primary key, v text)"
                 )
-                XCTFail("expected a preflight binding failure")
-            } catch {
-                // expected
-            }
 
-            let failures = capture.all.filter { $0.metadata[CassandraClient.LogKey.errorCategory] != nil }
-            XCTAssertFalse(failures.isEmpty, "preflight binding failure should be logged even before a request is sent")
+                let prepared = try await client.prepare("insert into \(table) (id, v) values (?, ?)")
+                capture.clear()
+
+                do {
+                    // Bind more parameters than the statement has placeholders -> preflight bind failure.
+                    _ = try await client.execute(
+                        prepared: prepared,
+                        parameters: [.int64(1), .string("x"), .string("extra")]
+                    )
+                    XCTFail("expected a preflight binding failure")
+                } catch {
+                    // expected
+                }
+
+                let failures = capture.all.filter { $0.metadata[CassandraClient.LogKey.errorCategory] != nil }
+                XCTAssertFalse(
+                    failures.isEmpty,
+                    "preflight binding failure should be logged even before a request is sent"
+                )
+            }
         }
     }
 
@@ -209,39 +207,46 @@ final class RequestLoggingIntegrationTests: XCTestCase {
 
             // Off (default): the bound value must not leak into any captured record.
             do {
-                let (client, capture, keyspace) = Self.makeCapturingClient(logBoundValues: false)
+                let (client, logger, capture, keyspace) = Self.makeCapturingClient(logBoundValues: false)
                 defer { XCTAssertNoThrow(try client.shutdown()) }
-                try await Self.createKeyspaceAndTable(
-                    client,
-                    keyspace: keyspace,
-                    table: table,
-                    schema: "(id bigint primary key, v text)"
-                )
-                let marker = "PII_MARKER_OFF_\(DispatchTime.now().uptimeNanoseconds)"
-                capture.clear()
-                _ = try await client.execute(
-                    statement: CassandraClient.Statement(
-                        query: "insert into \(table) (id, v) values (?, ?)",
-                        parameters: [.int64(1), .string(marker)]
+                try await withLogger(logger) { _ in
+                    try await Self.createKeyspaceAndTable(
+                        client,
+                        keyspace: keyspace,
+                        table: table,
+                        schema: "(id bigint primary key, v text)"
                     )
-                )
-                XCTAssertFalse(capture.all.isEmpty, "expected at least a slow-query record (threshold=0)")
-                XCTAssertFalse(leaks(marker, in: capture), "bound value must not appear when logBoundValues is off")
+                    let marker = "PII_MARKER_OFF_\(DispatchTime.now().uptimeNanoseconds)"
+                    capture.clear()
+                    _ = try await client.execute(
+                        statement: CassandraClient.Statement(
+                            query: "insert into \(table) (id, v) values (?, ?)",
+                            parameters: [.int64(1), .string(marker)]
+                        )
+                    )
+                    XCTAssertFalse(capture.all.isEmpty, "expected at least a slow-query record (threshold=0)")
+                    XCTAssertFalse(
+                        leaks(marker, in: capture),
+                        "bound value must not appear when logBoundValues is off"
+                    )
+                }
             }
 
             // On: the bound value should appear, capped, in the captured records.
             do {
-                let (client, capture, _) = Self.makeCapturingClient(logBoundValues: true)
+                let (client, logger, capture, _) = Self.makeCapturingClient(logBoundValues: true)
                 defer { XCTAssertNoThrow(try client.shutdown()) }
-                let marker = "PII_MARKER_ON_\(DispatchTime.now().uptimeNanoseconds)"
-                capture.clear()
-                _ = try await client.execute(
-                    statement: CassandraClient.Statement(
-                        query: "insert into \(table) (id, v) values (?, ?)",
-                        parameters: [.int64(2), .string(marker)]
+                try await withLogger(logger) { _ in
+                    let marker = "PII_MARKER_ON_\(DispatchTime.now().uptimeNanoseconds)"
+                    capture.clear()
+                    _ = try await client.execute(
+                        statement: CassandraClient.Statement(
+                            query: "insert into \(table) (id, v) values (?, ?)",
+                            parameters: [.int64(2), .string(marker)]
+                        )
                     )
-                )
-                XCTAssertTrue(leaks(marker, in: capture), "bound value should appear when logBoundValues is on")
+                    XCTAssertTrue(leaks(marker, in: capture), "bound value should appear when logBoundValues is on")
+                }
             }
         }
     }

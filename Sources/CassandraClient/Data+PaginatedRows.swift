@@ -24,7 +24,7 @@ extension CassandraClient {
         /// guard serializes all access from `PaginatedRows`, and the entry points take the `Statement`
         /// as `sending` so the caller can't alias it.
         nonisolated(unsafe) let statement: Statement
-        let logger: Logger?
+        let logger: Logger
 
         /// Lock-protected paging state. `fetchInFlight` serializes `nextPage()` so only one fetch
         /// touches the statement at a time; `hasMorePages` is read via the getter / `AsyncSequence` loop.
@@ -38,7 +38,7 @@ extension CassandraClient {
         /// Otherwise it will throw ``CassandraClient/Error/rowsExhausted`` error.
         public var hasMorePages: Bool { self._state.withLockedValue { $0.hasMorePages } }
 
-        internal init(session: Session, statement: sending Statement, logger: Logger?) {
+        internal init(session: Session, statement: sending Statement, logger: Logger) {
             self.session = session
             self.statement = statement
             self.logger = logger

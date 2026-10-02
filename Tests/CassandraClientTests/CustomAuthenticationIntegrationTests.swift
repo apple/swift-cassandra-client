@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
-import Logging
 import NIOConcurrencyHelpers
 import XCTest
 
@@ -62,7 +61,7 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
     }
 
     private func makeClient(_ configuration: CassandraClient.Configuration) -> CassandraClient {
-        CassandraClient(configuration: configuration, logger: Logger(label: "test.custom-auth"))
+        CassandraClient(configuration: configuration)
     }
 
     /// A failed handshake surfaces as `Error.badCredentials`. Compares `shortDescription` since the driver's

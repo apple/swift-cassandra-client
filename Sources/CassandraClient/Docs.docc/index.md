@@ -10,56 +10,40 @@ A Cassandra client in Swift.
 
 ## Getting started
 
-### Creating a client instance
+### Creating a client
+
+For work with a bounded scope, ``CassandraClient/withClient(eventLoopGroup:configuration:_:)`` creates a client, runs it
+for the duration of the closure, and shuts it down when the closure returns or throws:
 
 ```swift
   let configuration = CassandraClient.Configuration(...) // Or use CassandraClient.Configuration(configReader:)
-  let cassandraClient = CassandraClient(configuration: configuration)
-```
-
-The client has a default session established (lazily) so that it can be used directly to perform queries on the configured keyspace:
-
-```swift
-  let result = try await cassandraClient.query(...)
-```
-
-The client must be explicitly shut down when no longer needed.
-
-```swift
-  try await cassandraClient.shutdownAsync()
-```
-
-### Creating a session for a different keyspace
-
-```swift
-  let session = cassandraClient.makeSession(keyspace: "the_keyspace")
-  let result = try await session.query(...)
-```
-
-The session must be explicitly shut down when no longer needed.
-
-```swift
-  try await session.shutdownAsync()
-```
-
-You can also create a session and pass in a closure, which will automatically release the resource when the closure exits:
-
-```swift
-  try await cassandraClient.withSession(keyspace: "<keyspace>") { session in
-    try await session.query(...)
+  try await CassandraClient.withClient(configuration: configuration) { client in
+    let result = try await client.query(...)
   }
 ```
+
+To own a client for longer, create it with ``CassandraClient/init(eventLoopGroup:configuration:)`` and run
+``CassandraClient/run()``, for example by adding the client to a swift-service-lifecycle `ServiceGroup`. `run()` shuts
+the client down on graceful shutdown or when its task is cancelled. A client created this way must be shut down when no
+longer needed, either by ending `run()` or with ``CassandraClient/shutdownAsync()``.
+
+The client connects lazily, on its first request, and queries the configured keyspace.
+
+### Querying another keyspace
+
+Qualify the table name with its keyspace:
+
+```swift
+  let result = try await client.query("select * from other_keyspace.table ...")
+```
+
+If most queries target another keyspace, create a second client with that keyspace configured. Each client keeps its
+own connections, so prefer qualified names where they suffice.
 
 ### Running result-less commands, e.g. insert, update, delete or DDL
 
 ```swift
-  try await cassandraClient.run("create table ...")
-```
-
-Or at a session level:
-
-```swift
-  try await session.run("create table ...")
+  try await client.execute("create table ...")
 ```
 
 ### Running queries returning small data-sets that fit in-memory
@@ -67,13 +51,13 @@ Or at a session level:
 Returning a model object, having `Model: Codable`:
 
 ```swift
-  let result: [Model] = try await cassandraClient.query("select * from table ...")
+  let result: [Model] = try await client.query("select * from table ...")
 ```
 
 Or using free-form transformations on the row:
 
 ```swift
-  let values = try await cassandraClient.query("select * from table ...") { row in
+  let values = try await client.query("select * from table ...") { row in
     row.column("column_name").int32
   }
 ```
@@ -82,7 +66,7 @@ Or using free-form transformations on the row:
 
 ```swift
   // rows is a sequence that one needs to iterate on
-  let rows: Rows = try await cassandraClient.query("select * from table ...")
+  let rows: Rows = try await client.query("select * from table ...")
 ```
 
 ## TLS
