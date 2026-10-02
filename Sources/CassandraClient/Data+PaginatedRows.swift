@@ -24,7 +24,7 @@ extension CassandraClient {
         /// guard serializes all access from `PaginatedRows`, and the entry points take the `Statement`
         /// as `sending` so the caller can't alias it.
         nonisolated(unsafe) let statement: Statement
-        let logger: Logger?
+        let logger: Logger
 
         /// Lock-protected paging state. `fetchInFlight` serializes `nextPage()` so only one fetch
         /// touches the statement at a time; `hasMorePages` is read via the getter / `AsyncSequence` loop.
@@ -38,7 +38,7 @@ extension CassandraClient {
         /// Otherwise it will throw ``CassandraClient/Error/rowsExhausted`` error.
         public var hasMorePages: Bool { self._state.withLockedValue { $0.hasMorePages } }
 
-        internal init(session: Session, statement: sending Statement, logger: Logger?) {
+        internal init(session: Session, statement: sending Statement, logger: Logger) {
             self.session = session
             self.statement = statement
             self.logger = logger
@@ -129,53 +129,29 @@ extension CassandraClient.PaginatedRows: AsyncSequence {
     }
 
     public struct AsyncIterator: AsyncIteratorProtocol {
-        private var pageStream: AsyncThrowingStream<CassandraClient.Rows, Error>.Iterator
-
+        private let paginatedRows: CassandraClient.PaginatedRows
         private var currentPage: CassandraClient.Rows.Iterator?
+        private var hasFetched = false
 
         init(_ paginatedRows: CassandraClient.PaginatedRows) {
-            // FIXME: it would be better if this were a stream of `Row` instead of `Rows`,
-            // but that implementation generates in incorrect results--a later row seems
-            // to overwrite previous rows so that the iterated rows differ from those
-            // yielded to continuation.
-            self.pageStream = AsyncThrowingStream { continuation in
-                let task = Task {
-                    do {
-                        repeat {
-                            // This shouldn't throw `rowExhausted` error, but if it does
-                            // it means the `PaginatedRows` has already been iterated
-                            // through, which indicates usage error so it's ok to throw.
-                            let rows = try await paginatedRows.nextPage()
-                            continuation.yield(rows)
-                        } while paginatedRows.hasMorePages && !Task.isCancelled
-
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
-                    }
-                }
-                // Stop paging when the consumer stops early (break, `prefix`, a decode error in a
-                // downstream `map`): otherwise the producer keeps fetching pages to exhaustion.
-                continuation.onTermination = { _ in task.cancel() }
-            }.makeAsyncIterator()
+            self.paginatedRows = paginatedRows
         }
 
+        // Pages are fetched on demand, in the caller's task: the next page is requested only once the current
+        // one is used up, so at most one page is held and nothing runs between calls.
         public mutating func next() async throws -> CassandraClient.Row? {
-            // Initialize current page
-            if self.currentPage == nil {
-                guard let nextPage = try await self.pageStream.next()?.makeIterator() else {
+            while true {
+                if let row = self.currentPage?.next() {
+                    return row
+                }
+                // The first fetch is unconditional so that a second iterator over the same `PaginatedRows`
+                // throws `rowsExhausted` rather than ending silently. Pages can be empty, hence the loop.
+                guard !self.hasFetched || self.paginatedRows.hasMorePages else {
                     return nil
                 }
-                self.currentPage = nextPage
+                self.hasFetched = true
+                self.currentPage = try await self.paginatedRows.nextPage().makeIterator()
             }
-
-            guard let nextRow = self.currentPage?.next() else {
-                // Current page has no more element
-                self.currentPage = nil
-                return try await self.next()
-            }
-
-            return nextRow
         }
     }
 }

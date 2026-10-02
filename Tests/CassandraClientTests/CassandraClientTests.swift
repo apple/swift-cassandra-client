@@ -16,6 +16,7 @@ import Foundation
 import Logging
 import NIO
 import NIOConcurrencyHelpers
+import ServiceLifecycle
 import XCTest
 
 @testable import CassandraClient
@@ -24,7 +25,8 @@ import XCTest
 // test body captures `self` — a test case is not `Sendable`. Both types are. The locals are snapshots taken
 // before the handoff: a test that reassigned either property mid-body would not see the new value there.
 final class Tests: XCTestCase {
-    var cassandraClient: CassandraClient!
+    var running: RunningClient!
+    var cassandraClient: CassandraClient { self.running.client }
     var configuration: CassandraClient.Configuration!
     var cassandraHost: String!
 
@@ -52,91 +54,44 @@ final class Tests: XCTestCase {
         self.configuration.requestTimeout = .milliseconds(24_000)  // Default: 12_000 ms
         self.configuration.connectTimeout = .milliseconds(10_000)  // Default: 5_000 ms
 
-        var logger = Logger(label: "test")
-        logger.logLevel = .debug
-
+        // keyspace for the tests, created first: the client connects to it as soon as it runs
+        try await createKeyspace(keyspace, configuration: self.configuration)
         // client for the tests
-        self.cassandraClient = CassandraClient(configuration: self.configuration, logger: logger)
-        // keyspace for the tests
-        try await self.cassandraClient.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
+        self.running = RunningClient(configuration: self.configuration)
     }
 
     override func tearDown() async throws {
         try await super.tearDown()
 
-        try await self.cassandraClient.shutdownAsync()
-        self.cassandraClient = nil  // FIXME: for tsan
-    }
-
-    func testAsyncSession() throws {
-        let client = self.cassandraClient!
-        let config = self.configuration!
-        runAsyncAndWaitFor {
-            let session = client.makeSession(keyspace: config.keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
-
-            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            try await session.run("create table \(tableName) (data bigint primary key);")
-
-            let count = Int.random(in: 10...100)
-            await withThrowingTaskGroup(of: Void.self) { group in
-                for index in 0..<count {
-                    group.addTask {
-                        try await session.run("insert into \(tableName) (data) values (\(index));")
-                    }
-                }
-            }
-
-            let result = try await session.query("select * from \(tableName);")
-            XCTAssertEqual(Array(result).count, count)
-        }
-    }
-
-    func testWithAsyncSession() throws {
-        let config = self.configuration!
-        runAsyncAndWaitFor {
-            var configuration = config
-            configuration.keyspace = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            let cassandraClient = CassandraClient(configuration: configuration)
-            defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
-
-            try await cassandraClient.withSession(keyspace: .none) { session in
-                try await session.run(
-                    "create keyspace \(configuration.keyspace!) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-                )
-            }
-            try await cassandraClient.run("create table test (data bigint primary key);")
-        }
+        try await self.running?.stop()
+        self.running = nil  // FIXME: for tsan
     }
 
     func testShutdownELGShared() async throws {
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
 
-        let cassandraClient = CassandraClient(eventLoopGroup: eventLoopGroup, configuration: self.configuration)
-        let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        do {
-            try await cassandraClient.run("create table \(tableName) (id int primary key);")
-        } catch {
-            XCTFail("create table failed: \(error)")
+        try await CassandraClient.withClient(eventLoopGroup: eventLoopGroup, configuration: self.configuration) {
+            cassandraClient in
+            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
+            do {
+                try await cassandraClient.execute("create table \(tableName) (id int primary key);")
+            } catch {
+                XCTFail("create table failed: \(error)")
+            }
+            try await cassandraClient.shutdownAsync()
+            await assertThrowsErrorAsync(try await cassandraClient.query("select * from \(tableName);")) { error in
+                XCTAssertEqual(error as? CassandraClient.Error, CassandraClient.Error.disconnected)
+            }
+            try await cassandraClient.shutdownAsync()
         }
-        try await cassandraClient.shutdownAsync()
-        await assertThrowsErrorAsync(try await cassandraClient.query("select * from \(tableName);")) { error in
-            XCTAssertEqual(error as? CassandraClient.Error, CassandraClient.Error.disconnected)
-        }
-        try await cassandraClient.shutdownAsync()
     }
 
-    // A connection that completes *after* `shutdown()` must not resurrect the session
-    // back to `.connected`.
+    // A connect that completes *after* `shutdown()` must not resurrect the session back to `.connected`.
     //
-    // The race is made deterministic by a `contactPointsProvider` that parks the connect
-    // (it stashes the callback instead of completing it), so the connect is guaranteed to
-    // still be in flight when `shutdown()` runs, and completes only when we say so.
+    // The race is made deterministic by a `contactPointsProvider` that parks the connect `run()` starts
+    // (it stashes the callback instead of completing it), so the connect is guaranteed to still be in
+    // flight when `shutdown()` runs, and completes only when we say so.
     func testShutdownDuringInFlightConnectDoesNotResurrectSession() async throws {
         // The driver writes the callback from its own thread and the test reads it back, so the box
         // locks rather than asserting `@unchecked Sendable` over a bare `var`.
@@ -159,11 +114,14 @@ final class Tests: XCTestCase {
 
         let client = CassandraClient(configuration: configuration)
 
-        // Kick off a request: it triggers a connect that parks in our provider.
-        let request = Task {
-            try await client.run("select release_version from system.local;")
-        }
+        // `run()` starts a connect that parks in our provider.
+        let running = Task { try await client.run() }
         await self.fulfillment(of: [connectStarted], timeout: 1.0)
+
+        // A request made now waits for the connect.
+        let request = Task {
+            try await client.execute("select release_version from system.local;")
+        }
 
         // Owner shuts the session down while the connect is still in flight.
         try await client.shutdownAsync()
@@ -172,41 +130,93 @@ final class Tests: XCTestCase {
         let callback = try XCTUnwrap(box.withLockedValue { $0 })
         callback(.success([self.cassandraHost]))
 
-        // The in-flight request must fail with `.disconnected` rather than run against —
-        // and resurrect — a session the owner already tore down.
+        // `run()` closes the session its connect opened and fails with `.disconnected`, and the request
+        // fails the same way rather than run against — and resurrect — a session the owner already tore down.
+        await assertThrowsErrorAsync(try await running.value) { error in
+            XCTAssertEqual(error as? CassandraClient.Error, .disconnected)
+        }
         await assertThrowsErrorAsync(try await request.value) { error in
             XCTAssertEqual(error as? CassandraClient.Error, .disconnected)
         }
+        await Self.assertDisconnected(client)
+    }
+
+    private static func assertDisconnected(
+        _ client: CassandraClient,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        await assertThrowsErrorAsync(
+            try await client.query("select release_version from system.local"),
+            file: file,
+            line: line
+        ) { error in
+            XCTAssertEqual(error as? CassandraClient.Error, .disconnected, file: file, line: line)
+        }
+    }
+
+    func testRunReturnsOnCancellationAndShutsClientDown() async throws {
+        let client = CassandraClient(configuration: self.configuration)
+        let running = Task { try await client.run() }
+        // The request completes only once `run()` has connected.
+        _ = try await client.query("select release_version from system.local")
+        running.cancel()
+        try await running.value
+        await Self.assertDisconnected(client)
+    }
+
+    // The metrics poller runs as a child of `run()`; cancelling `run()` must end it too.
+    func testRunWithMetricsPollerReturnsOnCancellation() async throws {
+        var configuration: CassandraClient.Configuration = self.configuration
+        configuration.metricsEnabled = true
+        configuration.metricsPollInterval = .milliseconds(10)
+        let client = CassandraClient(configuration: configuration)
+        let running = Task { try await client.run() }
+        _ = try await client.query("select release_version from system.local")
+        running.cancel()
+        try await running.value
+        await Self.assertDisconnected(client)
+    }
+
+    func testRunReturnsOnGracefulShutdownAndShutsClientDown() async throws {
+        let client = CassandraClient(configuration: self.configuration)
+        let serviceGroup = ServiceGroup(services: [client], logger: Logger(label: "test"))
+        let running = Task { try await serviceGroup.run() }
+        // The request completes only once the group has started the client's `run()` and it has connected.
+        _ = try await client.query("select release_version from system.local")
+        await serviceGroup.triggerGracefulShutdown()
+        try await running.value
+        await Self.assertDisconnected(client)
     }
 
     func testKeyspace() async throws {
+        // Another keyspace through keyspace-qualified table names.
         let keyspace1 = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace \(keyspace1) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
-        try await self.cassandraClient.withSession(keyspace: keyspace1) { session in
-            try await session.run("create table test (id int primary key);")
-        }
+        try await self.cassandraClient.execute(
+            "create keyspace \(keyspace1) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+        )
+        try await self.cassandraClient.execute("create table \(keyspace1).test (id int primary key);")
+        try await self.cassandraClient.execute("insert into \(keyspace1).test (id) values (1);")
+        let rows = try await self.cassandraClient.query("select id from \(keyspace1).test;")
+        XCTAssertEqual(rows.compactMap { $0.column(0)?.int32 }, [1])
 
+        // Another keyspace through a second client whose configuration names it.
         let keyspace2 = "test_\(DispatchTime.now().uptimeNanoseconds)"
         var configuration = self.configuration!
         configuration.keyspace = keyspace2
-        let cassandraClient = CassandraClient(configuration: configuration)
-        defer { XCTAssertNoThrow(try cassandraClient.shutdown()) }
-        try await cassandraClient.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace \(keyspace2) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
+        try await createKeyspace(keyspace2, configuration: configuration)
+        try await CassandraClient.withClient(configuration: configuration) { cassandraClient in
+            try await cassandraClient.execute("create table testtest (id int primary key);")
+            try await cassandraClient.execute("insert into testtest (id) values (2);")
         }
-        try await cassandraClient.run("create table testtest (id int primary key);")
+        let rows2 = try await self.cassandraClient.query("select id from \(keyspace2).testtest;")
+        XCTAssertEqual(rows2.compactMap { $0.column(0)?.int32 }, [2])
     }
 
     /// A table of `count` rows for the iterator tests, inserted concurrently.
     private func makeIteratorFixture() async throws -> (table: String, count: Int) {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         let count = Int.random(in: 5000...6000)
         try await self.insertRows(
@@ -223,11 +233,11 @@ final class Tests: XCTestCase {
         count: Int,
         options: CassandraClient.Statement.Options = .init()
     ) async throws {
-        let client = self.cassandraClient!
+        let client = self.cassandraClient
         try await withThrowingTaskGroup(of: Void.self) { group in
             for index in 0..<count {
                 group.addTask {
-                    try await client.run(
+                    try await client.execute(
                         "insert into \(tableName) (id, data) values (?, ?);",
                         parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
                         options: options
@@ -276,7 +286,7 @@ final class Tests: XCTestCase {
 
     func testPagingToken() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
 
@@ -317,7 +327,7 @@ final class Tests: XCTestCase {
     /// which is what lets a caller drive paging by hand: read a page, keep its token, resume from it.
     func testPagingSizeOnStatement() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
         let count = 50
@@ -369,7 +379,7 @@ final class Tests: XCTestCase {
     /// `nextPage()` fails with `CassandraClient.Error.rowsExhausted`.
     func testPaginationExhaustionAsync() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
         let count = Int.random(in: 100...200)
@@ -408,7 +418,7 @@ final class Tests: XCTestCase {
     /// respects the documented usage contract — it just moves the one consumer off the creating context.
     func testPaginatedRowsCrossThreadHandoff() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
         let count = Int.random(in: 500...1000)
@@ -448,7 +458,7 @@ final class Tests: XCTestCase {
     /// `concurrentPaginationUnsupported` and the other returns a valid page.
     func testConcurrentNextPageAsyncRejected() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         let options = CassandraClient.Statement.Options(consistency: .localQuorum)
         let count = Int.random(in: 100...200)
@@ -499,7 +509,7 @@ final class Tests: XCTestCase {
     /// `hasMorePages == false` once consumed, and throw `rowsExhausted` on a further `nextPage()`.
     func testPaginationEmptyResult() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         // No inserts — the table is empty.
         let paginatedRows = try await self.cassandraClient.query(
@@ -525,11 +535,11 @@ final class Tests: XCTestCase {
     }
 
     func testQueryAsyncIterator() throws {
-        let client = self.cassandraClient!
+        let client = self.cassandraClient
         runAsyncAndWaitFor(
             {
                 let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-                try await client.run(
+                try await client.execute(
                     "create table \(tableName) (id int primary key, data text);"
                 )
 
@@ -538,7 +548,7 @@ final class Tests: XCTestCase {
                     let options = CassandraClient.Statement.Options(consistency: .localQuorum)
                     for index in 0..<count {
                         group.addTask {
-                            try await client.run(
+                            try await client.execute(
                                 "insert into \(tableName) (id, data) values (?, ?);",
                                 parameters: [.int32(Int32(index)), .string(UUID().uuidString)],
                                 options: options
@@ -578,11 +588,11 @@ final class Tests: XCTestCase {
     }
 
     func testQueryAsyncBuffered() throws {
-        let client = self.cassandraClient!
+        let client = self.cassandraClient
         runAsyncAndWaitFor(
             {
                 let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-                try await client.run(
+                try await client.execute(
                     "create table \(tableName) (id int primary key, data text);"
                 )
 
@@ -590,7 +600,7 @@ final class Tests: XCTestCase {
                 await withThrowingTaskGroup(of: Void.self) { group in
                     for index in 0..<count {
                         group.addTask {
-                            try await client.run(
+                            try await client.execute(
                                 "insert into \(tableName) (id, data) values (?, ?);",
                                 parameters: [.int32(Int32(index)), .string(UUID().uuidString)]
                             )
@@ -614,7 +624,7 @@ final class Tests: XCTestCase {
 
     func testSelectIn() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, data text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, data text);")
 
         let count = Int.random(in: 5...100)
         try await self.insertRows(into: tableName, count: count)
@@ -692,7 +702,7 @@ final class Tests: XCTestCase {
 
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         print(tableName)
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             """
             create table \(tableName)
             (
@@ -749,11 +759,11 @@ final class Tests: XCTestCase {
             ]
         }
 
-        let client = self.cassandraClient!
+        let client = self.cassandraClient
         try await withThrowingTaskGroup(of: Void.self) { group in
             for model in data {
                 group.addTask {
-                    try await client.run(
+                    try await client.execute(
                         """
                         insert into \(tableName)
                         (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21)
@@ -828,7 +838,7 @@ final class Tests: XCTestCase {
     // IP: address string in IPv4 or IPv6 format
     func testDataTypes() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             """
             create table \(tableName) (
             col1 tinyint primary key,
@@ -919,7 +929,7 @@ final class Tests: XCTestCase {
                 .uuidArray(uuidList),  // list<uuid>
             ]
 
-            try await self.cassandraClient.run(
+            try await self.cassandraClient.execute(
                 """
                 insert into \(tableName)
                 (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14, col15, col16, col17, col18, col19, col20, col21, col22, col23, col24)
@@ -971,7 +981,7 @@ final class Tests: XCTestCase {
 
     func testMapTypes() async throws {
         let tableName = "test_maps_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             """
             create table \(tableName) (
             col1 int primary key,
@@ -1184,7 +1194,7 @@ final class Tests: XCTestCase {
                 .timeuuidUUIDMap(timeuuidUUIDMap),
             ]
 
-            try await self.cassandraClient.run(
+            try await self.cassandraClient.execute(
                 """
                 insert into \(tableName)
                 (col1, col2, col3, col4, col5, col6, col7, col8, col9, col10,
@@ -1282,11 +1292,11 @@ final class Tests: XCTestCase {
 
     func testColumnName() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "create table \(tableName) (id int primary key, name text, age int, email text);"
         )
 
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, name, age, email) values (1, 'Alice', 30, 'alice@example.com');"
         )
 
@@ -1312,11 +1322,11 @@ final class Tests: XCTestCase {
 
     func testColumnNames() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "create table \(tableName) (id int primary key, username text, score bigint, active boolean);"
         )
 
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, username, score, active) values (1, 'Bob', 9500, true);"
         )
 
@@ -1359,7 +1369,7 @@ final class Tests: XCTestCase {
     }
 
     func testErrorMapping() async throws {
-        await assertThrowsErrorAsync(try await self.cassandraClient.run("boom!")) { error in
+        await assertThrowsErrorAsync(try await self.cassandraClient.execute("boom!")) { error in
             XCTAssertEqual(
                 error as? CassandraClient.Error,
                 .syntaxError("line 1:0 no viable alternative at input \'boom\' ([boom]...)")
@@ -1386,75 +1396,56 @@ final class Tests: XCTestCase {
         serialConfig.connectTimeout = .milliseconds(10_000)
         serialConfig.serialConsistency = .serial
 
-        var logger = Logger(label: "test")
-        logger.logLevel = .debug
+        try await createKeyspace(keyspace, configuration: serialConfig)
 
-        let serialClient = CassandraClient(configuration: serialConfig, logger: logger)
-        defer { XCTAssertNoThrow(try serialClient.shutdown()) }
+        try await CassandraClient.withClient(configuration: serialConfig) { serialClient in
+            let tableName = "test_serial_\(DispatchTime.now().uptimeNanoseconds)"
+            try await serialClient.execute("create table \(tableName) (id int primary key, value int);")
+            try await serialClient.execute("insert into \(tableName) (id, value) values (1, 100);")
 
-        try await serialClient.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
-
-        let serialSession = serialClient.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try serialSession.shutdown()) }
-
-        let tableName = "test_serial_\(DispatchTime.now().uptimeNanoseconds)"
-        try await serialSession.run("create table \(tableName) (id int primary key, value int);")
-        try await serialSession.run("insert into \(tableName) (id, value) values (1, 100);")
-
-        let lwtQuery = "update \(tableName) set value = 200 where id = 1 if value = 100;"
-        let serialRows = Array(try await serialSession.query(lwtQuery))
-        XCTAssertFalse(serialRows.isEmpty, "Serial LWT query should return at least one row")
-        if let firstRow = serialRows.first {
-            XCTAssertNotNil(firstRow.column("[applied]")?.bool, "Serial LWT result should contain [applied] column")
+            let lwtQuery = "update \(tableName) set value = 200 where id = 1 if value = 100;"
+            let serialRows = Array(try await serialClient.query(lwtQuery))
+            XCTAssertFalse(serialRows.isEmpty, "Serial LWT query should return at least one row")
+            if let firstRow = serialRows.first {
+                XCTAssertNotNil(firstRow.column("[applied]")?.bool, "Serial LWT result should contain [applied] column")
+            }
         }
 
         var localSerialConfig = serialConfig
         localSerialConfig.serialConsistency = .localSerial
 
-        let localSerialClient = CassandraClient(configuration: localSerialConfig, logger: logger)
-        defer { XCTAssertNoThrow(try localSerialClient.shutdown()) }
+        try await CassandraClient.withClient(configuration: localSerialConfig) { localSerialClient in
+            let tableName2 = "test_local_serial_\(DispatchTime.now().uptimeNanoseconds)"
+            try await localSerialClient.execute("create table \(tableName2) (id int primary key, value int);")
+            try await localSerialClient.execute("insert into \(tableName2) (id, value) values (1, 300);")
 
-        let localSerialSession = localSerialClient.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try localSerialSession.shutdown()) }
-
-        let tableName2 = "test_local_serial_\(DispatchTime.now().uptimeNanoseconds)"
-        try await localSerialSession.run("create table \(tableName2) (id int primary key, value int);")
-        try await localSerialSession.run("insert into \(tableName2) (id, value) values (1, 300);")
-
-        let localLwtQuery = "update \(tableName2) set value = 400 where id = 1 if value = 300;"
-        let localSerialRows = Array(try await localSerialSession.query(localLwtQuery))
-        XCTAssertFalse(localSerialRows.isEmpty, "Local serial LWT query should return at least one row")
-        if let firstRow = localSerialRows.first {
-            XCTAssertNotNil(
-                firstRow.column("[applied]")?.bool,
-                "Local serial LWT result should contain [applied] column"
-            )
+            let localLwtQuery = "update \(tableName2) set value = 400 where id = 1 if value = 300;"
+            let localSerialRows = Array(try await localSerialClient.query(localLwtQuery))
+            XCTAssertFalse(localSerialRows.isEmpty, "Local serial LWT query should return at least one row")
+            if let firstRow = localSerialRows.first {
+                XCTAssertNotNil(
+                    firstRow.column("[applied]")?.bool,
+                    "Local serial LWT result should contain [applied] column"
+                )
+            }
         }
 
         var nilSerialConfig = serialConfig
         nilSerialConfig.serialConsistency = nil
 
-        let nilSerialClient = CassandraClient(configuration: nilSerialConfig, logger: logger)
-        defer { XCTAssertNoThrow(try nilSerialClient.shutdown()) }
+        try await CassandraClient.withClient(configuration: nilSerialConfig) { nilSerialClient in
+            let tableName3 = "test_nil_serial_\(DispatchTime.now().uptimeNanoseconds)"
+            try await nilSerialClient.execute("create table \(tableName3) (id int primary key, value int);")
+            try await nilSerialClient.execute("insert into \(tableName3) (id, value) values (1, 500);")
 
-        let nilSerialSession = nilSerialClient.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try nilSerialSession.shutdown()) }
-
-        let tableName3 = "test_nil_serial_\(DispatchTime.now().uptimeNanoseconds)"
-        try await nilSerialSession.run("create table \(tableName3) (id int primary key, value int);")
-        try await nilSerialSession.run("insert into \(tableName3) (id, value) values (1, 500);")
-
-        let nilLwtQuery = "update \(tableName3) set value = 600 where id = 1 if value = 500;"
-        _ = try await nilSerialSession.query(nilLwtQuery)
+            let nilLwtQuery = "update \(tableName3) set value = 600 where id = 1 if value = 500;"
+            _ = try await nilSerialClient.query(nilLwtQuery)
+        }
     }
 
     func testArrayWithNullIteratorHandling() async throws {
         let tableName = "test_null_array_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             """
             create table \(tableName) (
                 id int primary key,
@@ -1464,7 +1455,7 @@ final class Tests: XCTestCase {
             """
         )
 
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, nullable_array, empty_array) values (1, null, []);"
         )
 
@@ -1479,7 +1470,7 @@ final class Tests: XCTestCase {
 
     func testMapWithNullIteratorHandling() async throws {
         let tableName = "test_null_map_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             """
             create table \(tableName) (
                 id int primary key,
@@ -1491,7 +1482,7 @@ final class Tests: XCTestCase {
         )
 
         let validMap = [Int32(1): "value1", Int32(2): "value2"]
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "insert into \(tableName) (id, nullable_map, empty_map, valid_map) values (?, ?, ?, ?);",
             parameters: [
                 .int32(1),
@@ -1514,10 +1505,10 @@ final class Tests: XCTestCase {
     // MARK: - Batch tests
 
     func testBatchInsertionAsync() throws {
-        let client = self.cassandraClient!
+        let client = self.cassandraClient
         runAsyncAndWaitFor {
             let tableName = "test_batch_async_\(DispatchTime.now().uptimeNanoseconds)"
-            try await client.run(
+            try await client.execute(
                 "create table \(tableName) (id int primary key, name text);"
             )
 
@@ -1557,7 +1548,7 @@ final class Tests: XCTestCase {
 
     func testPreparedStatementReuse() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run("create table \(tableName) (id int primary key, name text);")
+        try await self.cassandraClient.execute("create table \(tableName) (id int primary key, name text);")
 
         let insertStmt = try await self.cassandraClient.prepare(
             "insert into \(tableName) (id, name) values (?, ?)"
@@ -1575,7 +1566,7 @@ final class Tests: XCTestCase {
 
     func testPreparedStatementMetadata() async throws {
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-        try await self.cassandraClient.run(
+        try await self.cassandraClient.execute(
             "create table \(tableName) (id int primary key, name text, score double);"
         )
 
@@ -1605,10 +1596,10 @@ final class Tests: XCTestCase {
     }
 
     func testPreparedStatementAsyncRoundtrip() throws {
-        let client = self.cassandraClient!
+        let client = self.cassandraClient
         runAsyncAndWaitFor {
             let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            try await client.run("create table \(tableName) (id int primary key, name text);")
+            try await client.execute("create table \(tableName) (id int primary key, name text);")
 
             let insertStmt = try await client.prepare(
                 "insert into \(tableName) (id, name) values (?, ?)"
@@ -1633,11 +1624,11 @@ final class Tests: XCTestCase {
     }
 
     func testQueryDecodingWithModelTypeAsync() throws {
-        let client = self.cassandraClient!
+        let client = self.cassandraClient
         runAsyncAndWaitFor {
             let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            try await client.run("create table \(tableName) (id int primary key, name text);")
-            try await client.run("insert into \(tableName) (id, name) values (1, 'alice');")
+            try await client.execute("create table \(tableName) (id int primary key, name text);")
+            try await client.execute("insert into \(tableName) (id, name) values (1, 'alice');")
 
             // No type annotation on `result`: the `withModelType:` argument is the only thing binding `T`.
             let result = try await client.query(
@@ -1649,21 +1640,17 @@ final class Tests: XCTestCase {
     }
 
     func testPreparedStatementDecodingWithModelTypeAsync() throws {
-        let client = self.cassandraClient!
-        let config = self.configuration!
+        let client = self.cassandraClient
         runAsyncAndWaitFor {
-            let session = client.makeSession(keyspace: config.keyspace)
-            defer { XCTAssertNoThrow(try session.shutdown()) }
-
             let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            try await session.run("create table \(tableName) (id int primary key, name text);")
+            try await client.execute("create table \(tableName) (id int primary key, name text);")
 
-            let insertStmt = try await session.prepare("insert into \(tableName) (id, name) values (?, ?)")
-            _ = try await session.execute(prepared: insertStmt, parameters: [.int32(1), .string("alice")])
+            let insertStmt = try await client.prepare("insert into \(tableName) (id, name) values (?, ?)")
+            _ = try await client.execute(prepared: insertStmt, parameters: [.int32(1), .string("alice")])
 
-            let selectStmt = try await session.prepare("select id, name from \(tableName) where id = ?")
+            let selectStmt = try await client.prepare("select id, name from \(tableName) where id = ?")
             // No type annotation on `result`: the `withModelType:` argument is the only thing binding `T`.
-            let result = try await session.execute(
+            let result = try await client.execute(
                 prepared: selectStmt,
                 parameters: [.int32(1)],
                 withModelType: Person.self
