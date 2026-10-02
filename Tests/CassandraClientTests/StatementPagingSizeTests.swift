@@ -101,7 +101,6 @@ final class StatementPagingSizeTests: XCTestCase {
 
     /// The async paginated path applies the page size in separate code from the `EventLoopFuture`
     /// path, so it gets its own assertion.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func testPaginatedAsyncQueryRejectsNonPositivePageSize() async throws {
         let client = self.makeClient()
 

@@ -30,7 +30,6 @@ func randomKey() -> Data {
     return Data(bytes)
 }
 
-@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 final class EncryptorTests: XCTestCase {
 
     // Helper: create a simple context for testing
@@ -613,7 +612,7 @@ final class EncryptorTests: XCTestCase {
             query: "INSERT INTO users (ssn) VALUES (?)",
             parameters: [.encryptedString(.init(Self.secret), context: testContext())],
             options: .init(),
-            _encryptor: encryptor
+            encryptor: encryptor
         )
         let rendered = statement.description
         XCTAssertTrue(rendered.contains("<redacted>"))

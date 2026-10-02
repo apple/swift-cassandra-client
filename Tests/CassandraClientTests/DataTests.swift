@@ -39,8 +39,9 @@ final class DataTests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        configuration.username = env["CASSANDRA_USER"]
-        configuration.password = env["CASSANDRA_PASSWORD"]
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            configuration.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
+        }
         configuration.keyspace = keyspace
         self.cassandraClient = CassandraClient(configuration: configuration)
         XCTAssertNoThrow(
