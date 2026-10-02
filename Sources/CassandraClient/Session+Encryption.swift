@@ -14,9 +14,9 @@
 
 import Foundation
 
-// MARK: - Encryption helpers for CassandraSession
+// MARK: - Encryption helpers for Session
 
-extension CassandraSession {
+extension CassandraClient.Session {
     /// Resolve "table" or "keyspace.table" into the registry lookup key and schema.
     internal func resolveSchema(
         tableName: String
