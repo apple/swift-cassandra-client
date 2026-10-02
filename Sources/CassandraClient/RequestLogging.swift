@@ -14,7 +14,6 @@
 
 import Dispatch
 import Logging
-import NIOCore
 
 extension CassandraClient {
     /// Shared request-logging helper. Deliberately free of any `Session` reference so it can be unit-tested
@@ -77,8 +76,7 @@ extension CassandraClient {
             logger.debug("slow query", metadata: metadata)
         }
 
-        /// Emit the failure or slow-success record for a completed request outcome — shared by the
-        /// `EventLoopFuture` and async wrappers so both log identically.
+        /// Emit the failure or slow-success record for a completed request outcome.
         private static func logOutcome<Value>(
             _ result: Result<Value, Swift.Error>,
             startedAt: DispatchTime,
@@ -110,30 +108,6 @@ extension CassandraClient {
                         logger: logger
                     )
                 }
-            }
-        }
-
-        /// Attach failure + slow-success logging to a bridged `EventLoopFuture`, returning it unchanged.
-        /// The completion closure captures only the Sendable values passed in — never a `Statement`/`Batch`.
-        static func instrument<Value>(
-            _ future: EventLoopFuture<Value>,
-            startedAt: DispatchTime,
-            query: String?,
-            consistency: CassandraClient.Consistency?,
-            threshold: Duration?,
-            boundValues: String? = nil,
-            logger: Logger
-        ) -> EventLoopFuture<Value> {
-            future.always { result in
-                Self.logOutcome(
-                    result,
-                    startedAt: startedAt,
-                    query: query,
-                    consistency: consistency,
-                    threshold: threshold,
-                    boundValues: boundValues,
-                    logger: logger
-                )
             }
         }
 

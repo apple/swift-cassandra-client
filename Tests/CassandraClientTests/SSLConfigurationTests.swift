@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import CDataStaxDriver
-import NIO
 import XCTest
 
 @testable import CassandraClient
@@ -86,13 +85,13 @@ final class SSLConfigurationTests: XCTestCase {
 
     /// `.fullVerification` without hostname resolution is rejected up front rather than failing every
     /// handshake against an unresolved hostname.
-    func testPeerIdentityDNSRequiresHostnameResolution() {
+    func testPeerIdentityDNSRequiresHostnameResolution() async {
         for hostnameResolution in [false] {
             var configuration = self.makeConfiguration()
             configuration.ssl = self.makeSSL(verification: .fullVerification)
             configuration.hostnameResolution = hostnameResolution
 
-            XCTAssertThrowsError(try self.makeCluster(configuration)) { error in
+            await assertThrowsErrorAsync(try await self.makeCluster(configuration)) { error in
                 XCTAssertEqual(
                     error as? CassandraClient.Error,
                     .badParams(
@@ -105,17 +104,17 @@ final class SSLConfigurationTests: XCTestCase {
     }
 
     /// With hostname resolution enabled the driver has a hostname to match, so the pairing is allowed.
-    func testPeerIdentityDNSWithHostnameResolutionIsAccepted() {
+    func testPeerIdentityDNSWithHostnameResolutionIsAccepted() async throws {
         var configuration = self.makeConfiguration()
         configuration.ssl = self.makeSSL(verification: .fullVerification)
         configuration.hostnameResolution = true
 
-        XCTAssertNoThrow(try self.makeCluster(configuration))
+        try await self.makeCluster(configuration)
     }
 
     /// The requirement is specific to DNS matching; the other options resolve no hostname and so are
     /// accepted with hostname resolution off.
-    func testOtherCertificateVerificationsDoNotRequireHostnameResolution() {
+    func testOtherCertificateVerificationsDoNotRequireHostnameResolution() async {
         for verification in CassandraClient.Configuration.SSL.CertificateVerification.allCases
         where verification != .fullVerification {
             for hostnameResolution in [false] {
@@ -123,21 +122,24 @@ final class SSLConfigurationTests: XCTestCase {
                 configuration.ssl = self.makeSSL(verification: verification)
                 configuration.hostnameResolution = hostnameResolution
 
-                XCTAssertNoThrow(
-                    try self.makeCluster(configuration),
-                    "verification: \(verification), "
-                        + "hostnameResolution: \(String(describing: hostnameResolution))"
-                )
+                do {
+                    try await self.makeCluster(configuration)
+                } catch {
+                    XCTFail(
+                        "verification: \(verification), "
+                            + "hostnameResolution: \(String(describing: hostnameResolution)): \(error)"
+                    )
+                }
             }
         }
     }
 
     /// A configuration with no SSL at all is unaffected by the requirement.
-    func testNoSSLIsUnaffected() {
+    func testNoSSLIsUnaffected() async throws {
         var configuration = self.makeConfiguration()
         configuration.hostnameResolution = false
 
-        XCTAssertNoThrow(try self.makeCluster(configuration))
+        try await self.makeCluster(configuration)
     }
 
     // MARK: - Insecure-configuration warning
@@ -201,12 +203,9 @@ final class SSLConfigurationTests: XCTestCase {
         return ssl
     }
 
-    /// Builds the cluster and discards it. `Cluster` is not `Sendable` — the library builds it on the event
-    /// loop for that reason — so the result is dropped there rather than carried back by `wait()`. The tests
-    /// assert on whether building throws; none of them use the cluster.
-    private func makeCluster(_ configuration: CassandraClient.Configuration) throws {
-        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { try? eventLoopGroup.syncShutdownGracefully() }
-        try configuration.makeCluster(on: eventLoopGroup.next()).map { _ in }.wait()
+    /// Builds the cluster and discards it. The tests assert on whether building throws; none of them use
+    /// the cluster.
+    private func makeCluster(_ configuration: CassandraClient.Configuration) async throws {
+        _ = try await configuration.makeCluster()
     }
 }

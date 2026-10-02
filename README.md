@@ -3,14 +3,11 @@
 CassandraClient is a Cassandra client in Swift. The client is based on [DataStax Cassandra C++ Driver](https://github.com/datastax/cpp-driver), 
 wrapping it with Swift friendly APIs and data structures.
 
-CassandraClient API currently exposes [SwiftNIO](https://github.com/apple/swift-nio) based futures to 
-simplify integration with SwiftNIO based servers. Swift concurrency based API is also available in Swift 5.5 and newer.
+CassandraClient exposes a Swift concurrency based API.
 
 ## Usage
 
-### Swift concurrency based API
-
-#### Creating a client instance
+### Creating a client instance
 
 ```swift
 var configuration = CassandraClient.Configuration(...)
@@ -30,7 +27,7 @@ The client must be explicitly shut down when no longer needed:
 try cassandraClient.shutdown()
 ```
 
-#### Creating a session for a different keyspace
+### Creating a session for a different keyspace
 
 ```swift
 let session = cassandraClient.makeSession(keyspace: <KEYSPACE>)
@@ -51,7 +48,7 @@ try await cassandraClient.withSession(keyspace: <KEYSPACE>) { session in
 }
 ```
 
-#### Running result-less commands (e.g. insert, update, delete or DDL)
+### Running result-less commands (e.g. insert, update, delete or DDL)
 
 ```swift
 try await cassandraClient.run("create table ...")
@@ -63,7 +60,7 @@ Or at session level:
 try await session.run("create table ...")
 ```
 
-#### Running queries returning small datasets that fit in memory
+### Running queries returning small datasets that fit in memory
 
 Returning a model object, having `Model: Codable`:
 
@@ -89,7 +86,7 @@ let values = try await session.query("select * from table ...") { row in
 }
 ```
 
-#### Running queries returning large datasets that do not fit in memory
+### Running queries returning large datasets that do not fit in memory
 
 ```swift
 // `rows` is a sequence that one needs to iterate on
@@ -99,115 +96,6 @@ let rows: Rows = try await cassandraClient.query("select * from table ...")
 ```swift
 // `rows` is a sequence that one needs to iterate on
 let rows: Rows = try await session.query("select * from table ...")
-```
-
-### SwiftNIO future based API
-
-#### Creating a client instance
-
-```swift
-var configuration = CassandraClient.Configuration(...)
-let cassandraClient = CassandraClient(configuration: configuration)
-```
-
-The client has a default session established (lazily) so that it can be used directly to perform 
-queries on the configured keyspace:
-
-```swift
-let resultFuture = cassandraClient.query(...)
-```
-
-The client must be explicitly shut down when no longer needed:
-
-```swift
-try cassandraClient.shutdown()
-```
-
-#### Creating a session for a different keyspace
-
-```swift
-let session = cassandraClient.makeSession(keyspace: <KEYSPACE>)
-let resultFuture = session.query(...)
-```
-
-The session must be explicitly shut down when no longer needed:
-
-```swift
-try session.shutdown()
-```
-
-You can also create a session and pass in a closure, which will automatically release the resource when the closure exits:
-
-```swift
-try cassandraClient.withSession(keyspace: <KEYSPACE>) { session in
-  ...
-}
-```
-
-#### Running result-less commands (e.g. insert, update, delete or DDL)
-
-```swift
-let voidFuture = cassandraClient.run("create table ...")
-```
-
-Or at session level:
-
-```swift
-let voidFuture = session.run("create table ...")
-```
-
-#### Running queries returning small datasets that fit in memory
-
-Returning a model object, having `Model: Codable`:
-
-```swift
-cassandraClient.query("select * from table ...").map { result: [Model] in
-  ...
-}
-```
-
-```swift
-session.query("select * from table ...").map { result: [Model] in
-  ...
-}
-```
-
-Or using free-form transformations on the row:
-
-```swift
-cassandraClient.query("select * from table ...") { row in
-  row.column(<COLUMN_NAME>).int32
-}.map { value in
-  ...
-}
-```
-
-```swift
-session.query("select * from table ...") { row in
-  row.column(<COLUMN_NAME>).int32
-}.map { value in
-  ...
-}
-```
-
-#### Running queries returning large datasets that do not fit in memory
-
-```swift
-cassandraClient.query("select * from table ...").map { rows: Rows in
-  // `rows` is a sequence that one needs to iterate on
-  rows.map { row in
-    ...
-  }
-}
-```
-
-```swift
-session.query("select * from table ...").map { rows: Rows in
-  // `rows` is a sequence that one needs to iterate on
-  rows.map { row in
-    ...
-  }
-}
 ```
 
 ## TLS

@@ -304,9 +304,6 @@ extension CassandraClient {
         ///
         /// - Parameter pagingSize: Rows per page. Must be in `1...Int32.max`; a non-positive size
         ///   disables paging in the driver rather than limiting the page, and is rejected here.
-        ///
-        /// - Note: The `EventLoopFuture` `execute` takes the statement as `sending`, so a hand-rolled
-        ///   loop needs a new `Statement` for each page.
         public func setPagingSize(_ pagingSize: Int) throws {
             guard let size = Int32(exactly: pagingSize), size > 0 else {
                 throw CassandraClient.Error.badParams(
