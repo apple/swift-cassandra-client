@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
-import NIO
 import XCTest
 
 @testable import CassandraClient
@@ -28,8 +27,8 @@ import XCTest
 final class DataTests: XCTestCase {
     var cassandraClient: CassandraClient!
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         let env = ProcessInfo.processInfo.environment
         let keyspace = env["CASSANDRA_KEYSPACE"] ?? "test"
         var configuration = CassandraClient.Configuration(
@@ -44,35 +43,29 @@ final class DataTests: XCTestCase {
         }
         configuration.keyspace = keyspace
         self.cassandraClient = CassandraClient(configuration: configuration)
-        XCTAssertNoThrow(
-            try self.cassandraClient.withSession(keyspace: .none) { session in
-                try session.run(
-                    "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-                ).wait()
-            }
-        )
+        try await self.cassandraClient.withSession(keyspace: .none) { session in
+            try await session.run(
+                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
+            )
+        }
     }
 
-    override func tearDown() {
-        super.tearDown()
-        XCTAssertNoThrow(try self.cassandraClient.shutdown())
+    override func tearDown() async throws {
+        try await super.tearDown()
+        try await self.cassandraClient.shutdownAsync()
         self.cassandraClient = nil
     }
 
-    func testStringReturnsValueForTextColumns() {
+    func testStringReturnsValueForTextColumns() async throws {
         let tableName = "test_col_string_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(
-            try self.cassandraClient.run(
-                "create table \(tableName) (id int primary key, a ascii, b text, c varchar);"
-            ).wait()
+        try await self.cassandraClient.run(
+            "create table \(tableName) (id int primary key, a ascii, b text, c varchar);"
         )
-        XCTAssertNoThrow(
-            try self.cassandraClient.run(
-                "insert into \(tableName) (id, a, b, c) values (1, 'ascii', 'text', 'varchar');"
-            ).wait()
+        try await self.cassandraClient.run(
+            "insert into \(tableName) (id, a, b, c) values (1, 'ascii', 'text', 'varchar');"
         )
 
-        let rows = try! self.cassandraClient.query("select a, b, c from \(tableName);").wait()
+        let rows = try await self.cassandraClient.query("select a, b, c from \(tableName);")
         let row = rows.first!
 
         XCTAssertEqual(row.column("a")?.string, "ascii")
@@ -80,46 +73,42 @@ final class DataTests: XCTestCase {
         XCTAssertEqual(row.column("c")?.string, "varchar")
     }
 
-    func testStringReturnsNilForNonTextColumns() {
+    func testStringReturnsNilForNonTextColumns() async throws {
         let tableName = "test_col_string_nil_\(DispatchTime.now().uptimeNanoseconds)"
-        XCTAssertNoThrow(
-            try self.cassandraClient.run(
-                """
-                create table \(tableName) (
-                    id int primary key,
-                    col_int int,
-                    col_bigint bigint,
-                    col_blob blob,
-                    col_utf8_blob blob,
-                    col_uuid uuid,
-                    col_bool boolean,
-                    col_float float,
-                    col_double double
-                );
-                """
-            ).wait()
+        try await self.cassandraClient.run(
+            """
+            create table \(tableName) (
+                id int primary key,
+                col_int int,
+                col_bigint bigint,
+                col_blob blob,
+                col_utf8_blob blob,
+                col_uuid uuid,
+                col_bool boolean,
+                col_float float,
+                col_double double
+            );
+            """
         )
         let uuid = UUID()
-        XCTAssertNoThrow(
-            try self.cassandraClient.run(
-                "insert into \(tableName) (id, col_int, col_bigint, col_blob, col_utf8_blob, col_uuid, col_bool, col_float, col_double) values (?, ?, ?, ?, ?, ?, ?, ?, ?);",
-                parameters: [
-                    .int32(1),
-                    .int32(42),
-                    .int64(9_999_999_999),
-                    .bytes([0xDE, 0xAD, 0xBE, 0xEF]),
-                    .bytes(Array("hello".utf8)),
-                    .uuid(uuid),
-                    .bool(true),
-                    .float32(3.14),
-                    .double(2.718),
-                ]
-            ).wait()
+        try await self.cassandraClient.run(
+            "insert into \(tableName) (id, col_int, col_bigint, col_blob, col_utf8_blob, col_uuid, col_bool, col_float, col_double) values (?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            parameters: [
+                .int32(1),
+                .int32(42),
+                .int64(9_999_999_999),
+                .bytes([0xDE, 0xAD, 0xBE, 0xEF]),
+                .bytes(Array("hello".utf8)),
+                .uuid(uuid),
+                .bool(true),
+                .float32(3.14),
+                .double(2.718),
+            ]
         )
 
-        let rows = try! self.cassandraClient.query(
+        let rows = try await self.cassandraClient.query(
             "select col_int, col_bigint, col_blob, col_utf8_blob, col_uuid, col_bool, col_float, col_double from \(tableName);"
-        ).wait()
+        )
         let row = rows.first!
 
         XCTAssertNil(row.column("col_int")?.string, "int column must not decode as string")
