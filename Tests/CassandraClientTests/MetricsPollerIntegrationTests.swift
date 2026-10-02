@@ -12,12 +12,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-import Dispatch
 import Foundation
 import Logging
 import Metrics
 import MetricsTestKit
-import NIO
 import NIOConcurrencyHelpers
 import XCTest
 
@@ -65,7 +63,7 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         _ label: String,
         dimensions: [(String, String)],
         timeout: TimeInterval = 5
-    ) -> TestMeter? {
+    ) async throws -> TestMeter? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if let meter = try? self.testMetrics.expectMeter(label, dimensions),
@@ -73,13 +71,13 @@ final class MetricsPollerIntegrationTests: XCTestCase {
             {
                 return meter
             }
-            Thread.sleep(forTimeInterval: 0.02)
+            try await Task.sleep(for: .milliseconds(20))
         }
         return nil
     }
 
     // The poller ticks and bridges the driver snapshot onto the gauges.
-    func testPollerRecordsSnapshotGauges() throws {
+    func testPollerRecordsSnapshotGauges() async throws {
         let session = "v2"
         let dims = [("session", session)]
         var configuration = self.makeConfiguration()
@@ -91,10 +89,11 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
         // Force a connect + a real request so the driver has latency to report.
-        _ = try client.query("select release_version from system.local").wait()
+        _ = try await client.query("select release_version from system.local")
 
         // Wait until the poller has ticked at least once.
-        let total = try XCTUnwrap(self.waitForMeter(self.connectionsTotal, dimensions: dims))
+        let meter = try await self.waitForMeter(self.connectionsTotal, dimensions: dims)
+        let total = try XCTUnwrap(meter)
         XCTAssertGreaterThan(try XCTUnwrap(total.lastValue), 0)
 
         // Every gauge must equal the corresponding field of a same-moment `getMetrics()` reading
@@ -112,7 +111,7 @@ final class MetricsPollerIntegrationTests: XCTestCase {
                     return recorded.map { UInt($0) } != pair.value
                 }?.name
             if lastMismatch == nil { return }
-            Thread.sleep(forTimeInterval: 0.02)
+            try await Task.sleep(for: .milliseconds(20))
         } while Date() < deadline
         XCTFail(
             "gauges never matched a same-moment getMetrics() snapshot; last mismatch: \(lastMismatch ?? "?")"
@@ -122,7 +121,7 @@ final class MetricsPollerIntegrationTests: XCTestCase {
     // Shutdown stops the poller: no gauge is recorded after shutdown returns. The poller reads the
     // snapshot only while `.connected` under the state lock, and shutdown flips the state before
     // closing, so a cancelled tick cannot record against a closing session.
-    func testShutdownStopsPoller() throws {
+    func testShutdownStopsPoller() async throws {
         let session = "v3"
         let dims = [("session", session)]
         var configuration = self.makeConfiguration()
@@ -132,20 +131,21 @@ final class MetricsPollerIntegrationTests: XCTestCase {
 
         let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
         // Defensive: guarantee shutdown even if the connect throws, so deinit's precondition holds.
-        defer { try? client.shutdown() }
-        _ = try client.query("select release_version from system.local").wait()
-        let meter = try XCTUnwrap(self.waitForMeter(self.connectionsTotal, dimensions: dims))
+        defer { XCTAssertNoThrow(try client.shutdown()) }
+        _ = try await client.query("select release_version from system.local")
+        let polled = try await self.waitForMeter(self.connectionsTotal, dimensions: dims)
+        let meter = try XCTUnwrap(polled)
 
-        XCTAssertNoThrow(try client.shutdown())
+        try await client.shutdownAsync()
 
         // No tick after shutdown: the recorded-values count must stay put across several intervals.
         let countAfterShutdown = meter.values.count
-        Thread.sleep(forTimeInterval: 0.5)
+        try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(meter.values.count, countAfterShutdown)
     }
 
     // With metrics disabled no gauge series are ever created.
-    func testDisabledCreatesNoGauges() throws {
+    func testDisabledCreatesNoGauges() async throws {
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = false
         configuration.metricsPollInterval = .milliseconds(50)
@@ -154,8 +154,8 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
-        _ = try client.query("select release_version from system.local").wait()
-        Thread.sleep(forTimeInterval: 0.4)  // several would-be intervals
+        _ = try await client.query("select release_version from system.local")
+        try await Task.sleep(for: .milliseconds(400))  // several would-be intervals
 
         XCTAssertTrue(
             self.testMetrics.meters.allSatisfy { $0.label != self.connectionsTotal },
@@ -164,12 +164,12 @@ final class MetricsPollerIntegrationTests: XCTestCase {
     }
 
     // metricsEnabled but interval nil or 0 => poller off, no gauges.
-    func testNilAndZeroIntervalDisablePoller() throws {
-        try self.assertIntervalDisablesPoller(nil)
-        try self.assertIntervalDisablesPoller(.zero)
+    func testNilAndZeroIntervalDisablePoller() async throws {
+        try await self.assertIntervalDisablesPoller(nil)
+        try await self.assertIntervalDisablesPoller(.zero)
     }
 
-    private func assertIntervalDisablesPoller(_ interval: Duration?) throws {
+    private func assertIntervalDisablesPoller(_ interval: Duration?) async throws {
         self.testMetrics.reset()
         var configuration = self.makeConfiguration()
         configuration.metricsEnabled = true
@@ -177,10 +177,10 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         configuration.metricsSessionName = "v5"
 
         let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
-        defer { try? client.shutdown() }
+        defer { XCTAssertNoThrow(try client.shutdown()) }
 
-        _ = try client.query("select release_version from system.local").wait()
-        Thread.sleep(forTimeInterval: 0.3)
+        _ = try await client.query("select release_version from system.local")
+        try await Task.sleep(for: .milliseconds(300))
 
         XCTAssertTrue(
             self.testMetrics.meters.allSatisfy { $0.label != self.connectionsTotal },
@@ -189,11 +189,11 @@ final class MetricsPollerIntegrationTests: XCTestCase {
     }
 
     // Shutdown during an in-flight connect: the connect's compare-and-set loses, poller never starts, deinit holds.
-    func testShutdownDuringInFlightConnect() throws {
+    func testShutdownDuringInFlightConnect() async throws {
         let session = "v6"
         let completionBox =
             NIOLockedValueBox<(@Sendable (Result<[String], Swift.Error>) -> Void)?>(nil)
-        let providerInvoked = DispatchSemaphore(value: 0)
+        let providerInvoked = self.expectation(description: "connect started")
         let env = ProcessInfo.processInfo.environment
         let host = env["CASSANDRA_HOST"] ?? "127.0.0.1"
 
@@ -204,35 +204,24 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         // Withhold the contact points: capture the completion and signal, but don't call it yet.
         configuration.contactPointsProvider = { completion in
             completionBox.withLockedValue { $0 = completion }
-            providerInvoked.signal()
+            providerInvoked.fulfill()
         }
 
-        // A shared group so `client.shutdown()` doesn't tear down the loop the in-flight connect
-        // still uses when we later release the withheld completion.
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { XCTAssertNoThrow(try group.syncShutdownGracefully()) }
-        let client = CassandraClient(
-            eventLoopGroupProvider: .shared(group),
-            configuration: configuration,
-            logger: self.makeLogger()
-        )
-        defer { try? client.shutdown() }
+        let client = CassandraClient(configuration: configuration, logger: self.makeLogger())
 
-        // Kick off a connect on a background thread; it blocks in the withheld provider.
-        let queryDone = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
-            _ = try? client.query("select release_version from system.local").wait()
-            queryDone.signal()
+        // Kick off a connect; it blocks in the withheld provider.
+        let query = Task {
+            _ = try? await client.query("select release_version from system.local")
         }
-        XCTAssertEqual(providerInvoked.wait(timeout: .now() + 5), .success, "connect never started")
+        await self.fulfillment(of: [providerInvoked], timeout: 5)
 
         // Shut down while the connect is still in flight.
-        XCTAssertNoThrow(try client.shutdown())
+        try await client.shutdownAsync()
 
         // Now let the connect finish; the CAS must lose and never start the poller.
         completionBox.withLockedValue { $0 }?(.success([host]))
-        _ = queryDone.wait(timeout: .now() + 5)
-        Thread.sleep(forTimeInterval: 0.3)  // past several would-be ticks
+        await query.value
+        try await Task.sleep(for: .milliseconds(300))  // past several would-be ticks
 
         XCTAssertTrue(
             self.testMetrics.meters.allSatisfy { $0.label != self.connectionsTotal },
