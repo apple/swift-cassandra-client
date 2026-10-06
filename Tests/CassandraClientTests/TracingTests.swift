@@ -33,7 +33,6 @@ import XCTest
 
 // MARK: - Unit (no cluster) — deterministic, load-bearing
 
-@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 final class TracingUnitTests: XCTestCase {
     override func setUp() {
         super.setUp()
@@ -166,7 +165,6 @@ final class TracingUnitTests: XCTestCase {
 
 // The helpers below are `static` so the async test bodies never capture `self`: a test case is not
 // `Sendable`, and none of these need instance state.
-@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 final class TracingIntegrationTests: XCTestCase {
     override func setUp() {
         super.setUp()
@@ -183,11 +181,19 @@ final class TracingIntegrationTests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        config.username = env["CASSANDRA_USER"]
-        config.password = env["CASSANDRA_PASSWORD"]
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            config.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
+        }
         config.keyspace = env["CASSANDRA_KEYSPACE"] ?? "test"
-        config.requestTimeoutMillis = 24_000
-        config.connectTimeoutMillis = 10_000
+        config.requestTimeout = .milliseconds(24_000)
+        config.connectTimeout = .milliseconds(10_000)
+        return config
+    }
+
+    /// `makeConfig()` without a keyspace, for tests that query only system tables.
+    private static func makeSystemTablesConfig() -> CassandraClient.Configuration {
+        var config = Self.makeConfig()
+        config.keyspace = nil
         return config
     }
 
@@ -197,14 +203,8 @@ final class TracingIntegrationTests: XCTestCase {
         table: String,
         schema: String
     ) async throws {
-        try await client.withSession(keyspace: .none) { session in
-            try await session.run(
-                "create keyspace if not exists \(keyspace) with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }"
-            )
-        }
-        let session = client.makeSession(keyspace: keyspace)
-        defer { XCTAssertNoThrow(try session.shutdown()) }
-        try await session.run("create table \(keyspace).\(table) \(schema)")
+        try await createKeyspace(keyspace, configuration: Self.makeConfig())
+        try await client.execute("create table \(keyspace).\(table) \(schema)")
     }
 
     private static func spans(named name: String) -> [CapturedSpan] {
@@ -218,13 +218,11 @@ final class TracingIntegrationTests: XCTestCase {
     func testV1_successEmitsOneClientExecuteSpan() {
         runAsyncAndWaitFor(
             {
-                let client = CassandraClient(configuration: Self.makeConfig())
+                let client = CassandraClient(configuration: Self.makeSystemTablesConfig())
                 defer { XCTAssertNoThrow(try client.shutdown()) }
 
                 SharedTestTracer.instance.reset()
-                try await client.withSession(keyspace: .none) { session in
-                    _ = try await session.query("select release_version from system.local")
-                }
+                _ = try await client.query("select release_version from system.local")
 
                 XCTAssertEqual(Self.executeSpans.count, 1, "exactly one execute span (delta control for V7)")
                 let span = try XCTUnwrap(Self.executeSpans.first)
@@ -243,14 +241,12 @@ final class TracingIntegrationTests: XCTestCase {
     func testV2b_serverErrorRecordsCategoryWithoutServerText() {
         runAsyncAndWaitFor(
             {
-                let client = CassandraClient(configuration: Self.makeConfig())
+                let client = CassandraClient(configuration: Self.makeSystemTablesConfig())
                 defer { XCTAssertNoThrow(try client.shutdown()) }
 
                 SharedTestTracer.instance.reset()
                 do {
-                    try await client.withSession(keyspace: .none) { session in
-                        _ = try await session.query("SELCT bad syntax from system.local")  // deliberate syntax error
-                    }
+                    _ = try await client.query("SELCT bad syntax from system.local")  // deliberate syntax error
                     XCTFail("expected a syntax error")
                 } catch {
                     // expected
@@ -278,14 +274,12 @@ final class TracingIntegrationTests: XCTestCase {
     func testV3_executeSpanParentsToCallerSpan() {
         runAsyncAndWaitFor(
             {
-                let client = CassandraClient(configuration: Self.makeConfig())
+                let client = CassandraClient(configuration: Self.makeSystemTablesConfig())
                 defer { XCTAssertNoThrow(try client.shutdown()) }
 
                 SharedTestTracer.instance.reset()
                 try await withSpan("caller") { _ in
-                    try await client.withSession(keyspace: .none) { session in
-                        _ = try await session.query("select release_version from system.local")
-                    }
+                    _ = try await client.query("select release_version from system.local")
                 }
 
                 let caller = try XCTUnwrap(Self.spans(named: "caller").first)
@@ -315,12 +309,10 @@ final class TracingIntegrationTests: XCTestCase {
                     table: table,
                     schema: "(id int primary key)"
                 )
-                let session = client.makeSession(keyspace: keyspace)
-                defer { XCTAssertNoThrow(try session.shutdown()) }
-                for i in 0..<3 { try await session.run("insert into \(table) (id) values (\(i));") }
+                for i in 0..<3 { try await client.execute("insert into \(table) (id) values (\(i));") }
 
                 SharedTestTracer.instance.reset()
-                let paginated = try await session.query("select id from \(table);", pageSize: Int32(1))
+                let paginated = try await client.query("select id from \(table);", pageSize: Int32(1))
                 for _ in 0..<3 {
                     _ = try await paginated.nextPage()
                 }
@@ -346,14 +338,12 @@ final class TracingIntegrationTests: XCTestCase {
                     table: table,
                     schema: "(id int primary key)"
                 )
-                let session = client.makeSession(keyspace: keyspace)
-                defer { XCTAssertNoThrow(try session.shutdown()) }
-                for i in 0..<3 { try await session.run("insert into \(table) (id) values (\(i));") }
+                for i in 0..<3 { try await client.execute("insert into \(table) (id) values (\(i));") }
 
                 SharedTestTracer.instance.reset()
                 try await withSpan("caller") { _ in
                     // Iterate inline in the caller's span scope so the iterator's Task {} inherits `.current`.
-                    let paginated = try await session.query("select id from \(table);", pageSize: Int32(1))
+                    let paginated = try await client.query("select id from \(table);", pageSize: Int32(1))
                     var seen = 0
                     for try await _ in paginated { seen += 1 }
                     XCTAssertEqual(seen, 3)
@@ -389,14 +379,12 @@ final class TracingIntegrationTests: XCTestCase {
                     table: table,
                     schema: "(id bigint primary key, v text)"
                 )
-                let session = client.makeSession(keyspace: keyspace)
-                defer { XCTAssertNoThrow(try session.shutdown()) }
 
                 let cql = "insert into \(table) (id, v) values (?, ?)"
 
                 // The prepare site opens a "Cassandra prepare" span carrying the real CQL, .client, no consistency.
                 SharedTestTracer.instance.reset()
-                let prepared = try await session.prepare(cql)
+                let prepared = try await client.prepare(cql)
                 let prepareSpan = try XCTUnwrap(Self.spans(named: "Cassandra prepare").first)
                 XCTAssertEqual(prepareSpan.kind, .client)
                 XCTAssertEqual(prepareSpan.attributes["db.operation.name"], "prepare")
@@ -405,7 +393,7 @@ final class TracingIntegrationTests: XCTestCase {
 
                 // Executing the prepared statement: the EXECUTE span shows real CQL, and there is exactly one.
                 SharedTestTracer.instance.reset()
-                _ = try await session.execute(prepared: prepared, parameters: [.int64(1), .string("x")])
+                _ = try await client.execute(prepared: prepared, parameters: [.int64(1), .string("x")])
                 XCTAssertEqual(
                     Self.executeSpans.count,
                     1,
@@ -430,15 +418,13 @@ final class TracingIntegrationTests: XCTestCase {
                     protocolVersion: .v3
                 )
                 config.keyspace = "test"
-                config.connectTimeoutMillis = 2_000
+                config.connectTimeout = .milliseconds(2_000)
                 let client = CassandraClient(configuration: config)
                 defer { XCTAssertNoThrow(try client.shutdown()) }
 
                 SharedTestTracer.instance.reset()
                 do {
-                    try await client.withSession(keyspace: .none) { session in
-                        _ = try await session.query("select release_version from system.local")
-                    }
+                    _ = try await client.query("select release_version from system.local")
                     XCTFail("expected a connect failure")
                 } catch {
                     // expected
@@ -495,20 +481,18 @@ final class TracingIntegrationTests: XCTestCase {
     func testA4_pageSizeConstructionEmitsNoSpanUntilFetch() {
         runAsyncAndWaitFor(
             {
-                let client = CassandraClient(configuration: Self.makeConfig())
+                let client = CassandraClient(configuration: Self.makeSystemTablesConfig())
                 defer { XCTAssertNoThrow(try client.shutdown()) }
 
-                try await client.withSession(keyspace: .none) { session in
-                    SharedTestTracer.instance.reset()
-                    let paginated = try await session.query(
-                        "select release_version from system.local",
-                        pageSize: Int32(100)
-                    )
-                    XCTAssertEqual(Self.executeSpans.count, 0, "constructing PaginatedRows opens no span")
+                SharedTestTracer.instance.reset()
+                let paginated = try await client.query(
+                    "select release_version from system.local",
+                    pageSize: Int32(100)
+                )
+                XCTAssertEqual(Self.executeSpans.count, 0, "constructing PaginatedRows opens no span")
 
-                    _ = try await paginated.nextPage()
-                    XCTAssertEqual(Self.executeSpans.count, 1, "the span opens when a page is fetched")
-                }
+                _ = try await paginated.nextPage()
+                XCTAssertEqual(Self.executeSpans.count, 1, "the span opens when a page is fetched")
             },
             30.0
         )
@@ -560,14 +544,12 @@ final class TracingIntegrationTests: XCTestCase {
                     schema: "(id bigint primary key, v text)"
                 )
 
-                let session = client.makeSession(keyspace: keyspace)
-                defer { XCTAssertNoThrow(try session.shutdown()) }
-                let prepared = try await session.prepare("insert into \(table) (id, v) values (?, ?)")
+                let prepared = try await client.prepare("insert into \(table) (id, v) values (?, ?)")
 
                 SharedTestTracer.instance.reset()  // ignore the prepare span
                 do {
                     // Bind more parameters than there are placeholders -> preflight bind failure before the span.
-                    _ = try await session.execute(
+                    _ = try await client.execute(
                         prepared: prepared,
                         parameters: [.int64(1), .string("x"), .string("extra")]
                     )

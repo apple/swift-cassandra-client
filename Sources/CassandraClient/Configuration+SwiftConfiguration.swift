@@ -16,7 +16,6 @@
 import Configuration
 import Logging
 
-@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Configuration {
     /// Initializes ``CassandraClient/Configuration`` from a `ConfigReader`.
     ///
@@ -35,30 +34,32 @@ extension CassandraClient.Configuration {
     ///   apply to subsequent connections. A re-read that fails validation fails that connection.
     /// - `port` (int, optional, default: 9042): Port the cluster listens on, 1 through 65535.
     /// - `protocolVersion` (int, optional, default: 4): Native protocol version, either 3 or 4.
-    /// - `username` (string, optional): Username for plain text authentication. Unused when ``authenticator`` is set in code.
-    /// - `password` (string, optional, secret): Password for plain text authentication. Unused when ``authenticator`` is set in code.
+    /// - `username` (string, optional): Username for password authentication. Together with `password`, sets
+    ///   ``authenticator`` to a ``CassandraClient/PasswordAuthenticator``. Requires `password`.
+    /// - `password` (string, optional, secret): Password for password authentication. Requires `username`.
     /// - `keyspace` (string, optional): Keyspace the session connects to.
     /// - `numIOThreads` (int, optional): Number of driver IO threads.
-    /// - `connectTimeoutMillis` (int, optional): Connection timeout in milliseconds.
-    /// - `requestTimeoutMillis` (int, optional): Request timeout in milliseconds.
-    /// - `resolveTimeoutMillis` (int, optional): Host resolution timeout in milliseconds.
-    /// - `slowQueryThresholdMillis` (int, optional): Latency at or above which a successful query is logged.
+    /// - `connectTimeoutMillis` (int, optional): ``connectTimeout``, in milliseconds.
+    /// - `requestTimeoutMillis` (int, optional): ``requestTimeout``, in milliseconds.
+    /// - `resolveTimeoutMillis` (int, optional): ``resolveTimeout``, in milliseconds.
+    /// - `slowQueryThresholdMillis` (int, optional): ``slowQueryThreshold``, in milliseconds.
     /// - `logBoundValues` (bool, optional): Include bound parameter values in request logs.
     /// - `coreConnectionsPerHost` (int, optional): Number of connections kept open per host.
-    /// - `tcpNodelay` (bool, optional): Whether to set tcp no delay on the socket.
-    /// - `tcpKeepalive` (bool, optional): Whether to enable TCP keepalive.
-    /// - `tcpKeepaliveDelaySeconds` (int, optional): Delay before the first keepalive probe, in seconds.
-    /// - `connectionHeartbeatIntervalSeconds` (int, optional): Connection heartbeat interval, in seconds.
-    /// - `connectionIdleTimeoutSeconds` (int, optional): Connection idle timeout, in seconds.
-    /// - `schema` (bool, optional): Whether the driver maintains schema metadata.
-    /// - `hostnameResolution` (bool, optional): Whether to perform reverse DNS lookups on cluster hosts.
-    /// - `randomizedContactPoints` (bool, optional): Whether to shuffle the resolved contact points.
-    /// - `compact` (bool, optional): Whether to connect in compact mode.
+    /// - `tcpNodelay` (bool, optional, default: true): Whether to disable Nagle's algorithm on each connection.
+    /// - `tcpKeepalive` (bool, optional, default: false): Whether to enable TCP keepalive.
+    /// - `tcpKeepaliveDelaySeconds` (int, optional): ``tcpKeepaliveDelay``, in seconds.
+    /// - `connectionHeartbeatIntervalSeconds` (int, optional): ``connectionHeartbeatInterval``, in seconds.
+    /// - `connectionIdleTimeoutSeconds` (int, optional): ``connectionIdleTimeout``, in seconds.
+    /// - `isSchemaMetadataEnabled` (bool, optional, default: true): Whether the driver retrieves and updates
+    ///   schema metadata.
+    /// - `hostnameResolution` (bool, optional, default: false): Whether to perform reverse DNS lookups on cluster hosts.
+    /// - `randomizedContactPoints` (bool, optional, default: true): Whether to shuffle the resolved contact points.
+    /// - `isNoCompactEnabled` (bool, optional, default: false): Whether to send the `NO_COMPACT` startup option.
     /// - `consistency` (string, optional): Consistency level, one of the cases from ``CassandraClient/Consistency``.
     /// - `serialConsistency` (string, optional): Serial consistency level for LWT operations, one of the cases from ``CassandraClient/SerialConsistency``.
     /// - `prepareStrategy` (string, optional): When to prepare statements, one of the cases from ``CassandraClient/Configuration/PrepareStrategy``.
     /// - `metricsEnabled` (bool, optional): Whether driver metrics are emitted.
-    /// - `metricsPollIntervalMillis` (int, optional): Metrics poller cadence in milliseconds. `0` leaves ``metricsEnabled`` on but stops the poller.
+    /// - `metricsPollIntervalMillis` (int, optional): ``metricsPollInterval``, in milliseconds. `0` leaves ``metricsEnabled`` on but stops the poller.
     /// - `metricsSessionName` (string, optional): Value of the `session` dimension on emitted metrics.
     /// - `ssl` (scoped, optional): SSL configuration read by ``CassandraClient/Configuration/SSL/init(configReader:)``.
     ///   Only applied if `ssl.enabled` is `true`. If it is not, but other `ssl` keys are set, those keys are
@@ -68,10 +69,14 @@ extension CassandraClient.Configuration {
     ///   `loadBalancingStrategy.strategy` is present.
     /// - `speculativeExecutionPolicy` (scoped, optional): Speculative execution policy, one of the cases from ``CassandraClient/Configuration/SpeculativeExecutionPolicy``.
     ///
-    /// The ``authenticator``, ``encryptor`` and ``encryptionSchemas`` properties cannot be expressed in
-    /// configuration and must be set in code. Setting ``authenticator`` takes precedence over the `username` and `password` read here.
+    /// A custom ``authenticator``, ``encryptor`` and ``encryptionSchemas`` cannot be expressed in
+    /// configuration and must be set in code.
     ///
-    /// - Throws: If a value is out of range or is not one of the accepted values for its key, or a required key is missing. `contactPoints` is
+    /// The keys `schema`, `compact`, `connectionHeartbeatInterval`, `connectionIdleTimeout` and `ssl.verifyFlag`
+    /// were replaced before 1.0. Setting one throws, naming its replacement, rather than being ignored.
+    ///
+    /// - Throws: If a value is out of range or is not one of the accepted values for its key, a required key is
+    ///   missing, or a replaced key is set. `contactPoints` is
     ///   validated here too, but because it is re-read it can also fail later, via the callback passed to ``contactPointsProvider``.
     ///
     /// - Parameters:
@@ -171,33 +176,55 @@ extension CassandraClient.Configuration {
     /// Reads every property other than the contact points, `port` and `protocolVersion`, which each
     /// initializer handles itself.
     private mutating func read(from configReader: ConfigReader, logger: Logger) throws {
-        self.username = configReader.string(forKey: "username")
-        self.password = configReader.string(forKey: "password", isSecret: true)
+        try Self.rejectReplacedKeys(in: configReader)
+
+        let username = configReader.string(forKey: "username")
+        let password = configReader.string(forKey: "password", isSecret: true)
+        switch (username, password) {
+        case (let username?, let password?):
+            self.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
+        case (nil, nil):
+            break
+        default:
+            throw CassandraClient.ConfigurationError(message: "'username' and 'password' must be set together")
+        }
         self.keyspace = configReader.string(forKey: "keyspace")
 
         self.numIOThreads = try configReader.uint32(forKey: "numIOThreads")
-        self.connectTimeoutMillis = try configReader.uint32(forKey: "connectTimeoutMillis")
-        self.requestTimeoutMillis = try configReader.uint32(forKey: "requestTimeoutMillis")
-        self.resolveTimeoutMillis = try configReader.uint32(forKey: "resolveTimeoutMillis")
+        self.connectTimeout = try configReader.milliseconds(forKey: "connectTimeoutMillis")
+        self.requestTimeout = try configReader.milliseconds(forKey: "requestTimeoutMillis")
+        self.resolveTimeout = try configReader.milliseconds(forKey: "resolveTimeoutMillis")
 
-        self.slowQueryThresholdMillis = try configReader.uint32(forKey: "slowQueryThresholdMillis")
+        self.slowQueryThreshold = try configReader.milliseconds(forKey: "slowQueryThresholdMillis")
         if let value = configReader.bool(forKey: "logBoundValues") {
             self.logBoundValues = value
         }
 
         self.coreConnectionsPerHost = try configReader.uint32(forKey: "coreConnectionsPerHost")
-        self.tcpNodelay = configReader.bool(forKey: "tcpNodelay")
-        self.tcpKeepalive = configReader.bool(forKey: "tcpKeepalive")
-        if let value = try configReader.uint32(forKey: "tcpKeepaliveDelaySeconds") {
-            self.tcpKeepaliveDelaySeconds = value
+        if let value = configReader.bool(forKey: "tcpNodelay") {
+            self.tcpNodelay = value
         }
-        self.connectionHeartbeatInterval = try configReader.uint32(forKey: "connectionHeartbeatInterval")
-        self.connectionIdleTimeout = try configReader.uint32(forKey: "connectionIdleTimeout")
+        if let value = configReader.bool(forKey: "tcpKeepalive") {
+            self.tcpKeepalive = value
+        }
+        if let value = try configReader.seconds(forKey: "tcpKeepaliveDelaySeconds") {
+            self.tcpKeepaliveDelay = value
+        }
+        self.connectionHeartbeatInterval = try configReader.seconds(forKey: "connectionHeartbeatIntervalSeconds")
+        self.connectionIdleTimeout = try configReader.seconds(forKey: "connectionIdleTimeoutSeconds")
 
-        self.schema = configReader.bool(forKey: "schema")
-        self.hostnameResolution = configReader.bool(forKey: "hostnameResolution")
-        self.randomizedContactPoints = configReader.bool(forKey: "randomizedContactPoints")
-        self.compact = configReader.bool(forKey: "compact")
+        if let value = configReader.bool(forKey: "isSchemaMetadataEnabled") {
+            self.isSchemaMetadataEnabled = value
+        }
+        if let value = configReader.bool(forKey: "hostnameResolution") {
+            self.hostnameResolution = value
+        }
+        if let value = configReader.bool(forKey: "randomizedContactPoints") {
+            self.randomizedContactPoints = value
+        }
+        if let value = configReader.bool(forKey: "isNoCompactEnabled") {
+            self.isNoCompactEnabled = value
+        }
 
         self.consistency = try configReader.string(forKey: "consistency")
         self.serialConsistency = try configReader.string(forKey: "serialConsistency")
@@ -206,8 +233,8 @@ extension CassandraClient.Configuration {
         if let value = configReader.bool(forKey: "metricsEnabled") {
             self.metricsEnabled = value
         }
-        if let value = try configReader.uint32(forKey: "metricsPollIntervalMillis") {
-            self.metricsPollIntervalMillis = value
+        if let value = try configReader.milliseconds(forKey: "metricsPollIntervalMillis") {
+            self.metricsPollInterval = value
         }
         self.metricsSessionName = configReader.string(forKey: "metricsSessionName")
 
@@ -232,6 +259,33 @@ extension CassandraClient.Configuration {
         }
     }
 
+    /// Throws if a key replaced before 1.0 is set, naming its replacement. Reading it as unset instead would
+    /// change behaviour without notice — an old `compact` value, for one, now means the opposite.
+    private static func rejectReplacedKeys(in configReader: ConfigReader) throws {
+        let replaced: [(key: ConfigKey, reader: ConfigReader, message: String)] = [
+            ("schema", configReader, "'schema' was renamed to 'isSchemaMetadataEnabled'"),
+            (
+                "compact", configReader,
+                "'compact' was replaced by 'isNoCompactEnabled', which takes the opposite value"
+            ),
+            (
+                "connectionHeartbeatInterval", configReader,
+                "'connectionHeartbeatInterval' was renamed to 'connectionHeartbeatIntervalSeconds'"
+            ),
+            (
+                "connectionIdleTimeout", configReader,
+                "'connectionIdleTimeout' was renamed to 'connectionIdleTimeoutSeconds'"
+            ),
+            (
+                "verifyFlag", configReader.scoped(to: "ssl"),
+                "'ssl.verifyFlag' was renamed to 'ssl.certificateVerification', with renamed values"
+            ),
+        ]
+        for entry in replaced where entry.reader.hasValue(forKey: entry.key) {
+            throw CassandraClient.ConfigurationError(message: entry.message)
+        }
+    }
+
     /// Reads and validates `contactPoints`.
     ///
     /// - Throws: If the list is empty or holds a blank entry, or the key is missing.
@@ -251,7 +305,6 @@ extension CassandraClient.Configuration {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Configuration.SSL {
     /// Initializes SSL configuration from a `ConfigReader`.
     ///
@@ -259,13 +312,14 @@ extension CassandraClient.Configuration.SSL {
     /// - `enabled` (bool, optional, default: false): Whether SSL is enabled. If `false`, the initializer
     ///   returns `nil`.
     /// - `trustedCertificates` (string array, optional): PEM encoded certificates used to verify the peer.
-    /// - `verifyFlag` (string, optional, default: "peerIdentity"): Verification performed on the peer's
-    ///   certificate, one of "none", "peerCert", "peerIdentity" or "peerIdentityDNS".
+    /// - `certificateVerification` (string, optional, default: "ipAddressVerification"): Verification performed
+    ///   on the peer's certificate, one of "none", "noHostnameVerification", "ipAddressVerification" or
+    ///   "fullVerification".
     /// - `cert` (string, optional): PEM encoded client certificate chain.
     /// - `privateKey` (string, optional, secret): PEM encoded client private key.
     /// - `privateKeyPassword` (string, secret): Password for `privateKey`. Required when `privateKey` is set.
     ///
-    /// - Throws: If `verifyFlag` is not one of the accepted values, or `privateKey` is set without `privateKeyPassword`.
+    /// - Throws: If `certificateVerification` is not one of the accepted values, or `privateKey` is set without `privateKeyPassword`.
     public init?(configReader: ConfigReader) throws {
         guard configReader.bool(forKey: "enabled", default: false) else {
             return nil
@@ -273,8 +327,11 @@ extension CassandraClient.Configuration.SSL {
         self.init()
 
         self.trustedCertificates = configReader.stringArray(forKey: "trustedCertificates")
-        if let verifyFlag = try configReader.string(forKey: "verifyFlag", asOrThrow: VerifyFlag.self) {
-            self.verifyFlag = verifyFlag
+        if let verification = try configReader.string(
+            forKey: "certificateVerification",
+            asOrThrow: CertificateVerification.self
+        ) {
+            self.certificateVerification = verification
         }
 
         self.cert = configReader.string(forKey: "cert")
@@ -292,8 +349,8 @@ extension CassandraClient.Configuration.SSL {
         if configReader.stringArray(forKey: "trustedCertificates") != nil {
             ignoredKeys.append("trustedCertificates")
         }
-        if configReader.string(forKey: "verifyFlag") != nil {
-            ignoredKeys.append("verifyFlag")
+        if configReader.string(forKey: "certificateVerification") != nil {
+            ignoredKeys.append("certificateVerification")
         }
         if configReader.string(forKey: "cert") != nil {
             ignoredKeys.append("cert")
@@ -318,7 +375,6 @@ extension CassandraClient.Configuration.SSL {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Configuration.LoadBalancingStrategy {
     /// Initializes a load balancing strategy from a `ConfigReader`.
     ///
@@ -352,7 +408,6 @@ extension CassandraClient.Configuration.LoadBalancingStrategy {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Configuration.SpeculativeExecutionPolicy {
     /// Initializes a speculative execution policy from a `ConfigReader`.
     ///
@@ -371,11 +426,11 @@ extension CassandraClient.Configuration.SpeculativeExecutionPolicy {
         }
         switch policy {
         case "constant":
-            let delayInMillseconds = try configReader.requiredInt(forKey: "delayMillis")
-            guard delayInMillseconds >= 0 else {
+            let delayMillis = try configReader.requiredInt(forKey: "delayMillis")
+            guard delayMillis >= 0 else {
                 throw CassandraClient.ConfigurationError(
                     message:
-                        "'speculativeExecutionPolicy.delayMillis' must not be negative, got \(delayInMillseconds)"
+                        "'speculativeExecutionPolicy.delayMillis' must not be negative, got \(delayMillis)"
                 )
             }
             let maxExecutions = try configReader.requiredInt32(forKey: "maxExecutions")
@@ -384,7 +439,7 @@ extension CassandraClient.Configuration.SpeculativeExecutionPolicy {
                     message: "'speculativeExecutionPolicy.maxExecutions' must not be negative, got \(maxExecutions)"
                 )
             }
-            self = .constant(delayInMillseconds: Int64(delayInMillseconds), maxExecutions: maxExecutions)
+            self = .constant(delay: .milliseconds(delayMillis), maxExecutions: maxExecutions)
         case "disabled":
             self = .disabled
         default:
@@ -395,13 +450,25 @@ extension CassandraClient.Configuration.SpeculativeExecutionPolicy {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
 extension ConfigReader {
     fileprivate func uint32(forKey key: ConfigKey) throws -> UInt32? {
         guard let value = self.int(forKey: key) else {
             return nil
         }
         return try Self.narrow(value, to: UInt32.self, forKey: key)
+    }
+
+    fileprivate func milliseconds(forKey key: ConfigKey) throws -> Duration? {
+        try self.uint32(forKey: key).map { .milliseconds($0) }
+    }
+
+    fileprivate func seconds(forKey key: ConfigKey) throws -> Duration? {
+        try self.uint32(forKey: key).map { .seconds($0) }
+    }
+
+    /// Whether the key holds a value of any type this package reads.
+    fileprivate func hasValue(forKey key: ConfigKey) -> Bool {
+        self.string(forKey: key) != nil || self.bool(forKey: key) != nil || self.int(forKey: key) != nil
     }
 
     fileprivate func requiredInt32(forKey key: ConfigKey) throws -> Int32 {

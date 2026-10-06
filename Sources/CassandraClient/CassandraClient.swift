@@ -17,72 +17,147 @@ internal import CDataStaxDriver
 import Logging
 import NIO
 import NIOConcurrencyHelpers
+import ServiceLifecycle
 
 /// `CassandraClient` is a wrapper around the [Datastax Cassandra C++ Driver](https://github.com/datastax/cpp-driver)
 ///  and can be used to run queries against a Cassandra database.
-public final class CassandraClient: CassandraSession, Sendable {
-    private let eventLoopGroupContainer: EventLoopGroupContainer
-    public var eventLoopGroup: EventLoopGroup {
-        self.eventLoopGroupContainer.value
-    }
+///
+/// Use ``withClient(eventLoopGroup:configuration:_:)`` for work with a bounded scope. To own a client for longer,
+/// create it with ``init(eventLoopGroup:configuration:)`` and run ``run()``, for example as a service in a
+/// `ServiceGroup`.
+public final class CassandraClient: Sendable {
+    let eventLoopGroup: EventLoopGroup
 
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-    public var encryptor: CassandraClient.Encryptor? {
+    var encryptor: CassandraClient.Encryptor? {
         self.configuration.encryptor
     }
 
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-    public var encryptionSchemas: [String: CassandraClient.EncryptionSchema] {
+    var encryptionSchemas: [String: CassandraClient.EncryptionSchema] {
         self.configuration.encryptionSchemas
     }
 
-    public var keyspace: String? {
+    var keyspace: String? {
         self.configuration.keyspace
     }
 
     private let configuration: Configuration
-    public let logger: Logger
     private let defaultSession: Session
     private let isShutdown = ManagedAtomic<Bool>(false)
+    private let isRunning = ManagedAtomic<Bool>(false)
 
     /// Create a new instance of `CassandraClient`.
     ///
+    /// The client connects lazily, on its first request. Metrics are polled only while ``run()`` runs.
+    ///
     /// - Parameters:
-    ///   - eventLoopGroupProvider: The ``EventLoopGroupProvider`` to use, uses ``EventLoopGroupProvider/createNew`` strategy by default.
+    ///   - eventLoopGroup: The `EventLoopGroup` to use. Defaults to the process-wide shared
+    ///     `MultiThreadedEventLoopGroup.singleton`. The client never shuts the group down; its owner does.
     ///   - configuration: The  client's ``Configuration``.
-    ///   - logger: The client's default `Logger`.
     public init(
-        eventLoopGroupProvider: EventLoopGroupProvider = .createNew,
-        configuration: Configuration,
-        logger: Logger? = nil
+        eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+        configuration: Configuration
     ) {
         self.configuration = configuration
-        self.logger = logger ?? Logger(label: "com.apple.cassandra")
-        switch eventLoopGroupProvider {
-        case .createNew:
-            self.eventLoopGroupContainer = (
-                value: MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount), managed: true
-            )
-        case .shared(let eventLoopGroup):
-            self.eventLoopGroupContainer = (value: eventLoopGroup, managed: false)
-        }
-        self.defaultSession = Session(
-            configuration: self.configuration,
-            logger: self.logger,
-            eventLoopGroupContainer: self.eventLoopGroupContainer
-        )
+        self.eventLoopGroup = eventLoopGroup
+        self.defaultSession = Session(configuration: self.configuration, eventLoopGroup: eventLoopGroup)
     }
 
+    // Debug builds only: in release the driver closes the session when it is freed.
     deinit {
-        precondition(
+        assert(
             self.isShutdown.load(ordering: .relaxed),
             "Client not shut down before the deinit. Please call client.shutdown() when no longer needed."
         )
     }
 
+    /// Create a client, run it for the duration of `body`, then shut it down, whether `body` returns or throws.
+    ///
+    /// If `body` throws, its error is rethrown even when shutting the client down also fails.
+    ///
+    /// - Parameters:
+    ///   - eventLoopGroup: The `EventLoopGroup` to use. Defaults to the process-wide shared
+    ///     `MultiThreadedEventLoopGroup.singleton`.
+    ///   - configuration: The client's ``Configuration``.
+    ///   - body: The closure to invoke with the client.
+    ///
+    /// - Returns: The result of `body`.
+    public static func withClient<T>(
+        eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+        configuration: Configuration,
+        _ body: (CassandraClient) async throws -> T
+    ) async throws -> T {
+        let client = CassandraClient(eventLoopGroup: eventLoopGroup, configuration: configuration)
+        // Claimed before `body` starts, so a `run()` inside `body` throws rather than waiting on a
+        // cancellation that only comes once `body` returns.
+        try client.claimRun()
+        return try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await client.runClaimed()
+            }
+            let result: Result<T, any Swift.Error>
+            do {
+                result = .success(try await body(client))
+            } catch {
+                result = .failure(error)
+            }
+            // Cancelling ends `run()`, which shuts the client down.
+            group.cancelAll()
+            do {
+                try await group.waitForAll()
+            } catch {
+                // An error from `body` takes precedence over one from shutting the client down.
+                if case .failure = result {
+                    return try result.get()
+                }
+                throw error
+            }
+            return try result.get()
+        }
+    }
+
+    /// Run the client's background work until graceful shutdown is triggered or the calling task is cancelled,
+    /// then shut the client down.
+    ///
+    /// The background work is the metrics poller, when ``Configuration/metricsEnabled`` is set. Requests do not
+    /// need `run()` to be running.
+    ///
+    /// - Throws: ``CassandraClient/Error/disconnected`` if the client is already shut down, and
+    ///   ``CassandraClient/Error/invalidState(_:)`` if `run()` has already been called.
+    public func run() async throws {
+        try self.claimRun()
+        try await self.runClaimed()
+    }
+
+    private func claimRun() throws {
+        guard !self.isShutdown.load(ordering: .relaxed) else {
+            throw CassandraClient.Error.disconnected
+        }
+        guard self.isRunning.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged else {
+            throw CassandraClient.Error.invalidState("run() has already been called on this client")
+        }
+    }
+
+    private func runClaimed() async throws {
+        let session = self.defaultSession
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                await session.runMetricsPoller()
+            }
+            do {
+                try await gracefulShutdown()
+            } catch is CancellationError {
+                // Cancellation ends the run the same way graceful shutdown does.
+            }
+            group.cancelAll()
+            try await group.waitForAll()
+        }
+        try await self.shutdownAsync()
+    }
+
     /// Shutdown the client.
     ///
-    /// - Note: It is required to call this method before terminating the program. `CassandraClient` will assert it was cleanly shut down as part of its deinitializer.
+    /// - Note: It is required to call this method before terminating the program. `CassandraClient` asserts it
+    ///   was cleanly shut down as part of its deinitializer in debug builds.
     @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
     public func shutdown() throws {
         if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
@@ -91,26 +166,10 @@ public final class CassandraClient: CassandraSession, Sendable {
             return
         }
 
-        var lastError: Swift.Error?
-
-        do {
-            try self.defaultSession.shutdown()
-        } catch {
-            lastError = error
-        }
-        if self.eventLoopGroupContainer.managed {
-            do {
-                try self.eventLoopGroup.syncShutdownGracefully()
-            } catch {
-                lastError = error
-            }
-        }
-        if let error = lastError {
-            throw error
-        }
+        try self.defaultSession.shutdown()
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    /// Shutdown the client.
     public func shutdownAsync() async throws {
         if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
             .exchanged
@@ -118,47 +177,35 @@ public final class CassandraClient: CassandraSession, Sendable {
             return
         }
 
-        var lastError: Swift.Error?
-
-        do {
-            try await self.defaultSession.shutdownAsync()
-        } catch {
-            lastError = error
-        }
-        if self.eventLoopGroupContainer.managed {
-            do {
-                try await self.eventLoopGroup.shutdownGracefully()
-            } catch {
-                lastError = error
-            }
-        }
-        if let error = lastError {
-            throw error
-        }
+        try await self.defaultSession.shutdownAsync()
     }
 
-    /// Execute a ``Statement`` using the default ``CassandraSession`` on the given `EventLoop` or create a new one.
+    /// Get the driver's metrics snapshot.
+    public func getMetrics() -> CassandraMetrics {
+        self.defaultSession.getMetrics()
+    }
+}
+
+extension CassandraClient: Service {}
+
+// MARK: - Statements
+
+extension CassandraClient {
+    /// Execute a ``Statement``.
     ///
     /// **All** rows are returned, unless the statement sets a page size with
     /// ``Statement/setPagingSize(_:)``, which limits the result to a single page.
     ///
     /// - Parameters:
     ///   - statement: The ``Statement`` to execute.
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - logger: The `Logger` to use. Defaults to the task-local `Logger.current`.
     ///
     /// - Returns: The resulting ``Rows``.
-    public func execute(
-        statement: sending Statement,
-        on eventLoop: EventLoop?,
-        logger: Logger? = .none
-    )
-        -> EventLoopFuture<Rows>
-    {
-        self.defaultSession.execute(statement: statement, on: eventLoop, logger: logger)
+    public func execute(statement: Statement, logger: Logger = Logger.current) async throws -> Rows {
+        try await self.defaultSession.execute(statement: statement, logger: logger)
     }
 
-    /// Execute a ``Statement`` using the default ``CassandraSession`` on the given `EventLoop` or create a new one.
+    /// Execute a ``Statement``.
     ///
     /// Resulting rows are paginated.
     ///
@@ -166,243 +213,50 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - statement: The ``Statement`` to execute.
     ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
     ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - logger: The `Logger` to use. Defaults to the task-local `Logger.current`.
     ///
     /// - Returns: The ``PaginatedRows``.
     public func execute(
         statement: sending Statement,
         pageSize: Int32,
-        on eventLoop: EventLoop?,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<PaginatedRows> {
-        self.defaultSession.execute(
-            statement: statement,
-            pageSize: pageSize,
-            on: eventLoop,
-            logger: logger
-        )
+        logger: Logger = Logger.current
+    ) async throws -> PaginatedRows {
+        try await self.defaultSession.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
 
-    /// Prepare a CQL query for repeated execution using the default ``CassandraSession``.
+    /// Prepare a CQL query for repeated execution.
+    ///
+    /// The server parses and validates the query once. The returned ``PreparedStatement`` can then be bound with
+    /// different parameters and executed multiple times without re-parsing.
     ///
     /// - Parameters:
     ///   - query: The CQL query string with `?` placeholders.
     ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - logger: The `Logger` to use. Defaults to the task-local `Logger.current`.
     ///
     /// - Returns: A ``PreparedStatement``.
     public func prepare(
         _ query: String,
         encryptionTable: String? = nil,
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<PreparedStatement> {
-        self.defaultSession.prepare(query, encryptionTable: encryptionTable, on: eventLoop, logger: logger)
-    }
-
-    /// Execute a ``PreparedStatement`` with bound parameters using the default ``CassandraSession``.
-    ///
-    /// - Parameters:
-    ///   - prepared: The ``PreparedStatement`` to execute.
-    ///   - parameters: The values to bind to the statement's `?` placeholders.
-    ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///
-    /// - Returns: The resulting ``Rows``.
-    public func execute(
-        prepared: PreparedStatement,
-        parameters: sending [Statement.Value] = [],
-        options: Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<Rows> {
-        self.defaultSession.execute(
-            prepared: prepared,
-            parameters: parameters,
-            options: options,
-            on: eventLoop,
-            logger: logger
-        )
-    }
-
-    /// Execute a ``PreparedStatement`` and decode each row into a `Decodable` type using the default ``CassandraSession``.
-    ///
-    /// - Parameters:
-    ///   - prepared: The ``PreparedStatement`` to execute.
-    ///   - parameters: The values to bind to the statement's `?` placeholders.
-    ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///
-    /// - Returns: The decoded rows.
-    @preconcurrency
-    public func execute<T: Decodable & Sendable>(
-        prepared: PreparedStatement,
-        parameters: sending [Statement.Value] = [],
-        options: Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<[T]> {
-        self.defaultSession.execute(
-            prepared: prepared,
-            parameters: parameters,
-            options: options,
-            on: eventLoop,
-            logger: logger
-        )
-    }
-
-    /// Execute a ``PreparedStatement`` and decode each row into `model` using the default ``CassandraSession``.
-    ///
-    /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
-    /// but spells out the decoded type explicitly at the call site, e.g.
-    /// `cassandraClient.execute(prepared: statement, withModelType: Model.self)`.
-    ///
-    /// - Parameters:
-    ///   - prepared: The ``PreparedStatement`` to execute.
-    ///   - parameters: The values to bind to the statement's `?` placeholders.
-    ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///   - model: The type to decode each row into.
-    ///
-    /// - Returns: The decoded rows.
-    @preconcurrency
-    public func execute<T: Decodable & Sendable>(
-        prepared: PreparedStatement,
-        parameters: sending [Statement.Value] = [],
-        options: Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none,
-        withModelType model: T.Type
-    ) -> EventLoopFuture<[T]> {
-        self.defaultSession.execute(
-            prepared: prepared,
-            parameters: parameters,
-            options: options,
-            on: eventLoop,
-            logger: logger
-        )
-    }
-
-    /// Execute a batch of statements.
-    ///
-    /// - Parameters:
-    ///   - configuration: Options to apply to the batch.
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///   - build: Closure that adds statements to the batch.
-    public func batch(
-        configuration: Batch.Configuration = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none,
-        _ build: (inout Batch) throws -> Void
-    ) -> EventLoopFuture<Void> {
-        self.defaultSession.batch(configuration: configuration, on: eventLoop, logger: logger, build)
-    }
-
-    /// Create a new ``CassandraSession`` that can be used to perform queries on the given or configured keyspace.
-    ///
-    /// - Parameters:
-    ///   - keyspace: If `nil`, the client's default keyspace is used.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///
-    /// - Returns: The newly created session.
-    public func makeSession(keyspace: String?, logger: Logger? = .none) -> CassandraSession {
-        var configuration = self.configuration
-        configuration.keyspace = keyspace
-        let logger = logger ?? self.logger
-        return Session(
-            configuration: configuration,
-            logger: logger,
-            eventLoopGroupContainer: self.eventLoopGroupContainer
-        )
-    }
-
-    /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure.
-    ///
-    /// - Parameters:
-    ///   - keyspace: If `nil`, the client's default keyspace is used.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///   - handler: The closure to invoke, passing in the newly created session.
-    public func withSession(
-        keyspace: String?,
-        logger: Logger? = .none,
-        handler: (CassandraSession) throws -> Void
-    ) rethrows {
-        let session = self.makeSession(keyspace: keyspace, logger: logger)
-        defer {
-            do {
-                try session.shutdown()
-            } catch {
-                self.logger.warning("shutdown error: \(error)")
-            }
-        }
-        try handler(session)
-    }
-
-    /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure and return its `EventLoopFuture` result.
-    ///
-    /// - Parameters:
-    ///   - keyspace: If `nil`, the client's default keyspace is used.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///   - handler: The closure to invoke, passing in the newly created session.
-    ///
-    /// - Returns: The resulting `EventLoopFuture` of the closure.
-    public func withSession<T>(
-        keyspace: String?,
-        logger: Logger? = .none,
-        handler: (CassandraSession) -> EventLoopFuture<T>
-    ) -> EventLoopFuture<T> {
-        let session = self.makeSession(keyspace: keyspace, logger: logger)
-        return handler(session).always { _ in
-            do {
-                try session.shutdown()
-            } catch {
-                self.logger.warning("shutdown error: \(error)")
-            }
-        }
-    }
-
-    public func getMetrics() -> CassandraMetrics {
-        self.defaultSession.getMetrics()
-    }
-
-    /// Prepare a CQL query for repeated execution using the default ``CassandraSession``.
-    ///
-    /// - Parameters:
-    ///   - query: The CQL query string with `?` placeholders.
-    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///
-    /// - Returns: A ``PreparedStatement``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func prepare(
-        _ query: String,
-        encryptionTable: String? = nil,
-        logger: Logger? = .none
+        logger: Logger = Logger.current
     ) async throws -> PreparedStatement {
         try await self.defaultSession.prepare(query, encryptionTable: encryptionTable, logger: logger)
     }
 
-    /// Execute a ``PreparedStatement`` with bound parameters using the default ``CassandraSession``.
+    /// Execute a ``PreparedStatement`` with bound parameters.
     ///
     /// - Parameters:
     ///   - prepared: The ``PreparedStatement`` to execute.
     ///   - parameters: The values to bind to the statement's `?` placeholders.
     ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - logger: The `Logger` to use. Defaults to the task-local `Logger.current`.
     ///
     /// - Returns: The resulting ``Rows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(
         prepared: PreparedStatement,
         parameters: [Statement.Value] = [],
         options: Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger = Logger.current
     ) async throws -> Rows {
         try await self.defaultSession.execute(
             prepared: prepared,
@@ -412,21 +266,20 @@ public final class CassandraClient: CassandraSession, Sendable {
         )
     }
 
-    /// Execute a ``PreparedStatement`` and decode each row into a `Decodable` type using the default ``CassandraSession``.
+    /// Execute a ``PreparedStatement`` and decode each row into a `Decodable` type.
     ///
     /// - Parameters:
     ///   - prepared: The ``PreparedStatement`` to execute.
     ///   - parameters: The values to bind to the statement's `?` placeholders.
     ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - logger: The `Logger` to use. Defaults to the task-local `Logger.current`.
     ///
     /// - Returns: The decoded rows.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute<T: Decodable>(
         prepared: PreparedStatement,
         parameters: [Statement.Value] = [],
         options: Statement.Options = .init(),
-        logger: Logger? = .none
+        logger: Logger = Logger.current
     ) async throws -> [T] {
         try await self.defaultSession.execute(
             prepared: prepared,
@@ -436,7 +289,7 @@ public final class CassandraClient: CassandraSession, Sendable {
         )
     }
 
-    /// Execute a ``PreparedStatement`` and decode each row into `model` using the default ``CassandraSession``.
+    /// Execute a ``PreparedStatement`` and decode each row into `model`.
     ///
     /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
     /// but spells out the decoded type explicitly at the call site, e.g.
@@ -446,16 +299,15 @@ public final class CassandraClient: CassandraSession, Sendable {
     ///   - prepared: The ``PreparedStatement`` to execute.
     ///   - parameters: The values to bind to the statement's `?` placeholders.
     ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - logger: The `Logger` to use. Defaults to the task-local `Logger.current`.
     ///   - model: The type to decode each row into.
     ///
     /// - Returns: The decoded rows.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute<T: Decodable>(
         prepared: PreparedStatement,
         parameters: [Statement.Value] = [],
         options: Statement.Options = .init(),
-        logger: Logger? = .none,
+        logger: Logger = Logger.current,
         withModelType model: T.Type
     ) async throws -> [T] {
         try await self.defaultSession.execute(
@@ -466,116 +318,165 @@ public final class CassandraClient: CassandraSession, Sendable {
         )
     }
 
-    /// A `EventLoopGroupProvider` defines how the underlying `EventLoopGroup` used to create the `EventLoop` is provided.
-    ///
-    /// When `shared`, the `EventLoopGroup` is provided externally and its lifecycle will be managed by the caller.
-    /// When `createNew`, the library will create a new `EventLoopGroup` and manage its lifecycle.
-    public enum EventLoopGroupProvider: Sendable {
-        case shared(EventLoopGroup)
-        case createNew
-    }
-}
-
-extension CassandraClient {
-    /// Execute a ``Statement`` using the default ``CassandraSession``.
-    ///
-    /// **All** rows are returned, unless the statement sets a page size with
-    /// ``Statement/setPagingSize(_:)``, which limits the result to a single page.
-    ///
-    /// - Parameters:
-    ///   - statement: The ``Statement`` to execute.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///
-    /// - Returns: The resulting ``Rows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func execute(statement: Statement, logger: Logger? = .none) async throws -> Rows {
-        try await self.defaultSession.execute(statement: statement, logger: logger)
-    }
-
-    /// Execute a ``Statement`` using the default ``CassandraSession``.
-    ///
-    /// Resulting rows are paginated.
-    ///
-    /// - Parameters:
-    ///   - statement: The ``Statement`` to execute.
-    ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
-    ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///
-    /// - Returns: The ``PaginatedRows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func execute(
-        statement: sending Statement,
-        pageSize: Int32,
-        logger: Logger? = .none
-    ) async throws
-        -> PaginatedRows
-    {
-        try await self.defaultSession.execute(
-            statement: statement,
-            pageSize: pageSize,
-            logger: logger
-        )
-    }
-
     /// Execute a batch of statements.
     ///
     /// - Parameters:
     ///   - configuration: Options to apply to the batch.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
+    ///   - logger: The `Logger` to use. Defaults to the task-local `Logger.current`.
     ///   - build: Closure that adds statements to the batch.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func batch(
         configuration: Batch.Configuration = .init(),
-        logger: Logger? = .none,
+        logger: Logger = Logger.current,
         _ build: (inout Batch) async throws -> Void
     ) async throws {
         try await self.defaultSession.batch(configuration: configuration, logger: logger, build)
     }
-
-    /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure.
-    ///
-    /// - Parameters:
-    ///   - keyspace: If `nil`, the client's default keyspace is used.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///   - closure: The closure to invoke, passing in the newly created session.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func withSession(
-        keyspace: String?,
-        logger: Logger? = .none,
-        closure: (CassandraSession) async throws -> Void
-    ) async throws {
-        try await self.withSession(keyspace: keyspace, logger: logger, handler: closure)
-    }
-
-    /// Create a new ``CassandraSession`` for the given or configured keyspace then invoke the closure and return its result.
-    ///
-    /// - Parameters:
-    ///   - keyspace: If `nil`, the client's default keyspace is used.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///   - handler: The closure to invoke, passing in the newly created session.
-    ///
-    /// - Returns: The result of the closure.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    public func withSession<T>(
-        keyspace: String?,
-        logger: Logger? = .none,
-        handler: (CassandraSession) async throws -> T
-    ) async throws -> T {
-        let session = self.makeSession(keyspace: keyspace, logger: logger)
-        let result: Result<T, any Swift.Error>
-        do {
-            result = try await .success(handler(session))
-        } catch {
-            result = .failure(error)
-        }
-        do {
-            try await session.shutdownAsync()
-        } catch {
-            self.logger.warning("shutdown error: \(error)")
-        }
-        return try result.get()
-    }
 }
 
-internal typealias EventLoopGroupContainer = (value: EventLoopGroup, managed: Bool)
+// MARK: - Queries
+
+extension CassandraClient {
+    /// Execute insert / update / delete or DDL commands where no result is expected.
+    public func execute(
+        _ command: String,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current
+    ) async throws {
+        try await self.defaultSession.execute(command, parameters: parameters, options: options, logger: logger)
+    }
+
+    @available(*, unavailable, renamed: "execute(_:parameters:options:logger:)")
+    public func run(
+        _ command: String,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current
+    ) async throws {
+        fatalError("unavailable")
+    }
+
+    /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
+    public func query<T>(
+        _ query: String,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current,
+        transform: @escaping (Row) -> T?
+    ) async throws -> [T] {
+        try await self.defaultSession.query(
+            query,
+            parameters: parameters,
+            options: options,
+            logger: logger,
+            transform: transform
+        )
+    }
+
+    /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
+    public func query<T: Decodable>(
+        _ query: String,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current
+    ) async throws -> [T] {
+        try await self.defaultSession.query(query, parameters: parameters, options: options, logger: logger)
+    }
+
+    /// Query small data-sets that fit into memory, decoding each row into `model`.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await cassandraClient.query("select ...", withModelType: Model.self)`.
+    public func query<T: Decodable>(
+        _ query: String,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current,
+        withModelType model: T.Type
+    ) async throws -> [T] {
+        try await self.defaultSession.query(query, parameters: parameters, options: options, logger: logger)
+    }
+
+    /// Query large data-sets where using an interator helps control memory usage.
+    ///
+    /// - Important:
+    ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
+    ///   - Attempting to wrap the ``Rows`` sequence in a list will not work, use the transformer variant instead.
+    public func query(
+        _ query: String,
+        parameters: [Statement.Value] = [],
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current
+    ) async throws -> Rows {
+        try await self.defaultSession.query(query, parameters: parameters, options: options, logger: logger)
+    }
+
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
+    ///
+    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
+    public func query(
+        _ query: String,
+        parameters: sending [Statement.Value] = [],
+        pageSize: Int32,
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current
+    ) async throws -> PaginatedRows {
+        try await self.defaultSession.query(
+            query,
+            parameters: parameters,
+            pageSize: pageSize,
+            options: options,
+            logger: logger
+        )
+    }
+
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`,
+    /// decoding each row into `T` as the sequence is iterated, rather than materializing the whole
+    /// decoded result set as an array.
+    ///
+    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
+    ///
+    /// - Note: Unlike the raw ``query(_:parameters:pageSize:options:logger:)`` sequence, decoded values
+    ///   are independent Swift values and remain valid after the sequence is advanced.
+    public func query<T: Decodable & Sendable>(
+        _ query: String,
+        parameters: sending [Statement.Value] = [],
+        pageSize: Int32,
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current
+    ) async throws -> AsyncThrowingMapSequence<PaginatedRows, T> {
+        try await self.defaultSession.query(
+            query,
+            parameters: parameters,
+            pageSize: pageSize,
+            options: options,
+            logger: logger
+        )
+    }
+
+    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`,
+    /// decoding each row into `model` as the sequence is iterated.
+    ///
+    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
+    /// but spells out the decoded type explicitly at the call site, e.g.
+    /// `try await cassandraClient.query("select ...", pageSize: 100, withModelType: Model.self)`.
+    ///
+    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
+    public func query<T: Decodable & Sendable>(
+        _ query: String,
+        parameters: sending [Statement.Value] = [],
+        pageSize: Int32,
+        options: Statement.Options = .init(),
+        logger: Logger = Logger.current,
+        withModelType model: T.Type
+    ) async throws -> AsyncThrowingMapSequence<PaginatedRows, T> {
+        try await self.defaultSession.query(
+            query,
+            parameters: parameters,
+            pageSize: pageSize,
+            options: options,
+            logger: logger
+        )
+    }
+}

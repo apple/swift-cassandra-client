@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import CDataStaxDriver
-import NIO
 import XCTest
 
 @testable import CassandraClient
@@ -22,9 +21,9 @@ import XCTest
 /// required — the flags are asserted as the bitmask handed to the driver, and building a cluster
 /// opens no connections.
 final class SSLConfigurationTests: XCTestCase {
-    private static let peerCert = Int32(CASS_SSL_VERIFY_PEER_CERT.rawValue)
-    private static let peerIdentity = Int32(CASS_SSL_VERIFY_PEER_IDENTITY.rawValue)
-    private static let peerIdentityDNS = Int32(CASS_SSL_VERIFY_PEER_IDENTITY_DNS.rawValue)
+    private static let peerCertBit = Int32(CASS_SSL_VERIFY_PEER_CERT.rawValue)
+    private static let peerIdentityBit = Int32(CASS_SSL_VERIFY_PEER_IDENTITY.rawValue)
+    private static let peerIdentityDNSBit = Int32(CASS_SSL_VERIFY_PEER_IDENTITY_DNS.rawValue)
 
     private func makeConfiguration() -> CassandraClient.Configuration {
         CassandraClient.Configuration(
@@ -39,7 +38,7 @@ final class SSLConfigurationTests: XCTestCase {
     /// The default verifies the peer's identity, so a certificate that merely chains to a trusted
     /// issuer is not accepted for an address it does not name.
     func testDefaultVerifiesPeerIdentity() {
-        XCTAssertEqual(CassandraClient.Configuration.SSL().verifyFlag, .peerIdentity)
+        XCTAssertEqual(CassandraClient.Configuration.SSL().certificateVerification, .ipAddressVerification)
     }
 
     // MARK: - Flag mapping
@@ -49,54 +48,54 @@ final class SSLConfigurationTests: XCTestCase {
         XCTAssertEqual(self.flags(for: .none), Int32(CASS_SSL_VERIFY_NONE.rawValue))
     }
 
-    /// `.peerCert` validates the chain and nothing else.
+    /// `.noHostnameVerification` validates the chain and nothing else.
     func testPeerCertMapsToChainValidationOnly() {
-        XCTAssertEqual(self.flags(for: .peerCert), Self.peerCert)
+        XCTAssertEqual(self.flags(for: .noHostnameVerification), Self.peerCertBit)
     }
 
-    /// `.peerIdentity` requests the IP subject match *and* chain validation. The driver gates
+    /// `.ipAddressVerification` requests the IP subject match *and* chain validation. The driver gates
     /// `SSL_get_verify_result` on the peer-cert bit, so omitting it would match the subject of a
     /// certificate whose chain was never validated.
     func testPeerIdentityAlsoRequestsChainValidation() {
-        let flags = self.flags(for: .peerIdentity)
-        XCTAssertEqual(flags, Self.peerCert | Self.peerIdentity)
+        let flags = self.flags(for: .ipAddressVerification)
+        XCTAssertEqual(flags, Self.peerCertBit | Self.peerIdentityBit)
     }
 
-    /// `.peerIdentityDNS` requests the hostname subject match *and* chain validation, for the same
+    /// `.fullVerification` requests the hostname subject match *and* chain validation, for the same
     /// reason as ``testPeerIdentityAlsoRequestsChainValidation``.
     func testPeerIdentityDNSAlsoRequestsChainValidation() {
-        let flags = self.flags(for: .peerIdentityDNS)
-        XCTAssertEqual(flags, Self.peerCert | Self.peerIdentityDNS)
+        let flags = self.flags(for: .fullVerification)
+        XCTAssertEqual(flags, Self.peerCertBit | Self.peerIdentityDNSBit)
     }
 
     /// The mask actually reaches the context the driver is handed. Asserting ``cassVerifyFlags`` alone
     /// would stay green if `makeSSLContext()` stopped applying it.
     func testMakeSSLContextAppliesTheMask() throws {
-        for verifyFlag in CassandraClient.Configuration.SSL.VerifyFlag.allCases {
-            let sslContext = try self.makeSSL(verifyFlag: verifyFlag).makeSSLContext()
+        for verification in CassandraClient.Configuration.SSL.CertificateVerification.allCases {
+            let sslContext = try self.makeSSL(verification: verification).makeSSLContext()
             XCTAssertEqual(
                 sslContext.verifyFlags,
-                self.flags(for: verifyFlag),
-                "verifyFlag: \(verifyFlag)"
+                self.flags(for: verification),
+                "verification: \(verification)"
             )
         }
     }
 
     // MARK: - Hostname resolution requirement
 
-    /// `.peerIdentityDNS` without hostname resolution is rejected up front rather than failing every
+    /// `.fullVerification` without hostname resolution is rejected up front rather than failing every
     /// handshake against an unresolved hostname.
-    func testPeerIdentityDNSRequiresHostnameResolution() {
-        for hostnameResolution in [nil, false] as [Bool?] {
+    func testPeerIdentityDNSRequiresHostnameResolution() async {
+        for hostnameResolution in [false] {
             var configuration = self.makeConfiguration()
-            configuration.ssl = self.makeSSL(verifyFlag: .peerIdentityDNS)
+            configuration.ssl = self.makeSSL(verification: .fullVerification)
             configuration.hostnameResolution = hostnameResolution
 
-            XCTAssertThrowsError(try self.makeCluster(configuration)) { error in
+            await assertThrowsErrorAsync(try await self.makeCluster(configuration)) { error in
                 XCTAssertEqual(
                     error as? CassandraClient.Error,
                     .badParams(
-                        "SSL verifyFlag .peerIdentityDNS requires hostnameResolution to be true"
+                        "SSL certificateVerification .fullVerification requires hostnameResolution to be true"
                     ),
                     "hostnameResolution: \(String(describing: hostnameResolution))"
                 )
@@ -105,38 +104,42 @@ final class SSLConfigurationTests: XCTestCase {
     }
 
     /// With hostname resolution enabled the driver has a hostname to match, so the pairing is allowed.
-    func testPeerIdentityDNSWithHostnameResolutionIsAccepted() {
+    func testPeerIdentityDNSWithHostnameResolutionIsAccepted() async throws {
         var configuration = self.makeConfiguration()
-        configuration.ssl = self.makeSSL(verifyFlag: .peerIdentityDNS)
+        configuration.ssl = self.makeSSL(verification: .fullVerification)
         configuration.hostnameResolution = true
 
-        XCTAssertNoThrow(try self.makeCluster(configuration))
+        try await self.makeCluster(configuration)
     }
 
     /// The requirement is specific to DNS matching; the other options resolve no hostname and so are
-    /// accepted whether hostname resolution is unset or explicitly off.
-    func testOtherVerifyFlagsDoNotRequireHostnameResolution() {
-        for verifyFlag in CassandraClient.Configuration.SSL.VerifyFlag.allCases where verifyFlag != .peerIdentityDNS {
-            for hostnameResolution in [nil, false] as [Bool?] {
+    /// accepted with hostname resolution off.
+    func testOtherCertificateVerificationsDoNotRequireHostnameResolution() async {
+        for verification in CassandraClient.Configuration.SSL.CertificateVerification.allCases
+        where verification != .fullVerification {
+            for hostnameResolution in [false] {
                 var configuration = self.makeConfiguration()
-                configuration.ssl = self.makeSSL(verifyFlag: verifyFlag)
+                configuration.ssl = self.makeSSL(verification: verification)
                 configuration.hostnameResolution = hostnameResolution
 
-                XCTAssertNoThrow(
-                    try self.makeCluster(configuration),
-                    "verifyFlag: \(verifyFlag), "
-                        + "hostnameResolution: \(String(describing: hostnameResolution))"
-                )
+                do {
+                    try await self.makeCluster(configuration)
+                } catch {
+                    XCTFail(
+                        "verification: \(verification), "
+                            + "hostnameResolution: \(String(describing: hostnameResolution)): \(error)"
+                    )
+                }
             }
         }
     }
 
     /// A configuration with no SSL at all is unaffected by the requirement.
-    func testNoSSLIsUnaffected() {
+    func testNoSSLIsUnaffected() async throws {
         var configuration = self.makeConfiguration()
         configuration.hostnameResolution = false
 
-        XCTAssertNoThrow(try self.makeCluster(configuration))
+        try await self.makeCluster(configuration)
     }
 
     // MARK: - Insecure-configuration warning
@@ -144,16 +147,18 @@ final class SSLConfigurationTests: XCTestCase {
     /// Exactly the options that verify no identity are warned about. Asserted as a partition over
     /// `allCases` rather than two hardcoded lists, so a new case is covered without being named here.
     func testWarningCoversExactlyTheFlagsThatVerifyNoIdentity() {
-        let expectedToWarn: [CassandraClient.Configuration.SSL.VerifyFlag] = [.none, .peerCert]
+        let expectedToWarn: [CassandraClient.Configuration.SSL.CertificateVerification] = [
+            .none, .noHostnameVerification,
+        ]
 
-        for verifyFlag in CassandraClient.Configuration.SSL.VerifyFlag.allCases {
+        for verification in CassandraClient.Configuration.SSL.CertificateVerification.allCases {
             var configuration = self.makeConfiguration()
-            configuration.ssl = self.makeSSL(verifyFlag: verifyFlag)
+            configuration.ssl = self.makeSSL(verification: verification)
 
-            if expectedToWarn.contains(verifyFlag) {
-                XCTAssertNotNil(configuration.insecureSSLWarning, "verifyFlag: \(verifyFlag)")
+            if expectedToWarn.contains(verification) {
+                XCTAssertNotNil(configuration.insecureSSLWarning, "verification: \(verification)")
             } else {
-                XCTAssertNil(configuration.insecureSSLWarning, "verifyFlag: \(verifyFlag)")
+                XCTAssertNil(configuration.insecureSSLWarning, "verification: \(verification)")
             }
         }
     }
@@ -169,7 +174,7 @@ final class SSLConfigurationTests: XCTestCase {
     /// Both once rendered as `none`, which is the one line meant to diagnose this.
     func testDescriptionDistinguishesDisabledFromUnverified() {
         var unverified = self.makeConfiguration()
-        unverified.ssl = self.makeSSL(verifyFlag: .none)
+        unverified.ssl = self.makeSSL(verification: .none)
 
         XCTAssertNotEqual(unverified.description, self.makeConfiguration().description)
         XCTAssertTrue(self.makeConfiguration().description.contains("ssl: disabled"))
@@ -179,31 +184,28 @@ final class SSLConfigurationTests: XCTestCase {
     /// can be diagnosed from the existing connect log.
     func testDescriptionCarriesTheVerifyMode() {
         var configuration = self.makeConfiguration()
-        configuration.ssl = self.makeSSL(verifyFlag: .peerIdentityDNS)
+        configuration.ssl = self.makeSSL(verification: .fullVerification)
 
-        XCTAssertTrue(configuration.description.contains("peerIdentityDNS"))
+        XCTAssertTrue(configuration.description.contains("fullVerification"))
     }
 
     // MARK: - Helpers
 
-    private func flags(for verifyFlag: CassandraClient.Configuration.SSL.VerifyFlag) -> Int32 {
-        self.makeSSL(verifyFlag: verifyFlag).cassVerifyFlags
+    private func flags(for verification: CassandraClient.Configuration.SSL.CertificateVerification) -> Int32 {
+        self.makeSSL(verification: verification).cassVerifyFlags
     }
 
     private func makeSSL(
-        verifyFlag: CassandraClient.Configuration.SSL.VerifyFlag
+        verification: CassandraClient.Configuration.SSL.CertificateVerification
     ) -> CassandraClient.Configuration.SSL {
         var ssl = CassandraClient.Configuration.SSL()
-        ssl.verifyFlag = verifyFlag
+        ssl.certificateVerification = verification
         return ssl
     }
 
-    /// Builds the cluster and discards it. `Cluster` is not `Sendable` — the library builds it on the event
-    /// loop for that reason — so the result is dropped there rather than carried back by `wait()`. The tests
-    /// assert on whether building throws; none of them use the cluster.
-    private func makeCluster(_ configuration: CassandraClient.Configuration) throws {
-        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { try? eventLoopGroup.syncShutdownGracefully() }
-        try configuration.makeCluster(on: eventLoopGroup.next()).map { _ in }.wait()
+    /// Builds the cluster and discards it. The tests assert on whether building throws; none of them use
+    /// the cluster.
+    private func makeCluster(_ configuration: CassandraClient.Configuration) async throws {
+        _ = try await configuration.makeCluster()
     }
 }

@@ -13,8 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
-import Logging
-import NIO
 import NIOConcurrencyHelpers
 import XCTest
 
@@ -57,13 +55,13 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
             port: Self.environment["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        configuration.connectTimeoutMillis = 10_000
-        configuration.requestTimeoutMillis = 24_000
+        configuration.connectTimeout = .milliseconds(10_000)
+        configuration.requestTimeout = .milliseconds(24_000)
         return configuration
     }
 
     private func makeClient(_ configuration: CassandraClient.Configuration) -> CassandraClient {
-        CassandraClient(configuration: configuration, logger: Logger(label: "test.custom-auth"))
+        CassandraClient(configuration: configuration)
     }
 
     /// A failed handshake surfaces as `Error.badCredentials`. Compares `shortDescription` since the driver's
@@ -82,7 +80,7 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
     }
 
     /// A valid authenticator connects, `SELECT` returns, and `onSuccess` fired (the success callback).
-    func testAuthenticatorConnectsAndSucceeds() throws {
+    func testAuthenticatorConnectsAndSucceeds() async throws {
         try self.requireAuthEnforcement()
         let authenticator = RecordingPlaintextAuthenticator(
             username: Self.validUsername,
@@ -93,13 +91,13 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         let client = self.makeClient(configuration)
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
-        let rows = try client.query("select release_version from system.local").wait()
+        let rows = try await client.query("select release_version from system.local")
         XCTAssertEqual(Array(rows).count, 1, "system.local returns exactly one row")
         XCTAssertTrue(authenticator.onSuccessFired, "onSuccess must fire once the server reports success")
     }
 
     /// Wrong credentials fail with an auth error rather than stalling or crashing.
-    func testWrongCredentialsFailWithAuthError() throws {
+    func testWrongCredentialsFailWithAuthError() async throws {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = PlaintextAuthenticator(
@@ -109,33 +107,42 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         let client = self.makeClient(configuration)
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
-        XCTAssertThrowsError(try client.query("select release_version from system.local").wait()) { error in
+        await assertThrowsErrorAsync(try await client.query("select release_version from system.local")) { error in
             self.assertAuthFailure(error)
         }
     }
 
-    /// A valid authenticator plus bogus `username`/`password` still connects — the authenticator takes
-    /// precedence over credentials in `makeCluster` (bogus credentials would otherwise fail the connect).
-    func testCustomAuthenticatorTakesPrecedenceOverCredentials() throws {
+    /// The built-in password authenticator connects with valid credentials and is rejected with bogus
+    /// ones. It goes through the driver's native credentials path rather than the SASL callbacks.
+    func testPasswordAuthenticator() async throws {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
-        configuration.authenticator = PlaintextAuthenticator(
+        configuration.authenticator = CassandraClient.PasswordAuthenticator(
             username: Self.validUsername,
             password: Self.validPassword
         )
-        configuration.username = "bogus-\(UUID().uuidString)"
-        configuration.password = "bogus-\(UUID().uuidString)"
         let client = self.makeClient(configuration)
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
-        let rows = try client.query("select release_version from system.local").wait()
+        let rows = try await client.query("select release_version from system.local")
         XCTAssertEqual(Array(rows).count, 1)
+
+        configuration.authenticator = CassandraClient.PasswordAuthenticator(
+            username: "bogus-\(UUID().uuidString)",
+            password: "bogus-\(UUID().uuidString)"
+        )
+        let rejected = self.makeClient(configuration)
+        defer { XCTAssertNoThrow(try rejected.shutdown()) }
+
+        await assertThrowsErrorAsync(try await rejected.query("select release_version from system.local")) { error in
+            self.assertAuthFailure(error)
+        }
     }
 
     /// One shared authenticator instance under concurrent fan-out: all queries succeed and its shared,
     /// lock-protected counters advance (a stateless authenticator would leave them at 0). Exercises the
     /// shared-instance path under load; does not prove race-freedom.
-    func testConcurrentSharedAuthenticator() throws {
+    func testConcurrentSharedAuthenticator() async throws {
         try self.requireAuthEnforcement()
         let authenticator = RecordingPlaintextAuthenticator(
             username: Self.validUsername,
@@ -148,24 +155,24 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
         let iterations = 50
-        let group = DispatchGroup()
-        let results = NIOLockedValueBox<(rowCounts: [Int], errors: [Swift.Error])>(([], []))
-
-        for _ in 0..<iterations {
-            group.enter()
-            DispatchQueue.global().async {
-                defer { group.leave() }
-                do {
-                    let count = Array(try client.query("select release_version from system.local").wait()).count
-                    results.withLockedValue { $0.rowCounts.append(count) }
-                } catch {
-                    results.withLockedValue { $0.errors.append(error) }
+        let outcomes = await withTaskGroup(of: Result<Int, Swift.Error>.self) { group in
+            for _ in 0..<iterations {
+                group.addTask {
+                    do {
+                        return .success(Array(try await client.query("select release_version from system.local")).count)
+                    } catch {
+                        return .failure(error)
+                    }
                 }
             }
+            return await group.reduce(into: []) { $0.append($1) }
         }
-        group.wait()
 
-        let (rowCounts, errors) = results.withLockedValue { ($0.rowCounts, $0.errors) }
+        let rowCounts = outcomes.compactMap { try? $0.get() }
+        let errors = outcomes.compactMap { outcome -> Swift.Error? in
+            if case .failure(let error) = outcome { return error }
+            return nil
+        }
         XCTAssertEqual(errors.count, 0, "concurrent queries through the shared authenticator: \(errors)")
         XCTAssertEqual(rowCounts.count, iterations)
         XCTAssertTrue(rowCounts.allSatisfy { $0 == 1 }, "every query returns exactly one row")
@@ -177,14 +184,14 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
 
     /// An authenticator that throws from `initialResponse()` fails the connect cleanly (the trampoline's
     /// `do/catch` → `set_error_n` path).
-    func testThrowingAuthenticatorFailsConnectCleanly() throws {
+    func testThrowingAuthenticatorFailsConnectCleanly() async throws {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = ThrowingAuthenticator()
         let client = self.makeClient(configuration)
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
-        XCTAssertThrowsError(try client.query("select release_version from system.local").wait()) { error in
+        await assertThrowsErrorAsync(try await client.query("select release_version from system.local")) { error in
             self.assertAuthFailure(error)
         }
     }
@@ -192,17 +199,15 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
     /// The enforcement guard: a no-authenticator, no-credential connect must be rejected. If it connects,
     /// auth is silently off and this fails the build, so the other gated tests can't pass vacuously. This
     /// test is the probe, which is why the suite is gated by an out-of-band flag rather than by probing.
-    func testClusterEnforcesAuthentication() throws {
+    func testClusterEnforcesAuthentication() async throws {
         try self.requireAuthEnforcement()
         var configuration = self.makeConfiguration()
         configuration.authenticator = nil
-        configuration.username = nil
-        configuration.password = nil
         let client = self.makeClient(configuration)
         defer { XCTAssertNoThrow(try client.shutdown()) }
 
-        XCTAssertThrowsError(
-            try client.query("select release_version from system.local").wait(),
+        await assertThrowsErrorAsync(
+            try await client.query("select release_version from system.local"),
             "CASSANDRA_REQUIRE_AUTH is set but the cluster accepted a no-credential connect — auth is not enforced, so the auth tests cannot be trusted"
         ) { error in
             self.assertAuthFailure(error)
@@ -211,10 +216,10 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
 
     /// After a connect/query/close, the retained authenticator box is released — its `deinit` runs — showing
     /// the driver's data-cleanup fired on teardown. Proves release on normal teardown only.
-    func testBoxReleasedOnSessionTeardown() throws {
+    func testBoxReleasedOnSessionTeardown() async throws {
         let deinitCounter = NIOLockedValueBox<Int>(0)
 
-        func connectQueryAndShutdown() throws {
+        func connectQueryAndShutdown() async throws {
             let authenticator = DeinitCountingAuthenticator(
                 username: Self.validUsername,
                 password: Self.validPassword,
@@ -223,16 +228,22 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
             var configuration = self.makeConfiguration()
             configuration.authenticator = authenticator
             let client = self.makeClient(configuration)
-            defer { try? client.shutdown() }
-            let rows = try client.query("select release_version from system.local").wait()
-            XCTAssertEqual(Array(rows).count, 1)
+            let rowCount: Int
+            do {
+                rowCount = Array(try await client.query("select release_version from system.local")).count
+            } catch {
+                try? await client.shutdownAsync()
+                throw error
+            }
+            try? await client.shutdownAsync()
+            XCTAssertEqual(rowCount, 1)
         }
-        try connectQueryAndShutdown()
+        try await connectQueryAndShutdown()
 
         // The data-cleanup trampoline may run on a driver thread during teardown, so poll briefly.
         let deadline = Date().addingTimeInterval(5)
         while deinitCounter.withLockedValue({ $0 }) == 0, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
+            try await Task.sleep(for: .milliseconds(50))
         }
         XCTAssertEqual(
             deinitCounter.withLockedValue { $0 },
