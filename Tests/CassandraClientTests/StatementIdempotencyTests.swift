@@ -27,19 +27,16 @@ import XCTest
 /// - Note: Imported without `@testable` (unlike the rest of the suite) so that the file stops
 ///   compiling if the option loses its `public` access level.
 final class StatementIdempotencyTests: XCTestCase {
-    /// Unset by default, so the driver keeps treating statements as non-idempotent. Anything else
+    /// `false` by default, so the driver keeps treating statements as non-idempotent. Anything else
     /// would silently make every existing caller's writes replayable.
-    func testDefaultsToUnset() {
-        XCTAssertNil(CassandraClient.Statement.Options().isIdempotent)
-        XCTAssertNil(CassandraClient.Statement.Options(consistency: .quorum).isIdempotent)
-        XCTAssertNil(
-            CassandraClient.Statement.Options(consistency: .quorum, requestTimeout: 1000).isIdempotent
+    func testDefaultsToFalse() {
+        XCTAssertFalse(CassandraClient.Statement.Options().isIdempotent)
+        XCTAssertFalse(CassandraClient.Statement.Options(consistency: .quorum).isIdempotent)
+        XCTAssertFalse(
+            CassandraClient.Statement.Options(consistency: .quorum, requestTimeout: .seconds(1)).isIdempotent
         )
     }
 
-    /// `nil` and `false` are distinct inputs that reach the driver differently (one leaves the
-    /// default in place, the other sets it), so the option keeps them apart instead of collapsing
-    /// to a plain `Bool`.
     func testCarriesEachSetting() {
         for setting in [true, false] {
             var options = CassandraClient.Statement.Options()
@@ -51,12 +48,12 @@ final class StatementIdempotencyTests: XCTestCase {
     func testInitializerAcceptsIdempotency() {
         let options = CassandraClient.Statement.Options(
             consistency: .quorum,
-            requestTimeout: 1000,
+            requestTimeout: .seconds(1),
             isIdempotent: true
         )
-        XCTAssertEqual(options.isIdempotent, true)
+        XCTAssertTrue(options.isIdempotent)
         XCTAssertEqual(options.consistency, .quorum)
-        XCTAssertEqual(options.requestTimeout, 1000)
+        XCTAssertEqual(options.requestTimeout, .seconds(1))
     }
 
     /// `Options` is printed when a query is logged or traced, and a replayable statement is worth

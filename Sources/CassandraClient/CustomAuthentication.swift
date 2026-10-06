@@ -15,13 +15,12 @@
 internal import CDataStaxDriver
 
 extension CassandraClient {
-    /// A custom SASL authenticator, for mechanisms beyond username/password (e.g. AWS SigV4 for
-    /// Amazon Keyspaces, or Kerberos).
+    /// A SASL authenticator. Use ``PasswordAuthenticator`` for username and password; conform a custom
+    /// type for other mechanisms (e.g. AWS SigV4 for Amazon Keyspaces, or Kerberos).
     ///
     /// The client drives a SASL (Simple Authentication and Security Layer) handshake: it produces an
     /// initial response, answers any server challenges, then observes success. Set an instance on
-    /// ``Configuration/authenticator`` to use it; when set, it takes precedence over
-    /// ``Configuration/username``/``Configuration/password``.
+    /// ``Configuration/authenticator`` to use it.
     ///
     /// Tokens are opaque bytes. Returned responses are `[UInt8]?` where `nil` sends an empty response;
     /// received challenge/success tokens are always a (possibly empty) `[UInt8]`.
@@ -53,8 +52,46 @@ extension CassandraClient {
         /// the client has nothing further to send.
         func evaluateChallenge(_ challenge: [UInt8]) throws -> [UInt8]?
 
-        /// Called once the server reports success, with any final token it sent (always present, may be empty).
+        /// Check the final token the server sends when it accepts authentication (always present, may be empty).
+        /// Throw to reject it, which fails the connection. Mechanisms with nothing to check can rely on the
+        /// default, which does nothing.
         func onSuccess(_ token: [UInt8]) throws
+    }
+
+    /// Username and password authentication, the mechanism Cassandra's `PasswordAuthenticator` accepts.
+    ///
+    /// Set an instance on ``Configuration/authenticator``. The client hands the credentials to the
+    /// driver's built-in implementation rather than driving the handshake through this type's methods.
+    public struct PasswordAuthenticator: Authenticator {
+        /// The username to authenticate as.
+        public var username: String
+        /// The password for ``username``.
+        public var password: String
+
+        public init(username: String, password: String) {
+            self.username = username
+            self.password = password
+        }
+
+        /// The SASL PLAIN response: an empty authorization identity, then the username and password, each
+        /// preceded by a zero byte.
+        public func initialResponse() throws -> [UInt8]? {
+            [0x00] + Array(self.username.utf8) + [0x00] + Array(self.password.utf8)
+        }
+    }
+}
+
+// Redact the password from every string form, as `Encrypted<T>` does for its plaintext. Without this,
+// default reflection prints it through any interpolation, `dump(_:)` or `Mirror` of the authenticator.
+extension CassandraClient.PasswordAuthenticator: CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable
+{
+    public var description: String {
+        "\(CassandraClient.PasswordAuthenticator.self)(username: \(self.username), password: <redacted>)"
+    }
+    public var debugDescription: String { self.description }
+    public var customMirror: Mirror {
+        Mirror(self, children: ["username": self.username, "password": "<redacted>"])
     }
 }
 

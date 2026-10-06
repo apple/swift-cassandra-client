@@ -21,7 +21,6 @@ import Testing
 @testable import CassandraClient
 
 struct SwiftConfigurationTests {
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     private func makeConfiguration(
         _ values: [AbsoluteConfigKey: ConfigValue]
     ) throws -> CassandraClient.Configuration {
@@ -32,7 +31,6 @@ struct SwiftConfigurationTests {
     }
 
     /// A configuration with only the required keys set, for tests that add one key at a time.
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     private func makeConfiguration(
         adding values: [AbsoluteConfigKey: ConfigValue]
     ) throws -> CassandraClient.Configuration {
@@ -44,7 +42,6 @@ struct SwiftConfigurationTests {
     }
 
     /// As ``makeConfiguration(adding:)``, but captures what the initializer logs.
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     private func makeConfigurationCapturingLogs(
         adding values: [AbsoluteConfigKey: ConfigValue]
     ) throws -> (CassandraClient.Configuration, TestLogCapture) {
@@ -62,7 +59,6 @@ struct SwiftConfigurationTests {
 
     /// Resolves the contact points the configuration was built with. The provider synthesised from
     /// configuration is synchronous, so the result is available as soon as it returns.
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     private func contactPoints(of configuration: CassandraClient.Configuration) throws -> [String] {
         let result = NIOLockedValueBox<Result<CassandraClient.Configuration.ContactPoints, Swift.Error>?>(nil)
         configuration.contactPointsProvider { outcome in
@@ -72,7 +68,6 @@ struct SwiftConfigurationTests {
     }
 
     /// As ``makeConfiguration(_:)``, but with the contact points supplied in code.
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     private func makeConfiguration(
         _ values: [AbsoluteConfigKey: ConfigValue],
         contactPointsProvider:
@@ -88,7 +83,6 @@ struct SwiftConfigurationTests {
     }
 
     /// As ``makeConfiguration(_:contactPointsProvider:)``, but captures what the initializer logs.
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     private func makeConfigurationCapturingLogs(
         _ values: [AbsoluteConfigKey: ConfigValue],
         contactPointsProvider:
@@ -106,7 +100,6 @@ struct SwiftConfigurationTests {
     }
 
     /// A provider that yields a fixed set of contact points
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     private static func staticProvider(
         _ contactPoints: CassandraClient.Configuration.ContactPoints
     )
@@ -119,7 +112,6 @@ struct SwiftConfigurationTests {
     private struct DiscoveryFailure: Swift.Error {}
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func allPropertiesAreSetFromConfig() throws {
         let config = try self.makeConfiguration([
             "contactPoints": .init(.stringArray(["localhost", "192.168.1.1"]), isSecret: false),
@@ -138,16 +130,16 @@ struct SwiftConfigurationTests {
             "logBoundValues": true,
 
             "coreConnectionsPerHost": 2,
-            "tcpNodelay": true,
+            "tcpNodelay": false,
             "tcpKeepalive": true,
             "tcpKeepaliveDelaySeconds": 30,
-            "connectionHeartbeatInterval": 45,
-            "connectionIdleTimeout": 120,
+            "connectionHeartbeatIntervalSeconds": 45,
+            "connectionIdleTimeoutSeconds": 120,
 
-            "schema": true,
+            "isSchemaMetadataEnabled": false,
             "hostnameResolution": true,
-            "randomizedContactPoints": true,
-            "compact": true,
+            "randomizedContactPoints": false,
+            "isNoCompactEnabled": true,
 
             "consistency": "localQuorum",
             "serialConsistency": "localSerial",
@@ -159,7 +151,7 @@ struct SwiftConfigurationTests {
 
             "ssl.enabled": true,
             "ssl.trustedCertificates": .init(.stringArray(["cert-one", "cert-two"]), isSecret: false),
-            "ssl.verifyFlag": "peerIdentityDNS",
+            "ssl.certificateVerification": "fullVerification",
             "ssl.cert": "client-cert",
             "ssl.privateKey": "client-key",
             "ssl.privateKeyPassword": "key-password",
@@ -175,87 +167,86 @@ struct SwiftConfigurationTests {
         #expect(try self.contactPoints(of: config) == ["localhost", "192.168.1.1"])
         #expect(config.port == 9043)
         #expect(config.protocolVersion == .v3)
-        #expect(config.username == "cassandra")
-        #expect(config.password == "secret")
+        let authenticator = try #require(config.authenticator as? CassandraClient.PasswordAuthenticator)
+        #expect(authenticator.username == "cassandra")
+        #expect(authenticator.password == "secret")
         #expect(config.keyspace == "test")
 
         #expect(config.numIOThreads == 4)
-        #expect(config.connectTimeoutMillis == 5000)
-        #expect(config.requestTimeoutMillis == 30000)
-        #expect(config.resolveTimeoutMillis == 2000)
+        #expect(config.connectTimeout == .milliseconds(5000))
+        #expect(config.requestTimeout == .milliseconds(30000))
+        #expect(config.resolveTimeout == .milliseconds(2000))
 
-        #expect(config.slowQueryThresholdMillis == 250)
+        #expect(config.slowQueryThreshold == .milliseconds(250))
         #expect(config.logBoundValues)
 
         #expect(config.coreConnectionsPerHost == 2)
-        #expect(config.tcpNodelay == true)
-        #expect(config.tcpKeepalive == true)
-        #expect(config.tcpKeepaliveDelaySeconds == 30)
-        #expect(config.connectionHeartbeatInterval == 45)
-        #expect(config.connectionIdleTimeout == 120)
+        #expect(!config.tcpNodelay)
+        #expect(config.tcpKeepalive)
+        #expect(config.tcpKeepaliveDelay == .seconds(30))
+        #expect(config.connectionHeartbeatInterval == .seconds(45))
+        #expect(config.connectionIdleTimeout == .seconds(120))
 
-        #expect(config.schema == true)
-        #expect(config.hostnameResolution == true)
-        #expect(config.randomizedContactPoints == true)
-        #expect(config.compact == true)
+        #expect(!config.isSchemaMetadataEnabled)
+        #expect(config.hostnameResolution)
+        #expect(!config.randomizedContactPoints)
+        #expect(config.isNoCompactEnabled)
 
         #expect(config.consistency == .localQuorum)
         #expect(config.serialConsistency == .localSerial)
         #expect(config.prepareStrategy == .allHosts)
 
         #expect(config.metricsEnabled)
-        #expect(config.metricsPollIntervalMillis == 5000)
+        #expect(config.metricsPollInterval == .milliseconds(5000))
         #expect(config.metricsSessionName == "primary")
 
         let ssl = try #require(config.ssl)
         #expect(ssl.trustedCertificates == ["cert-one", "cert-two"])
-        #expect(ssl.verifyFlag == .peerIdentityDNS)
+        #expect(ssl.certificateVerification == .fullVerification)
         #expect(ssl.cert == "client-cert")
         #expect(ssl.privateKey?.key == "client-key")
         #expect(ssl.privateKey?.password == "key-password")
 
         #expect(config.loadBalancingStrategy == .dataCenterAware(.init(localDataCenter: "dc1")))
-        #expect(config.speculativeExecutionPolicy == .constant(delayInMillseconds: 100, maxExecutions: 3))
+        #expect(config.speculativeExecutionPolicy == .constant(delay: .milliseconds(100), maxExecutions: 3))
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func defaultsAreUsedWhenOnlyContactPointsAreSet() throws {
         let config = try self.makeConfiguration(adding: [:])
 
         #expect(try self.contactPoints(of: config) == ["localhost"])
         #expect(config.port == 9042)
         #expect(config.protocolVersion == .v4)
-        #expect(config.username == nil)
-        #expect(config.password == nil)
+        #expect(config.authenticator == nil)
         #expect(config.keyspace == nil)
 
         #expect(config.numIOThreads == nil)
-        #expect(config.connectTimeoutMillis == nil)
-        #expect(config.requestTimeoutMillis == nil)
-        #expect(config.resolveTimeoutMillis == nil)
+        #expect(config.connectTimeout == nil)
+        #expect(config.requestTimeout == nil)
+        #expect(config.resolveTimeout == nil)
 
-        #expect(config.slowQueryThresholdMillis == nil)
+        #expect(config.slowQueryThreshold == nil)
         #expect(!config.logBoundValues)
 
         #expect(config.coreConnectionsPerHost == nil)
-        #expect(config.tcpNodelay == nil)
-        #expect(config.tcpKeepalive == nil)
-        #expect(config.tcpKeepaliveDelaySeconds == 0)
+        #expect(config.tcpNodelay)
+        #expect(!config.tcpKeepalive)
+        #expect(config.tcpKeepaliveDelay == .zero)
         #expect(config.connectionHeartbeatInterval == nil)
         #expect(config.connectionIdleTimeout == nil)
 
-        #expect(config.schema == nil)
-        #expect(config.hostnameResolution == nil)
-        #expect(config.randomizedContactPoints == nil)
-        #expect(config.compact == nil)
+        #expect(config.isSchemaMetadataEnabled)
+        #expect(!config.hostnameResolution)
+        #expect(config.randomizedContactPoints)
+        #expect(!config.isNoCompactEnabled)
 
         #expect(config.consistency == nil)
         #expect(config.serialConsistency == nil)
         #expect(config.prepareStrategy == nil)
 
         #expect(!config.metricsEnabled)
-        #expect(config.metricsPollIntervalMillis == 10000)
+        #expect(config.metricsPollInterval == .seconds(10))
         #expect(config.metricsSessionName == nil)
 
         #expect(config.ssl == nil)
@@ -266,7 +257,6 @@ struct SwiftConfigurationTests {
     // MARK: - Contact points
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func contactPointsAreRereadOnEachClusterCreation() throws {
         let provider = MutableInMemoryProvider(
             initialValues: ["contactPoints": .init(.stringArray(["seed-one"]), isSecret: false)]
@@ -285,7 +275,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func contactPointsRereadFailureIsSurfacedToTheCallback() throws {
         let provider = MutableInMemoryProvider(
             initialValues: ["contactPoints": .init(.stringArray(["seed-one"]), isSecret: false)]
@@ -312,7 +301,6 @@ struct SwiftConfigurationTests {
             .init(.stringArray(["\t"]), isSecret: false),
         ] as [ConfigValue?]
     )
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func invalidContactPointsAreRejected(contactPoints: ConfigValue?) {
         var values: [AbsoluteConfigKey: ConfigValue] = [:]
         if let contactPoints {
@@ -326,7 +314,6 @@ struct SwiftConfigurationTests {
     // MARK: - Contact points supplied in code
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func contactPointsProviderSuppliesTheContactPoints() throws {
         let (config, logs) = try self.makeConfigurationCapturingLogs(
             [:],
@@ -337,7 +324,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func contactPointsProviderFailureIsSurfacedToTheCallback() throws {
         // Discovery failing is the normal transient state for a provider supplied in code, so the error must
         // reach the caller rather than be swallowed into an empty contact point list.
@@ -351,7 +337,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func otherPropertiesAreStillReadWhenContactPointsAreSuppliedInCode() throws {
         let config = try self.makeConfiguration(
             [
@@ -360,7 +345,7 @@ struct SwiftConfigurationTests {
                 "keyspace": "test",
                 "consistency": "localQuorum",
                 "ssl.enabled": true,
-                "ssl.verifyFlag": "peerCert",
+                "ssl.certificateVerification": "noHostnameVerification",
                 "loadBalancingStrategy.strategy": "dataCenterAware",
                 "loadBalancingStrategy.localDataCenter": "dc1",
             ],
@@ -371,12 +356,11 @@ struct SwiftConfigurationTests {
         #expect(config.protocolVersion == .v3)
         #expect(config.keyspace == "test")
         #expect(config.consistency == .localQuorum)
-        #expect(config.ssl?.verifyFlag == .peerCert)
+        #expect(config.ssl?.certificateVerification == .noHostnameVerification)
         #expect(config.loadBalancingStrategy == .dataCenterAware(.init(localDataCenter: "dc1")))
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func configuredContactPointsAreIgnoredAndWarnedAboutWhenSuppliedInCode() throws {
         let (config, logs) = try self.makeConfigurationCapturingLogs(
             ["contactPoints": .init(.stringArray(["from-config"]), isSecret: false)],
@@ -394,14 +378,12 @@ struct SwiftConfigurationTests {
     // MARK: - Port and protocol version
 
     @Test(arguments: [1, 65535])
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func portBoundsAreAccepted(port: Int) throws {
         let config = try self.makeConfiguration(adding: ["port": .init(.int(port), isSecret: false)])
         #expect(config.port == Int32(port))
     }
 
     @Test(arguments: [0, -1, 65536, Int.max])
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func outOfRangePortThrows(port: Int) {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(adding: ["port": .init(.int(port), isSecret: false)])
@@ -409,7 +391,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test(arguments: [0, -1, 6, Int.max])
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func invalidProtocolVersionThrows(version: Int) {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(adding: ["protocolVersion": .init(.int(version), isSecret: false)])
@@ -417,7 +398,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test(arguments: [1, 2, 5])
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func protocolVersionTheDriverDoesNotSupportThrows(version: Int) {
         // These are all ProtocolVersion cases, but the driver rejects them, so they are caught here
         // rather than at connect time.
@@ -427,7 +407,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test(arguments: [3, 4])
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func supportedProtocolVersionsAreAccepted(version: Int) throws {
         let config = try self.makeConfiguration(
             adding: ["protocolVersion": .init(.int(version), isSecret: false)]
@@ -436,10 +415,38 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func outOfRangeUInt32Throws() {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(adding: ["connectTimeoutMillis": -1])
+        }
+    }
+
+    // MARK: - Replaced keys
+
+    /// A key replaced before 1.0 throws, naming its replacement, rather than being read as unset — an old
+    /// `compact` value would otherwise silently mean the opposite under `isNoCompactEnabled`.
+    @Test(
+        arguments: [
+            ("schema", .init(.bool(true), isSecret: false), "isSchemaMetadataEnabled"),
+            ("compact", .init(.bool(true), isSecret: false), "isNoCompactEnabled"),
+            ("connectionHeartbeatInterval", .init(.int(45), isSecret: false), "connectionHeartbeatIntervalSeconds"),
+            ("connectionIdleTimeout", .init(.int(120), isSecret: false), "connectionIdleTimeoutSeconds"),
+            ("ssl.verifyFlag", .init(.string("peerCert"), isSecret: false), "certificateVerification"),
+        ] as [(AbsoluteConfigKey, ConfigValue, String)]
+    )
+    func replacedKeyThrows(key: AbsoluteConfigKey, value: ConfigValue, replacement: String) throws {
+        let error = #expect(throws: CassandraClient.ConfigurationError.self) {
+            try self.makeConfiguration(adding: [key: value])
+        }
+        #expect(try #require(error).message.contains(replacement))
+    }
+
+    // MARK: - Credentials
+
+    @Test(arguments: ["username", "password"] as [AbsoluteConfigKey])
+    func credentialWithoutItsPairThrows(key: AbsoluteConfigKey) {
+        #expect(throws: CassandraClient.ConfigurationError.self) {
+            try self.makeConfiguration(adding: [key: "value"])
         }
     }
 
@@ -450,13 +457,12 @@ struct SwiftConfigurationTests {
             "consistency",
             "serialConsistency",
             "prepareStrategy",
-            "ssl.verifyFlag",
+            "ssl.certificateVerification",
         ] as [AbsoluteConfigKey]
     )
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func unrecognizedEnumeratedValueThrows(key: AbsoluteConfigKey) throws {
         let error = #expect(throws: CassandraClient.ConfigurationError.self) {
-            // 'ssl.enabled' so that the SSL scope, and with it 'ssl.verifyFlag', is read at all.
+            // 'ssl.enabled' so that the SSL scope, and with it 'ssl.certificateVerification', is read at all.
             try self.makeConfiguration(adding: ["ssl.enabled": true, key: "notAValidValue"])
         }
         // The offending key is named, so which of several enumerated keys was wrong is unambiguous.
@@ -467,7 +473,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func serialConsistencyRejectsANonSerialLevel() {
         // "quorum" is a valid 'consistency' but not a valid 'serialConsistency'.
         #expect(throws: CassandraClient.ConfigurationError.self) {
@@ -478,25 +483,22 @@ struct SwiftConfigurationTests {
     // MARK: - SSL
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func sslIsIgnoredWhenNotEnabled() throws {
         let config = try self.makeConfiguration(adding: ["ssl.cert": "client-cert"])
         #expect(config.ssl == nil)
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func sslDefaults() throws {
         let config = try self.makeConfiguration(adding: ["ssl.enabled": true])
         let ssl = try #require(config.ssl)
         #expect(ssl.trustedCertificates == nil)
-        #expect(ssl.verifyFlag == .peerIdentity)
+        #expect(ssl.certificateVerification == .ipAddressVerification)
         #expect(ssl.cert == nil)
         #expect(ssl.privateKey == nil)
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func sslPrivateKeyWithoutPasswordThrows() {
         #expect(throws: (any Error).self) {
             try self.makeConfiguration(adding: ["ssl.enabled": true, "ssl.privateKey": "client-key"])
@@ -504,11 +506,10 @@ struct SwiftConfigurationTests {
     }
 
     @Test(arguments: [nil, false] as [Bool?])
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func sslPropertiesSetWhileDisabledWarns(enabled: Bool?) throws {
         var values: [AbsoluteConfigKey: ConfigValue] = [
             "ssl.trustedCertificates": .init(.stringArray(["cert-one"]), isSecret: false),
-            "ssl.verifyFlag": "peerIdentityDNS",
+            "ssl.certificateVerification": "fullVerification",
             "ssl.cert": "client-cert",
             "ssl.privateKey": .init(.string("client-key"), isSecret: true),
             "ssl.privateKeyPassword": .init(.string("key-password"), isSecret: true),
@@ -523,12 +524,11 @@ struct SwiftConfigurationTests {
         #expect(logs.all.filter { $0.level == .warning }.count == 1)
         #expect(
             warning.metadata[CassandraClient.ConfigurationLogKey.ignoredKeys]?.description
-                == "ssl.trustedCertificates, ssl.verifyFlag, ssl.cert, ssl.privateKey, ssl.privateKeyPassword"
+                == "ssl.trustedCertificates, ssl.certificateVerification, ssl.cert, ssl.privateKey, ssl.privateKeyPassword"
         )
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func sslDisabledWithNoSSLPropertiesDoesNotWarn() throws {
         let (config, logs) = try self.makeConfigurationCapturingLogs(adding: ["ssl.enabled": false])
         #expect(config.ssl == nil)
@@ -537,7 +537,6 @@ struct SwiftConfigurationTests {
 
     // MARK: - Load balancing
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func loadBalancingRoundRobinWithLocalDataCenterThrows() {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(
@@ -550,14 +549,12 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func loadBalancingDataCenterAwareWithoutLocalDataCenter() throws {
         let config = try self.makeConfiguration(adding: ["loadBalancingStrategy.strategy": "dataCenterAware"])
         #expect(config.loadBalancingStrategy == .dataCenterAware(.init()))
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func invalidLoadBalancingStrategyThrows() {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(adding: ["loadBalancingStrategy.strategy": "closestHost"])
@@ -567,7 +564,6 @@ struct SwiftConfigurationTests {
     // MARK: - Speculative execution
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func speculativeExecutionConstantMissingKeysThrows() {
         #expect(throws: (any Error).self) {
             try self.makeConfiguration(adding: ["speculativeExecutionPolicy.policy": "constant"])
@@ -575,7 +571,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func speculativeExecutionConstantZeroIsAccepted() throws {
         let config = try self.makeConfiguration(
             adding: [
@@ -584,11 +579,10 @@ struct SwiftConfigurationTests {
                 "speculativeExecutionPolicy.maxExecutions": 0,
             ]
         )
-        #expect(config.speculativeExecutionPolicy == .constant(delayInMillseconds: 0, maxExecutions: 0))
+        #expect(config.speculativeExecutionPolicy == .constant(delay: .milliseconds(0), maxExecutions: 0))
     }
 
     @Test(arguments: [(-1, 3), (100, -1), (-1, -1)])
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func negativeSpeculativeExecutionValuesThrow(delay: Int, maxExecutions: Int) {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(
@@ -602,7 +596,6 @@ struct SwiftConfigurationTests {
     }
 
     @Test
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
     func invalidSpeculativeExecutionPolicyThrows() {
         #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(adding: ["speculativeExecutionPolicy.policy": "exponential"])
