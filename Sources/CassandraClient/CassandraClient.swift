@@ -528,7 +528,7 @@ extension CassandraClient {
     public func batch(
         configuration: Batch.Configuration = .init(),
         logger: Logger? = .none,
-        _ build: (inout Batch) async throws -> Void
+        _ build: sending (inout Batch) async throws -> Void
     ) async throws {
         try await self.defaultSession.batch(configuration: configuration, logger: logger, build)
     }
