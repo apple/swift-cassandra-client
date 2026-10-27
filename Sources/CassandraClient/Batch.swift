@@ -16,18 +16,6 @@ internal import CDataStaxDriver
 import Foundation
 
 extension CassandraClient {
-    /// The type of a batch operation.
-    public struct BatchType: Sendable, Hashable {
-        let rawValue: CassBatchType
-
-        /// All statements are applied atomically with a write to the batch log.
-        public static let logged = BatchType(rawValue: CASS_BATCH_TYPE_LOGGED)
-        /// Statements are applied without atomicity guarantees.
-        public static let unlogged = BatchType(rawValue: CASS_BATCH_TYPE_UNLOGGED)
-        /// All statements must be counter updates.
-        public static let counter = BatchType(rawValue: CASS_BATCH_TYPE_COUNTER)
-    }
-
     /// A batch of statements to execute in Cassandra.
     ///
     /// Not `Sendable`: a `Batch` must not be used concurrently, and `~Copyable` enforces single
@@ -40,7 +28,7 @@ extension CassandraClient {
             configuration: Configuration,
             resolver: ((PreparedStatement, [Statement.Value], Statement.Options) throws -> Statement)?
         ) throws {
-            self.rawPointer = cass_batch_new(configuration.type.rawValue)
+            self.rawPointer = cass_batch_new(configuration.type.cassBatchType)
             self.resolver = resolver
 
             if let consistency = configuration.consistency {
@@ -60,19 +48,16 @@ extension CassandraClient {
                 }
             }
             if let requestTimeout = configuration.requestTimeout {
+                let milliseconds = try requestTimeout.driverMilliseconds(UInt64.self, name: "requestTimeout")
                 try checkResult {
-                    cass_batch_set_request_timeout(self.rawPointer, requestTimeout)
+                    cass_batch_set_request_timeout(self.rawPointer, milliseconds)
                 }
             }
-            if let isIdempotent = configuration.isIdempotent {
-                try checkResult {
-                    cass_batch_set_is_idempotent(self.rawPointer, isIdempotent ? cass_true : cass_false)
-                }
+            try checkResult {
+                cass_batch_set_is_idempotent(self.rawPointer, configuration.isIdempotent ? cass_true : cass_false)
             }
-            if let tracing = configuration.tracing {
-                try checkResult {
-                    cass_batch_set_tracing(self.rawPointer, tracing ? cass_true : cass_false)
-                }
+            try checkResult {
+                cass_batch_set_tracing(self.rawPointer, configuration.tracing ? cass_true : cass_false)
             }
             if let keyspace = configuration.keyspace {
                 try checkResult {
@@ -95,7 +80,6 @@ extension CassandraClient {
 
         /// Add a prepared statement with parameters to this batch.
         /// Handles encryption context resolution automatically when encryption is configured.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public mutating func add(
             prepared: PreparedStatement,
             parameters: [Statement.Value],
@@ -112,22 +96,42 @@ extension CassandraClient {
             }
         }
 
+        /// The kind of a batch operation.
+        public enum Kind: Sendable, Hashable {
+            /// All statements are applied atomically with a write to the batch log.
+            case logged
+            /// Statements are applied without atomicity guarantees.
+            case unlogged
+            /// All statements must be counter updates.
+            case counter
+
+            internal var cassBatchType: CassBatchType {
+                switch self {
+                case .logged: return CASS_BATCH_TYPE_LOGGED
+                case .unlogged: return CASS_BATCH_TYPE_UNLOGGED
+                case .counter: return CASS_BATCH_TYPE_COUNTER
+                }
+            }
+        }
+
         /// Batch configuration options.
         public struct Configuration: Sendable {
-            /// The batch type. Defaults to `.logged`.
-            public var type: CassandraClient.BatchType = .logged
+            /// The batch kind. Defaults to `.logged`.
+            public var type: Kind = .logged
             /// The batch's consistency level.
             public var consistency: CassandraClient.Consistency?
             /// The batch's serial consistency level for conditional updates.
             public var serialConsistency: CassandraClient.SerialConsistency?
             /// The batch's write timestamp.
             public var timestamp: Foundation.Date?
-            /// The batch's request timeout in milliseconds.
-            public var requestTimeout: UInt64?
-            /// Whether the batch is idempotent.
-            public var isIdempotent: Bool?
-            /// Whether tracing is enabled for this batch.
-            public var tracing: Bool?
+            /// The batch's request timeout, rounded up to whole milliseconds. `nil` inherits
+            /// ``CassandraClient/Configuration/requestTimeout``.
+            public var requestTimeout: Duration?
+            /// Whether every statement in the batch is safe to apply more than once. When `true`, the driver
+            /// may retry the batch or execute it speculatively. Default `false`.
+            public var isIdempotent: Bool = false
+            /// Whether tracing is enabled for this batch. Default `false`.
+            public var tracing: Bool = false
             /// The keyspace for the batch.
             public var keyspace: String?
 

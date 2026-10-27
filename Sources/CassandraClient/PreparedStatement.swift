@@ -16,7 +16,7 @@ internal import CDataStaxDriver
 
 extension CassandraClient {
     /// A server-side prepared statement that can be efficiently executed multiple times with different parameters.
-    public final class PreparedStatement: Sendable {
+    public struct PreparedStatement: Sendable {
         private let rawPointer: CassPrepared
         private let _parameterCount: Int
 

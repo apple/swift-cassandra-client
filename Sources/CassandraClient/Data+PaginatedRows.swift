@@ -145,7 +145,6 @@ extension CassandraClient {
             return _map([])
         }
 
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         internal init(session: Session, statement: sending Statement, logger: Logger?) {
             self.session = session
             self.statement = statement
@@ -154,7 +153,6 @@ extension CassandraClient {
         }
 
         /// Fetches next page of rows or throw ``CassandraClient/Error/rowsExhausted`` error if there are no more pages.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         public func nextPage() async throws -> Rows {
             // Claim the in-flight slot atomically with the has-more-pages check (see EL variant).
             try self._state.withLockedValue { state in
@@ -184,7 +182,6 @@ extension CassandraClient {
         }
 
         /// Iterates through all rows in all pages and invokes the given closure on each.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func forEach(_ body: @escaping (Row) throws -> Void) async throws {
             precondition(
@@ -205,7 +202,6 @@ extension CassandraClient {
         }
 
         /// Iterates through all rows in all pages and applies `transform` on each.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func map<T>(_ transform: @escaping (Row) throws -> T) async throws -> [T] {
             precondition(
@@ -228,7 +224,6 @@ extension CassandraClient {
     }
 }
 
-@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 extension CassandraClient.PaginatedRows: AsyncSequence {
     public typealias Element = CassandraClient.Row
 
