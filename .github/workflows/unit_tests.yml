@@ -3,14 +3,6 @@ name: Unit tests
 on:
   workflow_call:
     inputs:
-      linux_6_1_enabled:
-        type: boolean
-        description: "Boolean to enable the Linux 6.1 Swift version matrix job. Defaults to true."
-        default: true
-      linux_6_1_arguments_override:
-        type: string
-        description: "The arguments passed to swift test in the Linux 6.1 Swift version matrix job."
-        default: ""
       linux_6_2_enabled:
         type: boolean
         description: "Boolean to enable the Linux 6.2 Swift version matrix job. Defaults to true."
@@ -26,6 +18,14 @@ on:
       linux_6_3_arguments_override:
         type: string
         description: "The arguments passed to swift test in the Linux 6.3 Swift version matrix job."
+        default: ""
+      linux_6_4_enabled:
+        type: boolean
+        description: "Boolean to enable the Linux 6.4 Swift version matrix job. Defaults to true."
+        default: true
+      linux_6_4_arguments_override:
+        type: string
+        description: "The arguments passed to swift test in the Linux 6.4 Swift version matrix job."
         default: ""
       linux_nightly_next_enabled:
         type: boolean
@@ -56,17 +56,17 @@ jobs:
       matrix:
         # We are specifying only the major and minor of the docker images to automatically pick up the latest patch release
         swift:
-          - image: "swift:6.1-jammy"
-            swift_version: "6.1"
-            enabled: ${{ inputs.linux_6_1_enabled }}
           - image: "swift:6.2-jammy"
             swift_version: "6.2"
             enabled: ${{ inputs.linux_6_2_enabled }}
           - image: "swift:6.3-noble"
             swift_version: "6.3"
             enabled: ${{ inputs.linux_6_3_enabled }}
-          - image: "swiftlang/swift:nightly-6.1-jammy"
-            swift_version: "nightly-6.1"
+          - image: "swift:6.4-resolute"
+            swift_version: "6.4"
+            enabled: ${{ inputs.linux_6_4_enabled }}
+          - image: "swiftlang/swift:nightly-6.4.x-noble"
+            swift_version: "nightly-next"
             enabled: ${{ inputs.linux_nightly_next_enabled }}
           - image: "swiftlang/swift:nightly-main-jammy"
             swift_version: "nightly-main"
@@ -124,9 +124,9 @@ jobs:
             -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace \
             -e SWIFT_VERSION="${{ matrix.swift.swift_version }}" \
             -e COMMAND="swift test" \
-            -e COMMAND_OVERRIDE_6_1="swift test ${{ inputs.linux_6_1_arguments_override }}" \
             -e COMMAND_OVERRIDE_6_2="swift test ${{ inputs.linux_6_2_arguments_override }}" \
             -e COMMAND_OVERRIDE_6_3="swift test ${{ inputs.linux_6_3_arguments_override }}" \
+            -e COMMAND_OVERRIDE_6_4="swift test ${{ inputs.linux_6_4_arguments_override }}" \
             -e COMMAND_OVERRIDE_NIGHTLY_NEXT="swift test ${{ inputs.linux_nightly_next_arguments_override }}" \
             -e COMMAND_OVERRIDE_NIGHTLY_MAIN="swift test ${{ inputs.linux_nightly_main_arguments_override }}" \
             -e CASSANDRA_HOST=cassandra \
