@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+import CassandraClient
 import XCTest
 
 /// `XCTAssertThrowsError` for an `async` expression, which its autoclosure cannot await.

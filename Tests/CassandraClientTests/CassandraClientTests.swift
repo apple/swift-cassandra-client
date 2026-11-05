@@ -14,7 +14,6 @@
 
 import Foundation
 import Logging
-import NIO
 import NIOConcurrencyHelpers
 import ServiceLifecycle
 import XCTest
@@ -67,80 +66,6 @@ final class Tests: XCTestCase {
         self.running = nil  // FIXME: for tsan
     }
 
-    func testShutdownELGShared() async throws {
-        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
-
-        try await CassandraClient.withClient(eventLoopGroup: eventLoopGroup, configuration: self.configuration) {
-            cassandraClient in
-            let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
-            do {
-                try await cassandraClient.execute("create table \(tableName) (id int primary key);")
-            } catch {
-                XCTFail("create table failed: \(error)")
-            }
-            try await cassandraClient.shutdownAsync()
-            await assertThrowsErrorAsync(try await cassandraClient.query("select * from \(tableName);")) { error in
-                XCTAssertEqual(error as? CassandraClient.Error, CassandraClient.Error.disconnected)
-            }
-            try await cassandraClient.shutdownAsync()
-        }
-    }
-
-    // A connect that completes *after* `shutdown()` must not resurrect the session back to `.connected`.
-    //
-    // The race is made deterministic by a `contactPointsProvider` that parks the connect `run()` starts
-    // (it stashes the callback instead of completing it), so the connect is guaranteed to still be in
-    // flight when `shutdown()` runs, and completes only when we say so.
-    func testShutdownDuringInFlightConnectDoesNotResurrectSession() async throws {
-        // The driver writes the callback from its own thread and the test reads it back, so the box
-        // locks rather than asserting `@unchecked Sendable` over a bare `var`.
-        typealias ContactPointsCallback =
-            @Sendable (
-                Result<CassandraClient.Configuration.ContactPoints, Swift.Error>
-            ) -> Void
-        let box = NIOLockedValueBox<ContactPointsCallback?>(nil)
-        let connectStarted = self.expectation(description: "connect started")
-
-        // Connect without a keyspace so the connect always succeeds against a running
-        // node regardless of which keyspaces exist — the resurrection only happens on a
-        // *successful* connect, so the connect must reliably succeed.
-        var configuration: CassandraClient.Configuration = self.configuration
-        configuration.keyspace = nil
-        configuration.contactPointsProvider = { callback in
-            box.withLockedValue { $0 = callback }
-            connectStarted.fulfill()
-        }
-
-        let client = CassandraClient(configuration: configuration)
-
-        // `run()` starts a connect that parks in our provider.
-        let running = Task { try await client.run() }
-        await self.fulfillment(of: [connectStarted], timeout: 1.0)
-
-        // A request made now waits for the connect.
-        let request = Task {
-            try await client.execute("select release_version from system.local;")
-        }
-
-        // Owner shuts the session down while the connect is still in flight.
-        try await client.shutdownAsync()
-
-        // Now let the (real) connect complete successfully.
-        let callback = try XCTUnwrap(box.withLockedValue { $0 })
-        callback(.success([self.cassandraHost]))
-
-        // `run()` closes the session its connect opened and fails with `.disconnected`, and the request
-        // fails the same way rather than run against — and resurrect — a session the owner already tore down.
-        await assertThrowsErrorAsync(try await running.value) { error in
-            XCTAssertEqual(error as? CassandraClient.Error, .disconnected)
-        }
-        await assertThrowsErrorAsync(try await request.value) { error in
-            XCTAssertEqual(error as? CassandraClient.Error, .disconnected)
-        }
-        await Self.assertDisconnected(client)
-    }
-
     private static func assertDisconnected(
         _ client: CassandraClient,
         file: StaticString = #filePath,
@@ -186,6 +111,24 @@ final class Tests: XCTestCase {
         _ = try await client.query("select release_version from system.local")
         await serviceGroup.triggerGracefulShutdown()
         try await running.value
+        await Self.assertDisconnected(client)
+    }
+
+    func testTriggerGracefulShutdownEndsRunAndShutsClientDown() async throws {
+        let client = CassandraClient(configuration: self.configuration)
+        let running = Task { try await client.run() }
+        // The request completes only once `run()` has connected.
+        _ = try await client.query("select release_version from system.local")
+        client.triggerGracefulShutdown()
+        try await running.value
+        await Self.assertDisconnected(client)
+    }
+
+    // A request to stop made before `run()` starts is remembered.
+    func testTriggerGracefulShutdownBeforeRunEndsRun() async throws {
+        let client = CassandraClient(configuration: self.configuration)
+        client.triggerGracefulShutdown()
+        try await client.run()
         await Self.assertDisconnected(client)
     }
 
