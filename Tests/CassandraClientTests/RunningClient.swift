@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import CassandraClient
-import NIO
 
 /// A client with `run()` started in a task, for tests that hold a client across `setUp` and `tearDown`,
 /// which `withClient` cannot scope. Requests wait until `run()` has connected.
@@ -21,11 +20,8 @@ struct RunningClient: Sendable {
     let client: CassandraClient
     private let running: Task<Void, Error>
 
-    init(
-        eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
-        configuration: CassandraClient.Configuration
-    ) {
-        let client = CassandraClient(eventLoopGroup: eventLoopGroup, configuration: configuration)
+    init(configuration: CassandraClient.Configuration) {
+        let client = CassandraClient(configuration: configuration)
         self.client = client
         self.running = Task { try await client.run() }
     }

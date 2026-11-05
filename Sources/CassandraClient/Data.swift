@@ -15,7 +15,6 @@
 internal import CDataStaxDriver
 import Foundation
 import Logging
-import NIO
 
 // MARK: - Safe big-endian parsing helpers
 

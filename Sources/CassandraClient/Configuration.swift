@@ -328,7 +328,7 @@ extension CassandraClient {
         /// no-verification case and only from a startup message a non-DSE cluster never triggers.
         internal var insecureSSLWarning: String? {
             guard let ssl = self.ssl else { return nil }
-            switch ssl.certificateVerification {
+            switch ssl.certificateVerification.backing {
             case .none:
                 return
                     "SSL is enabled with certificateVerification .none: the peer's certificate is not "
@@ -549,7 +549,7 @@ extension CassandraClient.Configuration {
         public var certificateVerification: CertificateVerification = .ipAddressVerification
         /// PEM encoded client certificate chain, starting with the certificate itself, used to authenticate
         /// the client to the server.
-        public var cert: String?
+        public var certificate: String?
         /// PEM encoded client private key and its password, used to authenticate the client to the server.
         public var privateKey: (key: String, password: String)?
 
@@ -564,12 +564,20 @@ extension CassandraClient.Configuration {
         /// Every case except ``none`` validates the chain against ``trustedCertificates``
         /// alone. The driver loads no system trust anchors, so leaving that property `nil` fails
         /// verification rather than falling back to the platform's certificate store.
-        @nonexhaustive
-        public enum CertificateVerification: String, Sendable, Equatable, CaseIterable {
+        public struct CertificateVerification: Sendable, Hashable {
+            fileprivate enum Backing: CaseIterable {
+                case none
+                case noHostnameVerification
+                case ipAddressVerification
+                case fullVerification
+            }
+
+            fileprivate let backing: Backing
+
             /// No verification is performed
-            case none
+            public static var none: Self { Self(backing: .none) }
             /// Certificate is present and valid. The peer's identity is not checked.
-            case noHostnameVerification
+            public static var noHostnameVerification: Self { Self(backing: .noHostnameVerification) }
             /// Certificate is present and valid, and the IP address the driver connected to matches
             /// an `iPAddress` subject alternative name on the certificate. That address is the
             /// resolved contact point for the node the driver reaches directly, and the
@@ -578,7 +586,7 @@ extension CassandraClient.Configuration {
             /// point. Matching consumes no hostname, so
             /// ``CassandraClient/Configuration/hostnameResolution`` only adds a reverse lookup per
             /// connection here.
-            case ipAddressVerification
+            public static var ipAddressVerification: Self { Self(backing: .ipAddressVerification) }
             /// Certificate is present and valid, and the peer's hostname matches a `dNSName` subject
             /// alternative name on the certificate, or its common name when the certificate carries
             /// no subject alternative names at all. Requires
@@ -589,7 +597,24 @@ extension CassandraClient.Configuration {
             /// That reverse lookup does not require a PTR record. An address without one resolves to
             /// its own numeric form, which then fails the subject match and is reported as a
             /// certificate mismatch rather than a missing PTR record.
-            case fullVerification
+            public static var fullVerification: Self { Self(backing: .fullVerification) }
+
+            /// Every mode, for tests.
+            internal static var allCases: [Self] { Backing.allCases.map(Self.init(backing:)) }
+
+            private init(backing: Backing) {
+                self.backing = backing
+            }
+
+            /// The mode's name, for ``CassandraClient/Configuration/SSL``'s description.
+            internal var name: String {
+                switch self.backing {
+                case .none: return "none"
+                case .noHostnameVerification: return "noHostnameVerification"
+                case .ipAddressVerification: return "ipAddressVerification"
+                case .fullVerification: return "fullVerification"
+                }
+            }
         }
 
         public init() {}
@@ -599,7 +624,7 @@ extension CassandraClient.Configuration {
         /// cases set it alongside the subject-match bit; setting a subject-match bit alone would
         /// match the subject without validating the chain.
         internal var cassVerifyFlags: Int32 {
-            switch self.certificateVerification {
+            switch self.certificateVerification.backing {
             case .none:
                 return Int32(CASS_SSL_VERIFY_NONE.rawValue)
             case .noHostnameVerification:
@@ -626,8 +651,8 @@ extension CassandraClient.Configuration {
 
             sslContext.setVerifyFlags(self.cassVerifyFlags)
 
-            if let cert = self.cert {
-                try sslContext.setCert(cert)
+            if let certificate = self.certificate {
+                try sslContext.setCert(certificate)
             }
             if let privateKey = self.privateKey {
                 try sslContext.setPrivateKey(privateKey.key, password: privateKey.password)
@@ -644,9 +669,9 @@ extension CassandraClient.Configuration.SSL: CustomStringConvertible, CustomDebu
     public var description: String {
         """
         [\(CassandraClient.Configuration.SSL.self):
-        certificateVerification: \(self.certificateVerification),
+        certificateVerification: \(self.certificateVerification.name),
         trustedCertificates: \(self.trustedCertificates?.count ?? 0),
-        cert: \(self.cert == nil ? "none" : "set"),
+        certificate: \(self.certificate == nil ? "none" : "set"),
         privateKey: \(self.privateKey == nil ? "none" : "<redacted>")]
         """
     }
@@ -658,8 +683,8 @@ extension CassandraClient.Configuration.SSL: CustomStringConvertible, CustomDebu
             self,
             children: [
                 "trustedCertificates": self.trustedCertificates as Any,
-                "certificateVerification": self.certificateVerification,
-                "cert": self.cert as Any,
+                "certificateVerification": self.certificateVerification.name,
+                "certificate": self.certificate as Any,
                 "privateKey": self.privateKey == nil ? "none" : "<redacted>",
             ]
         )
@@ -755,7 +780,7 @@ extension Duration {
     }
 }
 
-// MARK: - Renamed before 1.0
+// MARK: - Renamed
 
 extension CassandraClient.Configuration {
     @available(*, unavailable, renamed: "isSchemaMetadataEnabled")
@@ -771,6 +796,12 @@ extension CassandraClient.Configuration.SSL {
 
     @available(*, unavailable, renamed: "certificateVerification")
     public var verifyFlag: CertificateVerification {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+
+    @available(*, unavailable, renamed: "certificate")
+    public var cert: String? {
         get { fatalError("unavailable") }
         set { fatalError("unavailable") }
     }

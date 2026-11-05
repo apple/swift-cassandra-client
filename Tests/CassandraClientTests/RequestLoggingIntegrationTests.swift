@@ -14,7 +14,6 @@
 
 import Foundation
 import Logging
-import NIO
 import XCTest
 
 @testable import CassandraClient

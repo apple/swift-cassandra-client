@@ -15,19 +15,16 @@
 import Atomics
 internal import CDataStaxDriver
 import Logging
-import NIO
 import NIOConcurrencyHelpers
 import ServiceLifecycle
 
 /// `CassandraClient` is a wrapper around the [Datastax Cassandra C++ Driver](https://github.com/datastax/cpp-driver)
 ///  and can be used to run queries against a Cassandra database.
 ///
-/// Use ``withClient(eventLoopGroup:configuration:_:)`` for work with a bounded scope. To own a client for longer,
-/// create it with ``init(eventLoopGroup:configuration:)`` and run ``run()``, for example as a service in a
+/// Use ``withClient(configuration:_:)`` for work with a bounded scope. To own a client for longer,
+/// create it with ``init(configuration:)`` and run ``run()``, for example as a service in a
 /// `ServiceGroup`.
 public final class CassandraClient: Sendable {
-    let eventLoopGroup: EventLoopGroup
-
     var encryptor: CassandraClient.Encryptor? {
         self.configuration.encryptor
     }
@@ -44,29 +41,27 @@ public final class CassandraClient: Sendable {
     private let defaultSession: Session
     private let isShutdown = ManagedAtomic<Bool>(false)
     private let isRunning = ManagedAtomic<Bool>(false)
+    /// Ends when ``triggerGracefulShutdown()`` is called, which ends ``run()``.
+    private let stopRequests: AsyncStream<Void>
+    private let stopContinuation: AsyncStream<Void>.Continuation
 
     /// Create a new instance of `CassandraClient`.
     ///
-    /// The client connects when ``run()`` starts; requests made before then wait for it.
+    /// The client connects when ``run()`` starts; requests made before then wait for it. A request on a client
+    /// whose ``run()`` is never called keeps waiting until its task is cancelled.
     ///
     /// - Parameters:
-    ///   - eventLoopGroup: The `EventLoopGroup` to use. Defaults to the process-wide shared
-    ///     `MultiThreadedEventLoopGroup.singleton`. The client never shuts the group down; its owner does.
     ///   - configuration: The  client's ``Configuration``.
-    public init(
-        eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
-        configuration: Configuration
-    ) {
+    public init(configuration: Configuration) {
         self.configuration = configuration
-        self.eventLoopGroup = eventLoopGroup
-        self.defaultSession = Session(configuration: self.configuration, eventLoopGroup: eventLoopGroup)
+        self.defaultSession = Session(configuration: self.configuration)
+        (self.stopRequests, self.stopContinuation) = AsyncStream.makeStream(of: Void.self)
     }
 
-    // Debug builds only: in release the driver closes the session when it is freed.
     deinit {
-        assert(
-            self.isShutdown.load(ordering: .relaxed),
-            "Client not shut down before the deinit. Please call client.shutdown() when no longer needed."
+        precondition(
+            self.isShutdown.load(ordering: .relaxed) || !self.isRunning.load(ordering: .relaxed),
+            "Client not shut down before the deinit. Let run() finish before releasing a client that was run."
         )
     }
 
@@ -75,43 +70,50 @@ public final class CassandraClient: Sendable {
     /// If `body` throws, its error is rethrown even when shutting the client down also fails.
     ///
     /// - Parameters:
-    ///   - eventLoopGroup: The `EventLoopGroup` to use. Defaults to the process-wide shared
-    ///     `MultiThreadedEventLoopGroup.singleton`.
     ///   - configuration: The client's ``Configuration``.
     ///   - body: The closure to invoke with the client.
     ///
     /// - Returns: The result of `body`.
-    public static func withClient<T>(
-        eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+    public static func withClient<Return: ~Copyable>(
         configuration: Configuration,
-        _ body: (CassandraClient) async throws -> T
-    ) async throws -> T {
-        let client = CassandraClient(eventLoopGroup: eventLoopGroup, configuration: configuration)
+        _ body: (CassandraClient) async throws -> Return
+    ) async throws -> Return {
+        let client = CassandraClient(configuration: configuration)
         // Claimed before `body` starts, so a `run()` inside `body` throws rather than waiting on a
         // cancellation that only comes once `body` returns.
         try client.claimRun()
-        return try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                try await client.runClaimed()
-            }
-            let result: Result<T, any Swift.Error>
-            do {
-                result = .success(try await body(client))
-            } catch {
-                result = .failure(error)
-            }
-            // Cancelling ends `run()`, which shuts the client down.
-            group.cancelAll()
-            do {
-                try await group.waitForAll()
-            } catch {
-                // An error from `body` takes precedence over one from shutting the client down.
-                if case .failure = result {
-                    return try result.get()
+        // Kept outside the task group, which can only return a copyable value.
+        var result: Result<Return, any Swift.Error>?
+        var shutdownError: (any Swift.Error)?
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await client.runClaimed()
                 }
-                throw error
+                do {
+                    result = .success(try await body(client))
+                } catch {
+                    result = .failure(error)
+                }
+                // Cancelling ends `run()`, which shuts the client down.
+                group.cancelAll()
+                try await group.waitForAll()
             }
-            return try result.get()
+        } catch {
+            shutdownError = error
+        }
+        guard let outcome = result.take() else {
+            preconditionFailure("The task group finished before `body` did")
+        }
+        switch consume outcome {
+        case .success(let value):
+            if let shutdownError {
+                throw shutdownError
+            }
+            return value
+        case .failure(let error):
+            // An error from `body` takes precedence over one from shutting the client down.
+            throw error
         }
     }
 
@@ -136,6 +138,7 @@ public final class CassandraClient: Sendable {
         guard self.isRunning.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged else {
             throw CassandraClient.Error.invalidState("run() has already been called on this client")
         }
+        self.defaultSession.beginConnecting()
     }
 
     private func runClaimed() async throws {
@@ -151,40 +154,43 @@ public final class CassandraClient: Sendable {
             group.addTask {
                 await session.runMetricsPoller()
             }
-            do {
-                try await gracefulShutdown()
-            } catch is CancellationError {
-                // Cancellation ends the run the same way graceful shutdown does.
-            }
+            await self.waitForStopRequest()
             group.cancelAll()
             try await group.waitForAll()
         }
         try await self.shutdownAsync()
     }
 
-    /// Shutdown the client.
-    ///
-    /// - Note: It is required to call this method before terminating the program. `CassandraClient` asserts it
-    ///   was cleanly shut down as part of its deinitializer in debug builds.
-    @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
-    public func shutdown() throws {
-        if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
-            .exchanged
-        {
-            return
+    /// Returns when a graceful shutdown is triggered, through a `ServiceGroup` or ``triggerGracefulShutdown()``, or
+    /// when the calling task is cancelled.
+    private func waitForStopRequest() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                // Throws only `CancellationError`, which ends the wait the same way.
+                _ = try? await gracefulShutdown()
+            }
+            group.addTask {
+                for await _ in self.stopRequests {}
+            }
+            await group.next()
+            group.cancelAll()
         }
-
-        try self.defaultSession.shutdown()
     }
 
-    /// Shutdown the client.
-    public func shutdownAsync() async throws {
-        if !self.isShutdown.compareExchange(expected: false, desired: true, ordering: .relaxed)
-            .exchanged
-        {
-            return
-        }
+    /// Ask the client to stop. ``run()`` shuts the client down and returns.
+    ///
+    /// Returns immediately, before the client has shut down: wait for ``run()`` or
+    /// ``withClient(configuration:_:)`` to return to know it has. Calling it again has no further effect.
+    /// Calling it before ``run()`` starts is remembered: ``run()`` then connects, shuts the client down and
+    /// returns. Cancelling the task that runs ``run()`` or ``withClient(configuration:_:)`` stops the client the
+    /// same way.
+    public func triggerGracefulShutdown() {
+        self.stopContinuation.finish()
+    }
 
+    /// Close the client's connection. Called once, when ``run()`` ends.
+    private func shutdownAsync() async throws {
+        self.isShutdown.store(true, ordering: .relaxed)
         try await self.defaultSession.shutdownAsync()
     }
 

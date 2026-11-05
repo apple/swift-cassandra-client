@@ -12,11 +12,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-import CassandraClient
+import Logging
 import NIOConcurrencyHelpers
 import XCTest
 
-/// Unit tests for ``CassandraClient/withClient(eventLoopGroup:configuration:_:)`` and ``CassandraClient/run()``.
+@testable import CassandraClient
+
+/// Unit tests for ``CassandraClient/withClient(configuration:_:)`` and ``CassandraClient/run()``.
 /// No cluster required: the contact points provider fails, so `run()`'s connect fails without reaching the
 /// network, and a request after the failed connect fails with `.disconnected`. The paths that need a connected
 /// client (cancellation, graceful shutdown, the metrics poller) are covered by the integration suite.
@@ -175,14 +177,6 @@ final class ClientLifecycleTests: XCTestCase {
         await Self.assertDisconnected(client)
     }
 
-    func testRunAfterShutdownThrowsDisconnected() async throws {
-        let client = CassandraClient(configuration: Self.makeConfiguration())
-        try await client.shutdownAsync()
-        await assertThrowsErrorAsync(try await client.run()) { error in
-            XCTAssertEqual(error as? CassandraClient.Error, .disconnected)
-        }
-    }
-
     // A second `run()` would otherwise wait for a cancellation that, inside `withClient`, never comes. The gate
     // holds `withClient`'s own connect in flight, so the second `run()` finds the run slot taken rather than the
     // client already shut down by a failed connect.
@@ -202,5 +196,60 @@ final class ClientLifecycleTests: XCTestCase {
         ) { error in
             Self.assertConnectError(error)
         }
+    }
+
+    // The deinit's precondition would stop the process if a client that was never run counted as not shut down.
+    func testClientThatWasNeverRunCanBeReleased() {
+        _ = CassandraClient(configuration: Self.makeConfiguration())
+    }
+
+    // Compiles only while `withClient` accepts a result that cannot be copied.
+    func testWithClientAcceptsMoveOnlyResult() async {
+        struct Token: ~Copyable {}
+        do {
+            _ = try await CassandraClient.withClient(configuration: Self.makeConfiguration()) { _ in Token() }
+            XCTFail("expected the connect error")
+        } catch {
+            Self.assertConnectError(error)
+        }
+    }
+
+    // A request that is waiting for `run()` ends when its task is cancelled.
+    func testRequestWaitingForRunEndsWhenCancelled() async throws {
+        let client = CassandraClient(configuration: Self.makeConfiguration())
+        let request = Task { try await client.query("select release_version from system.local") }
+        try await Task.sleep(for: .milliseconds(50))
+        request.cancel()
+        await assertThrowsErrorAsync(try await request.value) { error in
+            XCTAssertTrue(error is CancellationError, "expected CancellationError, got \(error)")
+        }
+    }
+
+    private static let runMissingWarning = "Requests need `CassandraClient.run()` to be running"
+
+    // `run()` has claimed the client, so a request made before it connects must not warn that `run()` is missing.
+    // The session is driven directly, to hold it between the claim and the connect.
+    func testRequestAfterRunClaimedDoesNotWarnThatRunIsMissing() async {
+        let capture = TestLogCapture()
+        let logger = Logger(label: "test", factory: { _ in TestCapturingLogHandler(capture: capture) })
+        let session = CassandraClient.Session(configuration: Self.makeConfiguration())
+        session.beginConnecting()
+        let request = Task { try await session.query("select release_version from system.local", logger: logger) }
+        try? await Task.sleep(for: .milliseconds(50))
+        // The connect fails, which also fails the waiting request and leaves the session safe to release.
+        await assertThrowsErrorAsync(try await session.connect(logger: logger))
+        await assertThrowsErrorAsync(try await request.value)
+        XCTAssertFalse(capture.all.contains { $0.message.contains(Self.runMissingWarning) })
+    }
+
+    func testRequestOnClientThatIsNotRunningWarnsThatRunIsMissing() async throws {
+        let capture = TestLogCapture()
+        let logger = Logger(label: "test", factory: { _ in TestCapturingLogHandler(capture: capture) })
+        let client = CassandraClient(configuration: Self.makeConfiguration())
+        let request = Task { try await client.query("select release_version from system.local", logger: logger) }
+        try await Task.sleep(for: .milliseconds(50))
+        request.cancel()
+        _ = try? await request.value
+        XCTAssertEqual(capture.all.filter { $0.message.contains(Self.runMissingWarning) }.count, 1)
     }
 }

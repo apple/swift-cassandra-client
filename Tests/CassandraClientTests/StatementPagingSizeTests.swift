@@ -101,8 +101,6 @@ final class StatementPagingSizeTests: XCTestCase {
                 self.assertBadParams(error, "pageSize \(pageSize) on the query")
             }
         }
-
-        try await client.shutdownAsync()
     }
 
     /// ``CassandraClient/Statement/setPagingSize(_:)`` documents that the `pageSize`-taking variants
@@ -121,7 +119,5 @@ final class StatementPagingSizeTests: XCTestCase {
         } catch {
             self.assertBadParams(error, "pageSize 0 over a statement already set to 10")
         }
-
-        try await client.shutdownAsync()
     }
 }
