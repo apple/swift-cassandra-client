@@ -15,14 +15,11 @@
 import Atomics
 internal import CDataStaxDriver
 import Logging
-import NIO
 import NIOConcurrencyHelpers
 
 /// `CassandraClient` is a wrapper around the [Datastax Cassandra C++ Driver](https://github.com/datastax/cpp-driver)
 ///  and can be used to run queries against a Cassandra database.
 public final class CassandraClient: CassandraSession, Sendable {
-    public let eventLoopGroup: EventLoopGroup
-
     public var encryptor: CassandraClient.Encryptor? {
         self.configuration.encryptor
     }
@@ -43,22 +40,17 @@ public final class CassandraClient: CassandraSession, Sendable {
     /// Create a new instance of `CassandraClient`.
     ///
     /// - Parameters:
-    ///   - eventLoopGroup: The `EventLoopGroup` to use. Defaults to the process-wide shared
-    ///     `MultiThreadedEventLoopGroup.singleton`. The client never shuts the group down; its owner does.
     ///   - configuration: The  client's ``Configuration``.
     ///   - logger: The client's default `Logger`.
     public init(
-        eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
         configuration: Configuration,
         logger: Logger? = nil
     ) {
         self.configuration = configuration
         self.logger = logger ?? Logger(label: "com.apple.cassandra")
-        self.eventLoopGroup = eventLoopGroup
         self.defaultSession = Session(
             configuration: self.configuration,
-            logger: self.logger,
-            eventLoopGroup: eventLoopGroup
+            logger: self.logger
         )
     }
 
@@ -106,8 +98,7 @@ public final class CassandraClient: CassandraSession, Sendable {
         let logger = logger ?? self.logger
         return Session(
             configuration: configuration,
-            logger: logger,
-            eventLoopGroup: self.eventLoopGroup
+            logger: logger
         )
     }
 
