@@ -125,7 +125,8 @@ final class MetricsPollerIntegrationTests: XCTestCase {
             let polled = try await self.waitForMeter(self.connectionsTotal, dimensions: dims)
             let meter = try XCTUnwrap(polled)
 
-            try await client.shutdownAsync()
+            client.triggerGracefulShutdown()
+            try await waitUntilDisconnected(client)
 
             // No tick after shutdown: the recorded-values count must stay put across several intervals.
             let countAfterShutdown = meter.values.count
@@ -176,46 +177,4 @@ final class MetricsPollerIntegrationTests: XCTestCase {
         )
     }
 
-    // Shutdown during an in-flight connect: `run()`'s connect finishes to find the session shut down, so
-    // `run()` closes it and throws, and no tick records.
-    func testShutdownDuringInFlightConnect() async throws {
-        let session = "v6"
-        let completionBox =
-            NIOLockedValueBox<(@Sendable (Result<[String], Swift.Error>) -> Void)?>(nil)
-        let providerInvoked = self.expectation(description: "connect started")
-        let env = ProcessInfo.processInfo.environment
-        let host = env["CASSANDRA_HOST"] ?? "127.0.0.1"
-
-        var configuration = self.makeConfiguration()
-        configuration.metricsEnabled = true
-        configuration.metricsPollInterval = .milliseconds(50)
-        configuration.metricsSessionName = session
-        // Withhold the contact points: capture the completion and signal, but don't call it yet.
-        configuration.contactPointsProvider = { completion in
-            completionBox.withLockedValue { $0 = completion }
-            providerInvoked.fulfill()
-        }
-
-        let client = CassandraClient(configuration: configuration)
-        // `run()` starts a connect that blocks in the withheld provider.
-        let running = Task { try await client.run() }
-        await self.fulfillment(of: [providerInvoked], timeout: 5)
-
-        // Shut down while the connect is still in flight.
-        try await client.shutdownAsync()
-
-        // Now let the connect finish; it must not leave the session connected.
-        let completion = try XCTUnwrap(completionBox.withLockedValue { $0 })
-        completion(.success([host]))
-        await assertThrowsErrorAsync(try await running.value) { error in
-            XCTAssertEqual(error as? CassandraClient.Error, .disconnected)
-        }
-        try await Task.sleep(for: .milliseconds(300))  // past several would-be ticks
-
-        XCTAssertTrue(
-            self.testMetrics.meters.allSatisfy { $0.label != self.connectionsTotal },
-            "no tick may record when shutdown wins over an in-flight connect"
-        )
-        // Reaching here without an assertion failure confirms deinit's invariant held.
-    }
 }

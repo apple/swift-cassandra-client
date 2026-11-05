@@ -16,9 +16,7 @@ internal import CDataStaxDriver
 import Dispatch
 import Foundation
 import Logging
-import NIO
 import NIOConcurrencyHelpers
-import NIOCore  // for async-await bridge
 
 extension CassandraClient.Session {
     private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger) {
@@ -108,18 +106,6 @@ final class CassFuture<T>: Sendable {
                 continuation.resume(with: result)
             }
         }
-    }
-
-    @available(*, noasync, message: "Can block indefinitely, prefer await()", renamed: "await()")
-    func syncWait() throws -> T where T: Sendable {
-        let resultBox = NIOLockedValueBox<Result<T, any Error>?>(nil)
-        let semaphore = DispatchSemaphore(value: 0)
-        self.setResultCallback { result in
-            resultBox.withLockedValue { $0 = result }
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return try resultBox.withLockedValue { $0! }.get()
     }
 
     private func setResultCallback(
@@ -261,8 +247,6 @@ struct CassSession: Sendable, ~Copyable {
 
 extension CassandraClient {
     internal final class Session: Sendable {
-        let eventLoopGroup: EventLoopGroup
-
         var encryptor: CassandraClient.Encryptor? {
             self.configuration.encryptor
         }
@@ -277,9 +261,9 @@ extension CassandraClient {
 
         private let configuration: Configuration
         private let _state = NIOLockedValueBox(State.idle)
-        /// Completed once: succeeded when `connect(logger:)` connects, failed if the connect fails or the session
-        /// shuts down first. Requests that arrive before the session is connected wait on it.
-        private let ready: EventLoopPromise<Void>
+        /// Completed once: succeeded when `connect(logger:)` connects, failed if the connect fails. Requests that
+        /// arrive before the session is connected wait on it.
+        private let ready = OneShotSignal()
         /// Set by `stopMetricsPoller()` when shutdown begins; a poller tick records gauges only while it is
         /// `false`. See `runMetricsPoller()`.
         private let _pollerStopped = NIOLockedValueBox(false)
@@ -292,107 +276,40 @@ extension CassandraClient {
             /// `run()` is connecting.
             case connecting
             case connected
-            /// The first shutdown is closing the session; later callers wait on the future.
-            case disconnecting(EventLoopFuture<Void>)
+            /// `run()` is closing the session.
+            case disconnecting
             case disconnected
         }
 
-        internal init(
-            configuration: Configuration,
-            eventLoopGroup: EventLoopGroup
-        ) {
+        internal init(configuration: Configuration) {
             self.configuration = configuration
-            self.eventLoopGroup = eventLoopGroup
             self.underlying = .init()
-            self.ready = eventLoopGroup.next().makePromise(of: Void.self)
         }
 
-        // Debug builds only: in release the driver closes the session when `CassSession` frees it.
         deinit {
-            if case .disconnected = (self._state.withLockedValue { $0 }) {
+            switch self._state.withLockedValue({ $0 }) {
+            case .idle, .disconnected:
                 return
-            }
-            assertionFailure("Session not shut down before the deinit. Please call shutdown() when no longer needed.")
-        }
-
-        /// What a shutdown call does, decided under the state lock.
-        private enum ShutdownAction {
-            case alreadyShut
-            /// This call closes the session and completes the promise; later calls wait on its future.
-            case close(EventLoopPromise<Void>)
-            case wait(EventLoopFuture<Void>)
-        }
-
-        private func beginShutdown() -> ShutdownAction {
-            let (action, failReady): (ShutdownAction, Bool) = self._state.withLockedValue { state in
-                switch state {
-                case .connected:
-                    let promise = self.eventLoopGroup.next().makePromise(of: Void.self)
-                    state = .disconnecting(promise.futureResult)
-                    return (.close(promise), false)
-                case .disconnecting(let existing):
-                    return (.wait(existing), false)
-                case .idle, .connecting:
-                    // Not connected yet: nothing to close. A connect in progress sees `.disconnected` when it
-                    // finishes and closes the session itself.
-                    state = .disconnected
-                    return (.alreadyShut, true)
-                case .disconnected:
-                    return (.alreadyShut, false)
-                }
-            }
-            if failReady {
-                self.ready.fail(CassandraClient.Error.disconnected)
-            }
-            return action
-        }
-
-        private func finishShutdown() {
-            self._state.withLockedValue { state in
-                guard case .disconnecting = state else {
-                    preconditionFailure("State changed from disconnecting to \(state) unexpectedly")
-                }
-                state = .disconnected
+            case .connecting, .connected, .disconnecting:
+                preconditionFailure(
+                    "Session not shut down before the deinit. Let run() finish before releasing the client."
+                )
             }
         }
 
-        @available(*, noasync, message: "Can block indefinitely, prefer shutdownAsync()", renamed: "shutdownAsync()")
-        func shutdown() throws {
-            switch self.beginShutdown() {
-            case .alreadyShut:
-                return
-            case .wait(let future):
-                try future.wait()
-            case .close(let promise):
-                defer { self.finishShutdown() }
-                self.stopMetricsPoller()
-                do {
-                    try self.underlying.close().syncWait()
-                    promise.succeed()
-                } catch {
-                    promise.fail(error)
-                    throw error
-                }
-            }
-        }
-
+        /// Close the session. Called once, by `run()`, after the session has connected.
         func shutdownAsync() async throws {
-            switch self.beginShutdown() {
-            case .alreadyShut:
-                return
-            case .wait(let future):
-                try await future.get()
-            case .close(let promise):
-                defer { self.finishShutdown() }
-                self.stopMetricsPoller()
-                do {
-                    try await self.underlying.close().await()
-                    promise.succeed()
-                } catch {
-                    promise.fail(error)
-                    throw error
+            self._state.withLockedValue { state in
+                guard case .connected = state else {
+                    preconditionFailure("Session closed while \(state), expected connected")
                 }
+                state = .disconnecting
             }
+            defer {
+                self._state.withLockedValue { $0 = .disconnected }
+            }
+            self.stopMetricsPoller()
+            try await self.underlying.close().await()
         }
 
         private func lookupPrimaryKeyColumnNames(tableName: String) throws -> [String] {
@@ -830,7 +747,7 @@ extension CassandraClient.Session {
                     "Request waiting for the client to connect. Requests need `CassandraClient.run()` to be running."
                 )
             }
-            try await self.ready.futureResult.get()
+            try await self.ready.wait()
         case .disconnected:
             throw CassandraClient.Error.disconnected
         }
@@ -1075,16 +992,23 @@ extension CassandraClient.Session {
         return try await self.execute(statement: statement, logger: logger)
     }
 
+    /// Mark the session as connecting. Called once, when `run()` claims the client and before `connect(logger:)`,
+    /// so a request that arrives in between knows `run()` has started.
+    func beginConnecting() {
+        self._state.withLockedValue { state in
+            guard case .idle = state else {
+                preconditionFailure("Session connecting while \(state), expected idle")
+            }
+            state = .connecting
+        }
+    }
+
     /// Connect the session. Called once, by `run()`; requests that arrive meanwhile wait on `ready`.
     func connect(logger: Logger) async throws {
-        let shouldConnect: Bool = self._state.withLockedValue { state in
-            guard case .idle = state else { return false }
-            state = .connecting
-            return true
-        }
-        guard shouldConnect else {
-            // Shut down before `run()` started; `beginShutdown()` already failed `ready`.
-            throw CassandraClient.Error.disconnected
+        self._state.withLockedValue { state in
+            guard case .connecting = state else {
+                preconditionFailure("Session connected while \(state), expected connecting")
+            }
         }
 
         logger.debug("connecting to: \(self.configuration)")
@@ -1104,32 +1028,13 @@ extension CassandraClient.Session {
                 try await self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace).await()
             }
         } catch {
-            let wasConnecting: Bool = self._state.withLockedValue { state in
-                guard case .connecting = state else { return false }
-                state = .disconnected
-                return true
-            }
-            if wasConnecting {
-                self.ready.fail(error)
-            }
+            self._state.withLockedValue { $0 = .disconnected }
+            self.ready.complete(.failure(error))
             throw error
         }
 
-        let stillConnecting: Bool = self._state.withLockedValue { state in
-            guard case .connecting = state else { return false }
-            state = .connected
-            return true
-        }
-        guard stillConnecting else {
-            // Shut down while connecting: close the session that just connected, so it doesn't outlive shutdown.
-            do {
-                try await self.underlying.close().await()
-            } catch {
-                logger.debug("closing a session connected after shutdown failed: \(error)")
-            }
-            throw CassandraClient.Error.disconnected
-        }
-        self.ready.succeed()
+        self._state.withLockedValue { $0 = .connected }
+        self.ready.complete(.success(()))
     }
 }
 

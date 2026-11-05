@@ -12,7 +12,7 @@ A Cassandra client in Swift.
 
 ### Creating a client
 
-For work with a bounded scope, ``CassandraClient/withClient(eventLoopGroup:configuration:_:)`` creates a client, runs it
+For work with a bounded scope, ``CassandraClient/withClient(configuration:_:)`` creates a client, runs it
 for the duration of the closure, and shuts it down when the closure returns or throws:
 
 ```swift
@@ -22,12 +22,12 @@ for the duration of the closure, and shuts it down when the closure returns or t
   }
 ```
 
-To own a client for longer, create it with ``CassandraClient/init(eventLoopGroup:configuration:)`` and run
+To own a client for longer, create it with ``CassandraClient/init(configuration:)`` and run
 ``CassandraClient/run()``, for example by adding the client to a swift-service-lifecycle `ServiceGroup`. `run()` shuts
-the client down on graceful shutdown or when its task is cancelled. A client created this way must be shut down when no
-longer needed, either by ending `run()` or with ``CassandraClient/shutdownAsync()``.
+the client down on graceful shutdown or when its task is cancelled. To stop the client, cancel that task or call
+``CassandraClient/triggerGracefulShutdown()``.
 
-The client connects when `run()` starts, and queries the configured keyspace. Requests made before then wait for it to connect, so a client created directly must be run.
+The client connects when `run()` starts, and queries the configured keyspace. Requests made before then wait for it to connect, so a client created directly must be run. A request on a client that is never run keeps waiting until its task is cancelled.
 
 ### Querying another keyspace
 
@@ -82,7 +82,7 @@ TLS is off by default. To turn it on, set `ssl` on the configuration and give it
 
 ### If you are upgrading
 
-As of 0.13.0 the client verifies both the certificate chain and the server's identity, so a configuration that worked before can start failing two ways. A certificate that doesn't name the address the client connects to fails with `sslIdentityMismatch`, "Peer certificate subject name does not match". `trustedCertificates` left unset fails with `sslInvalidPeerCert` and an X509 reason such as "unable to get local issuer certificate". Also, `verifyFlag`'s `.default` case has been removed; use `.noHostnameVerification` (named `.peerCert` before 1.0) for the previous behavior. A configuration file setting `ssl.verifyFlag` to `"default"` now throws when it is read, rather than being accepted.
+As of 0.13.0 the client verifies both the certificate chain and the server's identity, so a configuration that worked before can start failing two ways. A certificate that doesn't name the address the client connects to fails with `sslIdentityMismatch`, "Peer certificate subject name does not match". `trustedCertificates` left unset fails with `sslInvalidPeerCert` and an X509 reason such as "unable to get local issuer certificate". Also, `verifyFlag`'s `.default` case has been removed; use `.noHostnameVerification` (named `.peerCert` in earlier versions) for the previous behavior. A configuration file setting `ssl.verifyFlag` to `"default"` now throws when it is read, rather than being accepted.
 
 ### What is verified
 

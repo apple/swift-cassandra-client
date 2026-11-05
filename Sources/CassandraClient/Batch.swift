@@ -97,16 +97,24 @@ extension CassandraClient {
         }
 
         /// The kind of a batch operation.
-        public enum Kind: Sendable, Hashable {
+        public struct Kind: Sendable, Hashable {
+            private enum Backing: Hashable {
+                case logged
+                case unlogged
+                case counter
+            }
+
+            private let backing: Backing
+
             /// All statements are applied atomically with a write to the batch log.
-            case logged
+            public static var logged: Self { Self(backing: .logged) }
             /// Statements are applied without atomicity guarantees.
-            case unlogged
+            public static var unlogged: Self { Self(backing: .unlogged) }
             /// All statements must be counter updates.
-            case counter
+            public static var counter: Self { Self(backing: .counter) }
 
             internal var cassBatchType: CassBatchType {
-                switch self {
+                switch self.backing {
                 case .logged: return CASS_BATCH_TYPE_LOGGED
                 case .unlogged: return CASS_BATCH_TYPE_UNLOGGED
                 case .counter: return CASS_BATCH_TYPE_COUNTER
