@@ -113,11 +113,8 @@ final class Tests: XCTestCase {
         }
     }
 
-    func testShutdownELGShared() async throws {
-        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { XCTAssertNoThrow(try eventLoopGroup.syncShutdownGracefully()) }
-
-        let cassandraClient = CassandraClient(eventLoopGroup: eventLoopGroup, configuration: self.configuration)
+    func testShutdownRejectsLaterRequests() async throws {
+        let cassandraClient = CassandraClient(configuration: self.configuration)
         let tableName = "test_\(DispatchTime.now().uptimeNanoseconds)"
         do {
             try await cassandraClient.run("create table \(tableName) (id int primary key);")

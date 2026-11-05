@@ -22,8 +22,6 @@ import NIOCore  // for async-await bridge
 
 /// API for executing statements against Cassandra.
 public protocol CassandraSession: Sendable {
-    var eventLoopGroup: EventLoopGroup { get }
-
     /// Encryptor for transparent column encryption.
     var encryptor: CassandraClient.Encryptor? { get }
 
@@ -385,8 +383,6 @@ struct CassSession: Sendable, ~Copyable {
 
 extension CassandraClient {
     internal final class Session: CassandraSession, Sendable {
-        public let eventLoopGroup: EventLoopGroup
-
         public var encryptor: CassandraClient.Encryptor? {
             self.configuration.encryptor
         }
@@ -425,12 +421,10 @@ extension CassandraClient {
 
         internal init(
             configuration: Configuration,
-            logger: Logger,
-            eventLoopGroup: EventLoopGroup
+            logger: Logger
         ) {
             self.configuration = configuration
             self.logger = logger
-            self.eventLoopGroup = eventLoopGroup
             self.underlying = .init()
         }
 
@@ -452,8 +446,7 @@ extension CassandraClient {
             let action: Action = self._state.withLockedValue { state in
                 switch state {
                 case .connected:
-                    let el = self.eventLoopGroup.next()
-                    let promise = el.makePromise(of: Void.self)
+                    let promise = MultiThreadedEventLoopGroup.singleton.next().makePromise(of: Void.self)
                     state = .disconnectingFuture(promise.futureResult)
                     return .disconnectThenMarkShut(promise)
                 case .disconnecting:

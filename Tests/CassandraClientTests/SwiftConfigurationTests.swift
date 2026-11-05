@@ -151,7 +151,7 @@ struct SwiftConfigurationTests {
             "ssl.enabled": true,
             "ssl.trustedCertificates": .init(.stringArray(["cert-one", "cert-two"]), isSecret: false),
             "ssl.certificateVerification": "fullVerification",
-            "ssl.cert": "client-cert",
+            "ssl.certificate": "client-cert",
             "ssl.privateKey": "client-key",
             "ssl.privateKeyPassword": "key-password",
 
@@ -202,7 +202,7 @@ struct SwiftConfigurationTests {
         let ssl = try #require(config.ssl)
         #expect(ssl.trustedCertificates == ["cert-one", "cert-two"])
         #expect(ssl.certificateVerification == .fullVerification)
-        #expect(ssl.cert == "client-cert")
+        #expect(ssl.certificate == "client-cert")
         #expect(ssl.privateKey?.key == "client-key")
         #expect(ssl.privateKey?.password == "key-password")
 
@@ -422,7 +422,7 @@ struct SwiftConfigurationTests {
 
     // MARK: - Replaced keys
 
-    /// A key replaced before 1.0 throws, naming its replacement, rather than being read as unset — an old
+    /// A replaced key throws, naming its replacement, rather than being read as unset — an old
     /// `compact` value would otherwise silently mean the opposite under `isNoCompactEnabled`.
     @Test(
         arguments: [
@@ -431,6 +431,7 @@ struct SwiftConfigurationTests {
             ("connectionHeartbeatInterval", .init(.int(45), isSecret: false), "connectionHeartbeatIntervalSeconds"),
             ("connectionIdleTimeout", .init(.int(120), isSecret: false), "connectionIdleTimeoutSeconds"),
             ("ssl.verifyFlag", .init(.string("peerCert"), isSecret: false), "certificateVerification"),
+            ("ssl.cert", .init(.string("client-cert"), isSecret: false), "ssl.certificate"),
         ] as [(AbsoluteConfigKey, ConfigValue, String)]
     )
     func replacedKeyThrows(key: AbsoluteConfigKey, value: ConfigValue, replacement: String) throws {
@@ -483,7 +484,7 @@ struct SwiftConfigurationTests {
 
     @Test
     func sslIsIgnoredWhenNotEnabled() throws {
-        let config = try self.makeConfiguration(adding: ["ssl.cert": "client-cert"])
+        let config = try self.makeConfiguration(adding: ["ssl.certificate": "client-cert"])
         #expect(config.ssl == nil)
     }
 
@@ -493,7 +494,7 @@ struct SwiftConfigurationTests {
         let ssl = try #require(config.ssl)
         #expect(ssl.trustedCertificates == nil)
         #expect(ssl.certificateVerification == .ipAddressVerification)
-        #expect(ssl.cert == nil)
+        #expect(ssl.certificate == nil)
         #expect(ssl.privateKey == nil)
     }
 
@@ -509,7 +510,7 @@ struct SwiftConfigurationTests {
         var values: [AbsoluteConfigKey: ConfigValue] = [
             "ssl.trustedCertificates": .init(.stringArray(["cert-one"]), isSecret: false),
             "ssl.certificateVerification": "fullVerification",
-            "ssl.cert": "client-cert",
+            "ssl.certificate": "client-cert",
             "ssl.privateKey": .init(.string("client-key"), isSecret: true),
             "ssl.privateKeyPassword": .init(.string("key-password"), isSecret: true),
         ]
@@ -523,7 +524,7 @@ struct SwiftConfigurationTests {
         #expect(logs.all.filter { $0.level == .warning }.count == 1)
         #expect(
             warning.metadata[CassandraClient.ConfigurationLogKey.ignoredKeys]?.description
-                == "ssl.trustedCertificates, ssl.certificateVerification, ssl.cert, ssl.privateKey, ssl.privateKeyPassword"
+                == "ssl.trustedCertificates, ssl.certificateVerification, ssl.certificate, ssl.privateKey, ssl.privateKeyPassword"
         )
     }
 
