@@ -25,22 +25,19 @@ extension CassandraClient {
         internal let parameters: [Value]
         internal let options: Options
         internal let rawPointer: OpaquePointer
-        private let _encryptor: AnyObject?
-
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        private var encryptor: Encryptor? { self._encryptor as? Encryptor }
+        private let encryptor: Encryptor?
 
         /// Create a new `Statement`.
         public convenience init(query: String, parameters: [Value] = [], options: Options = .init()) throws {
-            try self.init(query: query, parameters: parameters, options: options, _encryptor: nil)
+            try self.init(query: query, parameters: parameters, options: options, encryptor: nil)
         }
 
         /// Internal init that accepts an encryptor injected by Session from Configuration.
-        internal init(query: String, parameters: [Value], options: Options, _encryptor: AnyObject?) throws {
+        internal init(query: String, parameters: [Value], options: Options, encryptor: Encryptor?) throws {
             self.query = query
             self.parameters = parameters
             self.options = options
-            self._encryptor = _encryptor
+            self.encryptor = encryptor
             self.rawPointer = cass_statement_new(query, parameters.count)
 
             try self.bindParameters()
@@ -52,12 +49,12 @@ extension CassandraClient {
             query: String = "(prepared)",
             parameters: [Value],
             options: Options,
-            _encryptor: AnyObject?
+            encryptor: Encryptor?
         ) throws {
             self.query = query
             self.parameters = parameters
             self.options = options
-            self._encryptor = _encryptor
+            self.encryptor = encryptor
             self.rawPointer = preparedRawPointer
 
             try self.bindParameters()
@@ -232,13 +229,12 @@ extension CassandraClient {
             }
 
             if let requestTimeout = options.requestTimeout {
-                try checkResult { cass_statement_set_request_timeout(self.rawPointer, requestTimeout) }
+                let milliseconds = try requestTimeout.driverMilliseconds(UInt64.self, name: "requestTimeout")
+                try checkResult { cass_statement_set_request_timeout(self.rawPointer, milliseconds) }
             }
 
-            if let isIdempotent = options.isIdempotent {
-                try checkResult {
-                    cass_statement_set_is_idempotent(self.rawPointer, isIdempotent ? cass_true : cass_false)
-                }
+            try checkResult {
+                cass_statement_set_is_idempotent(self.rawPointer, options.isIdempotent ? cass_true : cass_false)
             }
         }
 
@@ -248,9 +244,6 @@ extension CassandraClient {
             context: EncryptionContext,
             at index: Int
         ) throws -> CassError {
-            guard #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) else {
-                throw CassandraClient.Error.encryptionError("Encryption requires macOS 15.0+")
-            }
             guard let encryptor = self.encryptor else {
                 throw CassandraClient.Error.encryptionConfigError(
                     "Encryptor required but not set in Configuration"
@@ -311,9 +304,6 @@ extension CassandraClient {
         ///
         /// - Parameter pagingSize: Rows per page. Must be in `1...Int32.max`; a non-positive size
         ///   disables paging in the driver rather than limiting the page, and is rejected here.
-        ///
-        /// - Note: The `EventLoopFuture` `execute` takes the statement as `sending`, so a hand-rolled
-        ///   loop needs a new `Statement` for each page.
         public func setPagingSize(_ pagingSize: Int) throws {
             guard let size = Int32(exactly: pagingSize), size > 0 else {
                 throw CassandraClient.Error.badParams(
@@ -517,12 +507,12 @@ extension CassandraClient {
             /// Sets the statement's consistency level. `nil` inherits
             /// ``CassandraClient/Configuration/consistency``.
             public var consistency: CassandraClient.Consistency?
-            /// Sets the statement's request timeout in milliseconds. `nil` inherits
-            /// ``CassandraClient/Configuration/requestTimeoutMillis``.
-            public var requestTimeout: UInt64?
-            /// Whether the statement is safe to run more than once.
+            /// Sets the statement's request timeout, rounded up to whole milliseconds. `nil` inherits
+            /// ``CassandraClient/Configuration/requestTimeout``.
+            public var requestTimeout: Duration?
+            /// Whether the statement is safe to run more than once. Default `false`.
             ///
-            /// A statement left unset is treated as unsafe to replay, which holds the driver back
+            /// A statement not marked idempotent is treated as unsafe to replay, which holds the driver back
             /// from two recovery behaviors:
             ///
             /// - When a coordinator reports that it is overloaded, shutting down, or hit an internal
@@ -541,27 +531,13 @@ extension CassandraClient {
             /// - Note: This has no effect on a statement added to a ``CassandraClient/Batch``. The
             ///   driver decides whether to replay a batch from the batch's own setting, so use
             ///   ``CassandraClient/Batch/Configuration/isIdempotent`` for that.
-            public var isIdempotent: Bool?
-
-            /// Type-erased backing store for ``encryptionContextBuilder``.
-            private var _encryptionContextBuilder: (any Sendable)?
+            public var isIdempotent: Bool = false
 
             /// Closure that extracts encryption context from each row during Codable decoding.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionContextBuilder:
                 (
                     @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 )?
-            {
-                get {
-                    self._encryptionContextBuilder
-                        as? @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
-                }
-                set { self._encryptionContextBuilder = newValue }
-            }
-
-            /// Backing store for ``encryptionTable``.
-            private var _encryptionTable: String?
 
             /// Table name for column-registration-based automatic decryption.
             /// Use `"table"` (combined with the session keyspace) or `"keyspace.table"` for cross-keyspace queries.
@@ -579,21 +555,17 @@ extension CassandraClient {
             ///   check only that each encrypted value's ``EncryptionContext`` names a registered column —
             ///   a plaintext value bound to a registered column is written as-is. Neither path verifies
             ///   that a value's context names the column it is actually bound to.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-            public var encryptionTable: String? {
-                get { self._encryptionTable }
-                set { self._encryptionTable = newValue }
-            }
+            public var encryptionTable: String?
 
             /// Whether any encryption options are set (context builder or table name).
             internal var hasEncryptionOptions: Bool {
-                self._encryptionContextBuilder != nil || self._encryptionTable != nil
+                self.encryptionContextBuilder != nil || self.encryptionTable != nil
             }
 
             public init(
                 consistency: CassandraClient.Consistency? = nil,
-                requestTimeout: UInt64? = nil,
-                isIdempotent: Bool? = nil
+                requestTimeout: Duration? = nil,
+                isIdempotent: Bool = false
             ) {
                 self.consistency = consistency
                 self.requestTimeout = requestTimeout
