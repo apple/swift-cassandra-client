@@ -71,8 +71,8 @@ extension CassandraClient.Configuration {
     /// A custom ``authenticator``, ``encryptor`` and ``encryptionSchemas`` cannot be expressed in
     /// configuration and must be set in code.
     ///
-    /// The keys `schema`, `compact`, `connectionHeartbeatInterval`, `connectionIdleTimeout` and `ssl.verifyFlag`
-    /// were replaced before 1.0. Setting one throws, naming its replacement, rather than being ignored.
+    /// The keys `schema`, `compact`, `connectionHeartbeatInterval`, `connectionIdleTimeout`, `ssl.verifyFlag`
+    /// and `ssl.cert` were replaced. Setting one throws, naming its replacement, rather than being ignored.
     ///
     /// - Throws: If a value is out of range or is not one of the accepted values for its key, a required key is
     ///   missing, or a replaced key is set. `contactPoints` is
@@ -258,7 +258,7 @@ extension CassandraClient.Configuration {
         }
     }
 
-    /// Throws if a key replaced before 1.0 is set, naming its replacement. Reading it as unset instead would
+    /// Throws if a replaced key is set, naming its replacement. Reading it as unset instead would
     /// change behaviour without notice — an old `compact` value, for one, now means the opposite.
     private static func rejectReplacedKeys(in configReader: ConfigReader) throws {
         let replaced: [(key: ConfigKey, reader: ConfigReader, message: String)] = [
@@ -279,6 +279,7 @@ extension CassandraClient.Configuration {
                 "verifyFlag", configReader.scoped(to: "ssl"),
                 "'ssl.verifyFlag' was renamed to 'ssl.certificateVerification', with renamed values"
             ),
+            ("cert", configReader.scoped(to: "ssl"), "'ssl.cert' was renamed to 'ssl.certificate'"),
         ]
         for entry in replaced where entry.reader.hasValue(forKey: entry.key) {
             throw CassandraClient.ConfigurationError(message: entry.message)
@@ -314,7 +315,7 @@ extension CassandraClient.Configuration.SSL {
     /// - `certificateVerification` (string, optional, default: "ipAddressVerification"): Verification performed
     ///   on the peer's certificate, one of "none", "noHostnameVerification", "ipAddressVerification" or
     ///   "fullVerification".
-    /// - `cert` (string, optional): PEM encoded client certificate chain.
+    /// - `certificate` (string, optional): PEM encoded client certificate chain.
     /// - `privateKey` (string, optional, secret): PEM encoded client private key.
     /// - `privateKeyPassword` (string, secret): Password for `privateKey`. Required when `privateKey` is set.
     ///
@@ -326,14 +327,17 @@ extension CassandraClient.Configuration.SSL {
         self.init()
 
         self.trustedCertificates = configReader.stringArray(forKey: "trustedCertificates")
-        if let verification = try configReader.string(
-            forKey: "certificateVerification",
-            asOrThrow: CertificateVerification.self
-        ) {
-            self.certificateVerification = verification
+        if let name = configReader.string(forKey: "certificateVerification") {
+            guard let verification = CertificateVerificationName(rawValue: name) else {
+                let valids = CertificateVerificationName.allCases.map(\.rawValue).joined(separator: ", ")
+                throw CassandraClient.ConfigurationError(
+                    message: "'certificateVerification' \(name) is invalid. Valid values: \(valids)"
+                )
+            }
+            self.certificateVerification = CertificateVerification(verification)
         }
 
-        self.cert = configReader.string(forKey: "cert")
+        self.certificate = configReader.string(forKey: "certificate")
         if let privateKey = configReader.string(forKey: "privateKey", isSecret: true) {
             let password = try configReader.requiredString(forKey: "privateKeyPassword", isSecret: true)
             self.privateKey = (key: privateKey, password: password)
@@ -351,8 +355,8 @@ extension CassandraClient.Configuration.SSL {
         if configReader.string(forKey: "certificateVerification") != nil {
             ignoredKeys.append("certificateVerification")
         }
-        if configReader.string(forKey: "cert") != nil {
-            ignoredKeys.append("cert")
+        if configReader.string(forKey: "certificate") != nil {
+            ignoredKeys.append("certificate")
         }
         if configReader.string(forKey: "privateKey", isSecret: true) != nil {
             ignoredKeys.append("privateKey")
@@ -371,6 +375,27 @@ extension CassandraClient.Configuration.SSL {
                 )
             ]
         )
+    }
+}
+
+extension CassandraClient.Configuration.SSL {
+    /// The accepted values of the `certificateVerification` key.
+    fileprivate enum CertificateVerificationName: String, CaseIterable {
+        case none
+        case noHostnameVerification
+        case ipAddressVerification
+        case fullVerification
+    }
+}
+
+extension CassandraClient.Configuration.SSL.CertificateVerification {
+    fileprivate init(_ name: CassandraClient.Configuration.SSL.CertificateVerificationName) {
+        switch name {
+        case .none: self = .none
+        case .noHostnameVerification: self = .noHostnameVerification
+        case .ipAddressVerification: self = .ipAddressVerification
+        case .fullVerification: self = .fullVerification
+        }
     }
 }
 
