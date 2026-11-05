@@ -30,6 +30,7 @@ jobs:
     with:
       build_scheme: swift-cassandra-client
       swift_test_enabled: false  # requires running Cassandra server
+      swift_6_1_enabled: false  # the package requires Swift 6.2.3
       watchos_xcode_build_enabled: false  # posix API availability
       tvos_xcode_build_enabled: false  # posix API availability
 
