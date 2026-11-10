@@ -14,6 +14,9 @@ jobs:
     with:
       license_header_check_project_name: "Swift Cassandra Client"
       api_breakage_check_enabled: false
+      # The documentation check fails on Swift 6.4 on the bundled libuv headers. Remove once this is fixed:
+      # https://github.com/swiftlang/swift-package-manager/issues/10658
+      docs_check_container_image: "swift:6.3-noble"
 
   unit-tests:
     name: Unit tests
