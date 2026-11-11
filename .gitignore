@@ -13,3 +13,6 @@ Package.resolved
 # DocC generated files
 .docc-build
 
+
+# Bytecode from the api-review renderer
+api-review/__pycache__/
