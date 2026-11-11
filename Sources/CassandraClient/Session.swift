@@ -203,7 +203,7 @@ import NIOCore  // for async-await bridge
     func batch(
         configuration: CassandraClient.Batch.Configuration,
         logger: Logger?,
-        _ build: (inout CassandraClient.Batch) async throws -> Void
+        _ build: sending (inout CassandraClient.Batch) async throws -> Void
     ) async throws
 
     /// Terminate the session and free resources.
@@ -1970,7 +1970,7 @@ extension CassandraClient.Session {
     public func batch(
         configuration: CassandraClient.Batch.Configuration = .init(),
         logger: Logger? = .none,
-        _ build: (inout CassandraClient.Batch) async throws -> Void
+        _ build: sending (inout CassandraClient.Batch) async throws -> Void
     ) async throws {
         let resolver:
             (
