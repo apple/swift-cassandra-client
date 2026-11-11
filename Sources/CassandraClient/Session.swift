@@ -21,15 +21,11 @@ import NIOConcurrencyHelpers
 import NIOCore  // for async-await bridge
 
 /// API for executing statements against Cassandra.
-@preconcurrency public protocol CassandraSession: Sendable {
-    var eventLoopGroup: EventLoopGroup { get }
-
+public protocol CassandraSession: Sendable {
     /// Encryptor for transparent column encryption.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     var encryptor: CassandraClient.Encryptor? { get }
 
     /// Registered encrypted column schemas for automatic context building.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     var encryptionSchemas: [String: CassandraClient.EncryptionSchema] { get }
 
     /// The default keyspace for this session, used to resolve unqualified table names.
@@ -45,86 +41,9 @@ import NIOCore  // for async-await bridge
     ///
     /// - Parameters:
     ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - eventLoop: The `EventLoop` to use. Optional.
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
-    func execute(
-        statement: sending CassandraClient.Statement,
-        on eventLoop: EventLoop?,
-        logger: Logger?
-    )
-        -> EventLoopFuture<CassandraClient.Rows>
-
-    /// Execute a prepared statement.
-    ///
-    /// Resulting rows are paginated.
-    ///
-    /// - Parameters:
-    ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - pageSize: The maximum number of rows returned per page. Must be positive; a
-    ///     non-positive size fails the call with ``CassandraClient/Error/badParams(_:)``.
-    ///   - eventLoop: The `EventLoop` to use. Optional.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
-    func execute(
-        statement: sending CassandraClient.Statement,
-        pageSize: Int32,
-        on eventLoop: EventLoop?,
-        logger: Logger?
-    ) -> EventLoopFuture<CassandraClient.PaginatedRows>
-
-    /// Prepare a CQL query for repeated execution.
-    ///
-    /// The server parses and validates the query once. The returned ``CassandraClient/PreparedStatement``
-    /// can then be bound with different parameters and executed multiple times without re-parsing.
-    ///
-    /// - Parameters:
-    ///   - query: The CQL query string with `?` placeholders.
-    ///   - encryptionTable: The table name for encryption context resolution. If provided, PK column names are looked up at prepare time.
-    ///   - eventLoop: The `EventLoop` to use. Optional.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: A ``CassandraClient/PreparedStatement``.
-    func prepare(
-        _ query: String,
-        encryptionTable: String?,
-        on eventLoop: EventLoop?,
-        logger: Logger?
-    ) -> EventLoopFuture<CassandraClient.PreparedStatement>
-
-    /// Execute a prepared statement with bound parameters.
-    ///
-    /// **All** rows are returned.
-    ///
-    /// - Parameters:
-    ///   - prepared: The ``CassandraClient/PreparedStatement`` to execute.
-    ///   - parameters: The values to bind to the statement's `?` placeholders.
-    ///   - options: Statement options (consistency, timeout, encryption context).
-    ///   - eventLoop: The `EventLoop` to use. Optional.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: The resulting ``CassandraClient/Rows``.
-    func execute(
-        prepared: CassandraClient.PreparedStatement,
-        parameters: sending [CassandraClient.Statement.Value],
-        options: CassandraClient.Statement.Options,
-        on eventLoop: EventLoop?,
-        logger: Logger?
-    ) -> EventLoopFuture<CassandraClient.Rows>
-
-    /// Execute a prepared statement.
-    ///
-    /// **All** rows are returned, unless the statement sets a page size with
-    /// ``CassandraClient/Statement/setPagingSize(_:)``, which limits the result to a single page.
-    ///
-    /// - Parameters:
-    ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: The resulting ``CassandraClient/Rows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
         statement: CassandraClient.Statement,
         logger: Logger?
@@ -142,7 +61,6 @@ import NIOCore  // for async-await bridge
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/PaginatedRows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
         statement: sending CassandraClient.Statement,
         pageSize: Int32,
@@ -161,7 +79,6 @@ import NIOCore  // for async-await bridge
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: A ``CassandraClient/PreparedStatement``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func prepare(
         _ query: String,
         encryptionTable: String?,
@@ -177,7 +94,6 @@ import NIOCore  // for async-await bridge
     ///   - logger: The `Logger` to use. Optional.
     ///
     /// - Returns: The resulting ``CassandraClient/Rows``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value],
@@ -185,21 +101,6 @@ import NIOCore  // for async-await bridge
         logger: Logger?
     ) async throws -> CassandraClient.Rows
 
-    /// Execute a batch of statements.
-    ///
-    /// - Parameters:
-    ///   - configuration: Options to apply to the batch.
-    ///   - eventLoop: The `EventLoop` to use, or create a new one.
-    ///   - logger: If `nil`, the client's default `Logger` is used.
-    ///   - build: Closure that adds statements to the batch.
-    func batch(
-        configuration: CassandraClient.Batch.Configuration,
-        on eventLoop: EventLoop?,
-        logger: Logger?,
-        _ build: (inout CassandraClient.Batch) throws -> Void
-    ) -> EventLoopFuture<Void>
-
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func batch(
         configuration: CassandraClient.Batch.Configuration,
         logger: Logger?,
@@ -211,7 +112,6 @@ import NIOCore  // for async-await bridge
     func shutdown() throws
 
     /// Terminate the session and free resources.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func shutdownAsync() async throws
 
     /// Get metrics for this session.
@@ -222,7 +122,6 @@ import NIOCore  // for async-await bridge
 // We should remove it before 1.0
 extension CassandraSession {
     /// Terminate the session and free resources.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     @available(*, deprecated, message: "You must implement this function to shutdown async")
     func shutdownAsync() async throws {
         try await withCheckedThrowingContinuation { continuation in
@@ -255,24 +154,6 @@ extension CassandraSession {
         }
     }
 
-    /// Execute a prepared statement.
-    ///
-    /// **All** rows are returned, unless the statement sets a page size with
-    /// ``CassandraClient/Statement/setPagingSize(_:)``, which limits the result to a single page.
-    ///
-    /// - Parameters:
-    ///   - statement: The ``CassandraClient/Statement`` to execute.
-    ///   - logger: The `Logger` to use. Optional.
-    ///
-    /// - Returns: The resulting ``CassandraClient/Rows``.
-    internal func execute(
-        statement: sending CassandraClient.Statement,
-        logger: Logger? = .none
-    )
-        -> EventLoopFuture<CassandraClient.Rows>
-    {
-        self.execute(statement: statement, on: nil, logger: logger)
-    }
 }
 
 extension CassandraSession {
@@ -280,8 +161,7 @@ extension CassandraSession {
         row: CassandraClient.Row,
         options: CassandraClient.Statement.Options
     ) throws -> CassandraClient.RowDecoder {
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *),
-            let builder = options.encryptionContextBuilder,
+        if let builder = options.encryptionContextBuilder,
             let encryptor = self.encryptor
         {
             let ctx = try builder(row)
@@ -291,8 +171,7 @@ extension CassandraSession {
                 rowContext: ctx
             )
         }
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *),
-            let tableName = options.encryptionTable,
+        if let tableName = options.encryptionTable,
             let encryptor = self.encryptor
         {
             let ctx = try self.buildEncryptionContext(
@@ -310,7 +189,6 @@ extension CassandraSession {
     }
 
     /// Creates a Statement with the session's encryptor injected from Configuration.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     private func makeStatement(
         query: String,
         parameters: [CassandraClient.Statement.Value],
@@ -321,271 +199,7 @@ extension CassandraSession {
             query: query,
             parameters: parameters,
             options: options,
-            _encryptor: self.encryptor
-        )
-    }
-
-    /// Run insert / update / delete or DDL command where no result is expected.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func run(
-        _ command: String,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<Void> {
-        self.query(command, parameters: parameters, options: options, on: eventLoop, logger: logger).map { _ in () }
-    }
-
-    /// Query small data-sets that fit into memory. Only use this when it is safe to buffer the entire data-set into memory.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    @preconcurrency
-    public func query<T>(
-        _ query: String,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none,
-        transform: @escaping @Sendable (CassandraClient.Row) -> T?
-    ) -> EventLoopFuture<[T]> {
-        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger).map {
-            rows in
-            rows.compactMap(transform)
-        }
-    }
-
-    /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    @preconcurrency
-    public func query<T: Decodable & Sendable>(
-        _ query: String,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<[T]> {
-        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger)
-            .flatMapThrowing { rows in
-                let result = try rows.map { row in
-                    try T(from: self.makeDecoder(row: row, options: options))
-                }
-                self.logDecryptedRows(count: result.count, options: options, logger: logger)
-                return result
-            }
-    }
-
-    /// Query small data-sets that fit into memory, decoding each row into `model`.
-    ///
-    /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
-    /// but spells out the decoded type explicitly at the call site, e.g.
-    /// `session.query("select ...", withModelType: Model.self)`.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    @preconcurrency
-    public func query<T: Decodable & Sendable>(
-        _ query: String,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none,
-        withModelType model: T.Type
-    ) -> EventLoopFuture<[T]> {
-        self.query(query, parameters: parameters, options: options, on: eventLoop, logger: logger)
-    }
-
-    /// Query large data-sets where using an interator helps control memory usage.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    ///
-    /// - Important:
-    ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
-    ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
-    public func query(
-        _ query: String,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<CassandraClient.Rows> {
-        do {
-            let statement: CassandraClient.Statement
-            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-            } else {
-                statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
-            }
-            return self.execute(statement: statement, on: eventLoop, logger: logger)
-        } catch {
-            if let cassError = error as? CassandraClient.Error {
-                CassandraClient.RequestLog.logFailure(
-                    cassError,
-                    query: query,
-                    consistency: nil,
-                    startedAt: nil,
-                    logger: logger ?? self.logger
-                )
-            }
-            let eventLoop = eventLoop ?? eventLoopGroup.next()
-            return eventLoop.makeFailedFuture(error)
-        }
-    }
-
-    /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
-    ///
-    /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func query(
-        _ query: String,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        pageSize: Int32,
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
-        do {
-            let statement: CassandraClient.Statement
-            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-            } else {
-                statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
-            }
-            return self.execute(statement: statement, pageSize: pageSize, on: eventLoop, logger: logger)
-        } catch {
-            if let cassError = error as? CassandraClient.Error {
-                CassandraClient.RequestLog.logFailure(
-                    cassError,
-                    query: query,
-                    consistency: nil,
-                    startedAt: nil,
-                    logger: logger ?? self.logger
-                )
-            }
-            let eventLoop = eventLoop ?? eventLoopGroup.next()
-            return eventLoop.makeFailedFuture(error)
-        }
-    }
-
-    /// Prepare a CQL query for repeated execution.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func prepare(
-        _ query: String,
-        encryptionTable: String? = nil,
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
-        self.prepare(query, encryptionTable: encryptionTable, on: eventLoop, logger: logger)
-    }
-
-    /// Execute a prepared statement with bound parameters.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    public func execute(
-        prepared: CassandraClient.PreparedStatement,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<CassandraClient.Rows> {
-        do {
-            let statement: CassandraClient.Statement
-            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                try self.validateEncryptionBindings(
-                    prepared: prepared,
-                    parameters: parameters,
-                    options: options
-                )
-                statement = try CassandraClient.Statement(
-                    preparedRawPointer: prepared.bind(),
-                    query: prepared.query,
-                    parameters: parameters,
-                    options: options,
-                    _encryptor: self.encryptor
-                )
-            } else {
-                statement = try CassandraClient.Statement(
-                    preparedRawPointer: prepared.bind(),
-                    query: prepared.query,
-                    parameters: parameters,
-                    options: options,
-                    _encryptor: nil
-                )
-            }
-            return self.execute(statement: statement, on: eventLoop, logger: logger)
-        } catch {
-            if let cassError = error as? CassandraClient.Error {
-                CassandraClient.RequestLog.logFailure(
-                    cassError,
-                    query: prepared.query,
-                    consistency: nil,
-                    startedAt: nil,
-                    logger: logger ?? self.logger
-                )
-            }
-            let eventLoop = eventLoop ?? eventLoopGroup.next()
-            return eventLoop.makeFailedFuture(error)
-        }
-    }
-
-    /// Execute a prepared statement and decode each row into a `Decodable` type.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    @preconcurrency
-    public func execute<T: Decodable & Sendable>(
-        prepared: CassandraClient.PreparedStatement,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none
-    ) -> EventLoopFuture<[T]> {
-        var effectiveOptions = options
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            if effectiveOptions.encryptionTable == nil {
-                effectiveOptions.encryptionTable = prepared.encryptionTable
-            }
-        }
-        let finalOptions = effectiveOptions
-        return self.execute(
-            prepared: prepared,
-            parameters: parameters,
-            options: finalOptions,
-            on: eventLoop,
-            logger: logger
-        ).flatMapThrowing { rows in
-            let result = try rows.map { row in
-                try T(from: self.makeDecoder(row: row, options: finalOptions))
-            }
-            self.logDecryptedRows(count: result.count, options: finalOptions, logger: logger)
-            return result
-        }
-    }
-
-    /// Execute a prepared statement, decoding each row into `model`.
-    ///
-    /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
-    /// but spells out the decoded type explicitly at the call site, e.g.
-    /// `session.execute(prepared: statement, withModelType: Model.self)`.
-    ///
-    /// If `eventLoop` is `nil`, a new one will get created through the `EventLoopGroup` provided during initialization.
-    @preconcurrency
-    public func execute<T: Decodable & Sendable>(
-        prepared: CassandraClient.PreparedStatement,
-        parameters: sending [CassandraClient.Statement.Value] = [],
-        options: CassandraClient.Statement.Options = .init(),
-        on eventLoop: EventLoop? = .none,
-        logger: Logger? = .none,
-        withModelType model: T.Type
-    ) -> EventLoopFuture<[T]> {
-        self.execute(
-            prepared: prepared,
-            parameters: parameters,
-            options: options,
-            on: eventLoop,
-            logger: logger
+            encryptor: self.encryptor
         )
     }
 }
@@ -610,15 +224,6 @@ final class CassFuture<T>: Sendable {
         self.mapper = mapper
     }
 
-    func asNIOFuture(eventLoop: any EventLoop) -> EventLoopFuture<T> where T: Sendable {
-        let promise = eventLoop.makePromise(of: T.self)
-        self.setResultCallback { result in
-            promise.completeWith(result)
-        }
-        return promise.futureResult
-    }
-
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func await() async throws -> T where T: Sendable {
         try await withCheckedThrowingContinuation { continuation in
             setResultCallback { result in
@@ -778,17 +383,10 @@ struct CassSession: Sendable, ~Copyable {
 
 extension CassandraClient {
     internal final class Session: CassandraSession, Sendable {
-        private let eventLoopGroupContainer: EventLoopGroupContainer
-        public var eventLoopGroup: EventLoopGroup {
-            self.eventLoopGroupContainer.value
-        }
-
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public var encryptor: CassandraClient.Encryptor? {
             self.configuration.encryptor
         }
 
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public var encryptionSchemas: [String: CassandraClient.EncryptionSchema] {
             self.configuration.encryptionSchemas
         }
@@ -805,10 +403,8 @@ extension CassandraClient {
         private let underlying: CassSession
 
         /// The running metrics poller task, plus a stop flag. Guarded by `_poller`.
-        /// `task` holds a `Task<Void, Never>`, erased to `any Sendable` for availability — the task is
-        /// only created on macOS 12+, but `shutdown()`/`deinit` that touch this handle are not gated.
         private struct PollerHandle {
-            var task: (any Sendable)?
+            var task: Task<Void, Never>?
             /// Set by `stopMetricsPoller()` under the lock; the tick reads the driver snapshot and
             /// records gauges only while this is `false`, so no gauge is recorded once shutdown begins.
             var stopped = false
@@ -816,7 +412,6 @@ extension CassandraClient {
 
         private enum State {
             case idle
-            case connectingFuture(EventLoopFuture<Void>)
             case connecting(ConnectionTask)
             case connected
             case disconnecting(ConnectionTask)
@@ -826,12 +421,10 @@ extension CassandraClient {
 
         internal init(
             configuration: Configuration,
-            logger: Logger,
-            eventLoopGroupContainer: EventLoopGroupContainer
+            logger: Logger
         ) {
             self.configuration = configuration
             self.logger = logger
-            self.eventLoopGroupContainer = eventLoopGroupContainer
             self.underlying = .init()
         }
 
@@ -853,15 +446,14 @@ extension CassandraClient {
             let action: Action = self._state.withLockedValue { state in
                 switch state {
                 case .connected:
-                    let el = self.eventLoopGroup.next()
-                    let promise = el.makePromise(of: Void.self)
+                    let promise = MultiThreadedEventLoopGroup.singleton.next().makePromise(of: Void.self)
                     state = .disconnectingFuture(promise.futureResult)
                     return .disconnectThenMarkShut(promise)
                 case .disconnecting:
                     preconditionFailure("Cannot call sync shutdown after async shutdown")
                 case .disconnectingFuture(let existing):
                     return .wait(existing)
-                case .idle, .connecting, .connectingFuture, .disconnected:
+                case .idle, .connecting, .disconnected:
                     state = .disconnected
                     return .alreadyShut
                 }
@@ -891,7 +483,6 @@ extension CassandraClient {
             }
         }
 
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         func shutdownAsync() async throws {
             enum Action {
                 case alreadyShut
@@ -913,7 +504,7 @@ extension CassandraClient {
                     return .wait(existing)
                 case .disconnectingFuture(let existing):
                     return .waitFuture(existing)
-                case .idle, .connecting, .connectingFuture, .disconnected:
+                case .idle, .connecting, .disconnected:
                     state = .disconnected
                     return .alreadyShut
                 }
@@ -944,7 +535,7 @@ extension CassandraClient {
         private func handleConnectionSucceeded() throws {
             try self._state.withLockedValue { state in
                 switch state {
-                case .connectingFuture, .connecting:
+                case .connecting:
                     state = .connected
                 case .disconnected, .disconnecting, .disconnectingFuture:
                     // Shut down while connecting, stay disconnected
@@ -954,190 +545,6 @@ extension CassandraClient {
                     // the sole caller here, so the state is always a connecting state or
                     // `.disconnected`.
                     assertionFailure("handleConnectionSucceeded called in unexpected state \(state)")
-                }
-            }
-        }
-
-        /// What `withConnection` should do after inspecting the connection state.
-        private enum SyncConnectionAction {
-            /// We started the connection; await it, then mark the session connected.
-            case startedConnecting(EventLoopFuture<Void>)
-            /// Someone else started the connection as a future; just await it.
-            case awaitConnectingFuture(EventLoopFuture<Void>)
-            /// Someone else started the connection as a task; just await it.
-            case awaitConnecting(ConnectionTask)
-            /// Already connected.
-            case ready
-            /// Session has been shut down.
-            case disconnected
-        }
-
-        /// Ensure the session is connected, then invoke `body` on the given event loop.
-        private func withConnection<Result: Sendable>(
-            on eventLoop: EventLoop?,
-            logger: Logger?,
-            _ body: @escaping @Sendable (EventLoop, Logger) -> EventLoopFuture<Result>
-        ) -> EventLoopFuture<Result> {
-            let eventLoop = eventLoop ?? self.eventLoopGroup.next()
-            let logger = logger ?? self.logger
-
-            let action: SyncConnectionAction = self._state.withLockedValue { state in
-                switch state {
-                case .idle:
-                    let future = self.connect(on: eventLoop, logger: logger)
-                    state = .connectingFuture(future)
-                    return .startedConnecting(future)
-                case .connectingFuture(let future):
-                    return .awaitConnectingFuture(future)
-                case .connecting(let task):
-                    return .awaitConnecting(task)
-                case .connected:
-                    return .ready
-                case .disconnected, .disconnecting, .disconnectingFuture:
-                    return .disconnected
-                }
-            }
-
-            switch action {
-            case .startedConnecting(let future):
-                return future.flatMap { _ -> EventLoopFuture<Result> in
-                    do {
-                        try self.handleConnectionSucceeded()
-                        self.startMetricsPoller()
-                        return body(eventLoop, logger)
-                    } catch {
-                        return eventLoop.makeFailedFuture(error)
-                    }
-                }
-            case .awaitConnectingFuture(let future):
-                return future.flatMap { _ in
-                    body(eventLoop, logger)
-                }
-            case .awaitConnecting(let task):
-                let promise = eventLoop.makePromise(of: Result.self)
-                if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
-                    promise.completeWithTask {
-                        try await task.task.value
-                        return try await body(eventLoop, logger).get()
-                    }
-                }
-                return promise.futureResult
-            case .ready:
-                return body(eventLoop, logger)
-            case .disconnected:
-                if self.eventLoopGroupContainer.managed {
-                    preconditionFailure("client is disconnected")
-                }
-                return eventLoop.makeFailedFuture(Error.disconnected)
-            }
-        }
-
-        func execute(
-            statement: sending Statement,
-            on eventLoop: EventLoop?,
-            logger: Logger? = .none
-        ) -> EventLoopFuture<Rows> {
-            // `statement` is `sending`: the caller has transferred sole ownership, so capturing it
-            // into the `@Sendable` body is safe even though `Statement` isn't `Sendable`.
-            nonisolated(unsafe) let statement = statement
-            return self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
-                logger.debug("executing: \(statement.query)")
-                if self.configuration.logBoundValues {
-                    logger.trace("\(statement.parameters)")
-                }
-                // Capture only Sendable values before bridging — never `statement` into the completion.
-                let query = statement.query
-                let consistency = statement.options.consistency ?? self.configuration.consistency
-                let boundValues =
-                    self.configuration.logBoundValues
-                    ? CassandraClient.RequestLog.formatValues(statement.parameters) : nil
-                let startedAt = DispatchTime.now()
-                let future = self.underlying.execute(statement: statement)
-                return CassandraClient.RequestLog.instrument(
-                    future.asNIOFuture(eventLoop: eventLoop),
-                    startedAt: startedAt,
-                    query: query,
-                    consistency: consistency,
-                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
-                    boundValues: boundValues,
-                    logger: logger
-                )
-            }
-        }
-
-        func execute(
-            statement: sending Statement,
-            pageSize: Int32,
-            on eventLoop: EventLoop?,
-            logger: Logger? = .none
-        ) -> EventLoopFuture<CassandraClient.PaginatedRows> {
-            let eventLoop = eventLoop ?? self.eventLoopGroup.next()
-
-            do {
-                try statement.setPagingSize(Int(pageSize))
-            } catch {
-                if let cassError = error as? CassandraClient.Error {
-                    CassandraClient.RequestLog.logFailure(
-                        cassError,
-                        query: statement.query,
-                        consistency: nil,
-                        startedAt: nil,
-                        logger: logger ?? self.logger
-                    )
-                }
-                return eventLoop.makeFailedFuture(error)
-            }
-
-            return eventLoop.makeSucceededFuture(
-                PaginatedRows(session: self, statement: statement, on: eventLoop, logger: logger)
-            )
-        }
-
-        func prepare(
-            _ query: String,
-            encryptionTable: String? = nil,
-            on eventLoop: EventLoop?,
-            logger: Logger? = .none
-        ) -> EventLoopFuture<CassandraClient.PreparedStatement> {
-            self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
-                logger.debug("preparing: \(query)")
-                let startedAt = DispatchTime.now()
-                let future = self.underlying.prepare(query: query)
-                let bridged = CassandraClient.RequestLog.instrument(
-                    future.asNIOFuture(eventLoop: eventLoop),
-                    startedAt: startedAt,
-                    query: query,
-                    consistency: nil,
-                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
-                    logger: logger
-                )
-                return bridged.flatMapThrowing { prepared in
-                    let pkColumns: [String]
-                    if let tableName = encryptionTable {
-                        do {
-                            pkColumns = try self.lookupPrimaryKeyColumnNames(tableName: tableName)
-                        } catch {
-                            if let cassError = error as? CassandraClient.Error {
-                                CassandraClient.RequestLog.logFailure(
-                                    cassError,
-                                    query: query,
-                                    consistency: nil,
-                                    startedAt: nil,
-                                    logger: logger
-                                )
-                            }
-                            throw error
-                        }
-                    } else {
-                        pkColumns = []
-                    }
-                    let prepared = CassandraClient.PreparedStatement(
-                        rawPointer: prepared,
-                        query: query,
-                        encryptionTable: encryptionTable,
-                        primaryKeyColumnNames: pkColumns
-                    )
-                    return prepared
                 }
             }
         }
@@ -1208,7 +615,6 @@ extension CassandraClient {
 
         /// Resolve encryption contexts for parameters that have `context: nil` using driver schema metadata.
         /// Discovers PK columns from Cassandra's metadata cache rather than requiring EncryptionSchema registration.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         private func resolveEncryptionContexts(
             prepared: CassandraClient.PreparedStatement,
             parameters: [CassandraClient.Statement.Value],
@@ -1286,7 +692,6 @@ extension CassandraClient {
         }
 
         /// Extract a KeyComponent from a Statement.Value by inspecting its type.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         private static func extractKeyComponent(
             from value: CassandraClient.Statement.Value,
             columnName: String
@@ -1305,168 +710,8 @@ extension CassandraClient {
             }
         }
 
-        func execute(
-            prepared: CassandraClient.PreparedStatement,
-            parameters: sending [CassandraClient.Statement.Value] = [],
-            options: CassandraClient.Statement.Options = .init(),
-            on eventLoop: EventLoop? = .none,
-            logger: Logger? = .none
-        ) -> EventLoopFuture<CassandraClient.Rows> {
-            do {
-                let statement: CassandraClient.Statement
-                if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                    let resolvedParameters = try self.resolveEncryptionContexts(
-                        prepared: prepared,
-                        parameters: parameters,
-                        options: options
-                    )
-                    try self.validateEncryptionBindings(
-                        prepared: prepared,
-                        parameters: resolvedParameters,
-                        options: options
-                    )
-                    statement = try CassandraClient.Statement(
-                        preparedRawPointer: prepared.bind(),
-                        query: prepared.query,
-                        parameters: resolvedParameters,
-                        options: options,
-                        _encryptor: self.encryptor
-                    )
-                } else {
-                    statement = try CassandraClient.Statement(
-                        preparedRawPointer: prepared.bind(),
-                        query: prepared.query,
-                        parameters: parameters,
-                        options: options,
-                        _encryptor: nil
-                    )
-                }
-                return self.execute(statement: statement, on: eventLoop, logger: logger)
-            } catch {
-                if let cassError = error as? CassandraClient.Error {
-                    CassandraClient.RequestLog.logFailure(
-                        cassError,
-                        query: prepared.query,
-                        consistency: nil,
-                        startedAt: nil,
-                        logger: logger ?? self.logger
-                    )
-                }
-                let eventLoop = eventLoop ?? self.eventLoopGroup.next()
-                return eventLoop.makeFailedFuture(error)
-            }
-        }
-
-        func execute(
-            batch: consuming Batch,
-            on eventLoop: EventLoop?,
-            logger: Logger?
-        ) -> EventLoopFuture<Void> {
-            // `Batch` is `~Copyable`; `optionalBatch` consumes it exactly once via `take()`. `consuming`
-            // + move-only means the caller can't retain it, so the `nonisolated(unsafe)` capture is safe.
-            nonisolated(unsafe) var optionalBatch: CassandraClient.Batch? = batch
-            return self.withConnection(on: eventLoop, logger: logger) { eventLoop, logger in
-                logger.debug("executing batch")
-                let startedAt = DispatchTime.now()
-                let future = self.underlying.execute(batch: optionalBatch.take()!)
-                return CassandraClient.RequestLog.instrument(
-                    future.asNIOFuture(eventLoop: eventLoop),
-                    startedAt: startedAt,
-                    query: "batch",
-                    consistency: nil,
-                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
-                    logger: logger
-                )
-            }
-        }
-
-        /// Execute a batch of statements.
-        ///
-        /// - Parameters:
-        ///   - configuration: Options to apply to the batch.
-        ///   - eventLoop: The `EventLoop` to use, or create a new one.
-        ///   - logger: If `nil`, the client's default `Logger` is used.
-        ///   - build: Closure that adds statements to the batch.
-        public func batch(
-            configuration: Batch.Configuration = .init(),
-            on eventLoop: EventLoop? = .none,
-            logger: Logger? = .none,
-            _ build: (inout Batch) throws -> Void
-        ) -> EventLoopFuture<Void> {
-            do {
-                let resolver:
-                    (
-                        (
-                            CassandraClient.PreparedStatement, [CassandraClient.Statement.Value],
-                            CassandraClient.Statement.Options
-                        ) throws -> CassandraClient.Statement
-                    )?
-                if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                    resolver = { [self] prepared, parameters, options in
-                        let resolvedParameters = try self.resolveEncryptionContexts(
-                            prepared: prepared,
-                            parameters: parameters,
-                            options: options
-                        )
-                        try self.validateEncryptionBindings(
-                            prepared: prepared,
-                            parameters: resolvedParameters,
-                            options: options
-                        )
-                        return try CassandraClient.Statement(
-                            preparedRawPointer: prepared.bind(),
-                            query: prepared.query,
-                            parameters: resolvedParameters,
-                            options: options,
-                            _encryptor: self.encryptor
-                        )
-                    }
-                } else {
-                    resolver = nil
-                }
-                var batch = try Batch(configuration: configuration, resolver: resolver)
-                try build(&batch)
-                return self.execute(batch: batch, on: eventLoop, logger: logger)
-            } catch {
-                if let cassError = error as? CassandraClient.Error {
-                    CassandraClient.RequestLog.logFailure(
-                        cassError,
-                        query: "batch",
-                        consistency: nil,
-                        startedAt: nil,
-                        logger: logger ?? self.logger
-                    )
-                }
-                let eventLoop = eventLoop ?? eventLoopGroup.next()
-                return eventLoop.makeFailedFuture(error)
-            }
-        }
-
-        private func connect(on eventLoop: EventLoop, logger: Logger) -> EventLoopFuture<Void> {
-            logger.debug("connecting to: \(self.configuration)")
-            if let warning = self.configuration.insecureSSLWarning {
-                logger.warning("\(warning)")
-            }
-            let startedAt = DispatchTime.now()
-            // Instrument the whole chain so a `makeCluster` failure (SSL / contact-point / credentials) is
-            // logged too, not just a driver-connect failure.
-            let connected = self.configuration.makeCluster(on: eventLoop)
-                .flatMap { cluster in
-                    self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace)
-                        .asNIOFuture(eventLoop: eventLoop)
-                }
-            return CassandraClient.RequestLog.instrument(
-                connected,
-                startedAt: startedAt,
-                query: nil,
-                consistency: nil,
-                thresholdMillis: nil,
-                logger: logger
-            )
-        }
-
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         private func disconnect() async throws {
+            self.stopMetricsPoller()
             let future = self.underlying.close()
             try await future.await()
         }
@@ -1484,24 +729,18 @@ extension CassandraClient {
         /// store can't leak a task.
         private func startMetricsPoller() {
             guard self.configuration.metricsEnabled,
-                let intervalMillis = self.configuration.metricsPollIntervalMillis,
-                intervalMillis > 0
+                let interval = self.configuration.metricsPollInterval,
+                interval > .zero
             else { return }
 
-            // The poller uses Swift Concurrency (`Task` + `Task.sleep`), which this package floors at
-            // macOS 12 / iOS 15. On older platforms the poller silently does not start (documented on
-            // `Configuration.metricsEnabled`); every other feature still works there.
-            guard #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) else { return }
-
             let gauges = SnapshotGauges(sessionName: self.configuration.metricsSessionName)
-            let intervalNanos = UInt64(intervalMillis) * 1_000_000
 
             // `weak self` avoids Session -> _poller -> Task -> closure -> Session keeping the session
             // (and its ticks) alive forever on a consumer that never calls `shutdown()`.
             let task = Task<Void, Never> { [weak self] in
                 while !Task.isCancelled {
                     do {
-                        try await Task.sleep(nanoseconds: intervalNanos)
+                        try await Task.sleep(for: interval)
                     } catch {
                         break  // cancelled during sleep
                     }
@@ -1543,31 +782,22 @@ extension CassandraClient {
         /// snapshot and records gauges *inside* the `_poller` lock, acquiring the lock here blocks until
         /// any in-flight tick finishes, and the `stopped` flag prevents any later tick from recording —
         /// so no gauge is recorded once shutdown begins and no tick can overlap `underlying.close()`.
-        /// `shutdown()` calls this before `close()` and never holds `_state` while doing so.
+        /// `shutdown()` and the async `disconnect()` call this before `close()`, never while holding `_state`.
         private func stopMetricsPoller() {
-            let task = self._poller.withLockedValue { poller -> (any Sendable)? in
+            let task = self._poller.withLockedValue { poller -> Task<Void, Never>? in
                 poller.stopped = true
                 let task = poller.task
                 poller.task = nil
                 return task
             }
-            if #available(macOS 12, iOS 15, tvOS 15, watchOS 8, *) {
-                (task as? Task<Void, Never>)?.cancel()
-            }
+            task?.cancel()
         }
 
         fileprivate struct ConnectionTask: Sendable {
-            // `_task` only ever holds a `Task<Void, Error>`, erased to `any Sendable` for availability.
-            private let _task: any Sendable
+            let task: Task<Void, Swift.Error>
 
-            @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-            var task: Task<Void, Swift.Error> {
-                self._task as! Task<Void, Swift.Error>
-            }
-
-            @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
             init(_ task: Task<Void, Swift.Error>) {
-                self._task = task
+                self.task = task
             }
         }
     }
@@ -1577,7 +807,6 @@ extension CassandraClient {
 
 extension CassandraSession {
     /// Run  insert / update / delete or DDL commands where no result is expected
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func run(
         _ command: String,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1588,7 +817,6 @@ extension CassandraSession {
     }
 
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query<T>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1606,7 +834,6 @@ extension CassandraSession {
     }
 
     /// Query small data-sets that fit into memory. Only use this when it's safe to buffer the entire data-set into memory.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query<T: Decodable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1631,7 +858,6 @@ extension CassandraSession {
     /// This is equivalent to the sibling `query(...)` overload that infers `T` purely from the return type,
     /// but spells out the decoded type explicitly at the call site, e.g.
     /// `try await session.query("select ...", withModelType: Model.self)`.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query<T: Decodable>(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1647,7 +873,6 @@ extension CassandraSession {
     /// - Important:
     ///   - Advancing the iterator invalidates values retrieved by the previous iteration.
     ///   - Attempting to wrap the ``CassandraClient/Rows`` sequence in a list will not work, use the transformer variant instead.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query(
         _ query: String,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1655,18 +880,13 @@ extension CassandraSession {
         logger: Logger? = .none
     ) async throws -> CassandraClient.Rows {
         let statement: CassandraClient.Statement
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-        } else {
-            statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
-        }
+        statement = try self.makeStatement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, logger: logger)
     }
 
     /// Query large data-sets where the number of rows fetched at a time is limited by `pageSize`.
     ///
     /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query(
         _ query: String,
         parameters: sending [CassandraClient.Statement.Value] = [],
@@ -1675,11 +895,7 @@ extension CassandraSession {
         logger: Logger? = .none
     ) async throws -> CassandraClient.PaginatedRows {
         let statement: CassandraClient.Statement
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            statement = try self.makeStatement(query: query, parameters: parameters, options: options)
-        } else {
-            statement = try CassandraClient.Statement(query: query, parameters: parameters, options: options)
-        }
+        statement = try self.makeStatement(query: query, parameters: parameters, options: options)
         return try await self.execute(statement: statement, pageSize: pageSize, logger: logger)
     }
 
@@ -1691,7 +907,6 @@ extension CassandraSession {
     ///
     /// - Note: Unlike the raw ``query(_:parameters:pageSize:options:logger:)`` sequence, decoded values
     ///   are independent Swift values and remain valid after the sequence is advanced.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query<T: Decodable & Sendable>(
         _ query: String,
         parameters: sending [CassandraClient.Statement.Value] = [],
@@ -1719,7 +934,6 @@ extension CassandraSession {
     /// `try await session.query("select ...", pageSize: 100, withModelType: Model.self)`.
     ///
     /// A non-positive `pageSize` fails the call with ``CassandraClient/Error/badParams(_:)``.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func query<T: Decodable & Sendable>(
         _ query: String,
         parameters: sending [CassandraClient.Statement.Value] = [],
@@ -1738,7 +952,6 @@ extension CassandraSession {
     }
 
     /// Prepare a CQL query for repeated execution.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func prepare(
         _ query: String,
         encryptionTable: String? = nil,
@@ -1748,7 +961,6 @@ extension CassandraSession {
     }
 
     /// Execute a prepared statement with bound parameters.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1759,7 +971,6 @@ extension CassandraSession {
     }
 
     /// Execute a prepared statement and decode each row into a `Decodable` type.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute<T: Decodable>(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1767,10 +978,8 @@ extension CassandraSession {
         logger: Logger? = .none
     ) async throws -> [T] {
         var effectiveOptions = options
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            if effectiveOptions.encryptionTable == nil {
-                effectiveOptions.encryptionTable = prepared.encryptionTable
-            }
+        if effectiveOptions.encryptionTable == nil {
+            effectiveOptions.encryptionTable = prepared.encryptionTable
         }
         let rows = try await self.execute(
             prepared: prepared,
@@ -1790,7 +999,6 @@ extension CassandraSession {
     /// This is equivalent to the sibling `execute(...)` overload that infers `T` purely from the return type,
     /// but spells out the decoded type explicitly at the call site, e.g.
     /// `try await session.execute(prepared: statement, withModelType: Model.self)`.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func execute<T: Decodable>(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -1814,8 +1022,6 @@ extension CassandraClient.Session {
         case startedConnecting(ConnectionTask)
         /// Someone else started the connection as a task; just await it.
         case awaitConnecting(ConnectionTask)
-        /// Someone else started the connection as a future; just await it.
-        case awaitConnectingFuture(EventLoopFuture<Void>)
         /// Already connected.
         case ready
         /// Session has been shut down.
@@ -1823,7 +1029,6 @@ extension CassandraClient.Session {
     }
 
     /// Ensure the session is connected, then invoke `body`.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     private func withConnection<T>(
         logger: Logger?,
         _ body: (Logger) async throws -> T
@@ -1838,8 +1043,6 @@ extension CassandraClient.Session {
                 return .startedConnecting(connectionTask)
             case .connecting(let task):
                 return .awaitConnecting(task)
-            case .connectingFuture(let future):
-                return .awaitConnectingFuture(future)
             case .connected:
                 return .ready
             case .disconnected, .disconnecting, .disconnectingFuture:
@@ -1854,23 +1057,16 @@ extension CassandraClient.Session {
             self.startMetricsPoller()
         case .awaitConnecting(let task):
             try await task.task.value
-        case .awaitConnectingFuture(let future):
-            try await future.get()
         case .ready:
             break
         case .disconnected:
-            if eventLoopGroupContainer.managed {
-                preconditionFailure("client is disconnected")
-            }
             throw CassandraClient.Error.disconnected
         }
         return try await body(logger)
     }
 
-    // Unlike the EventLoopFuture variant, `statement` need not be `sending`: it's non-Sendable, so
-    // the compiler already blocks running two executes over one statement concurrently, and this
-    // preserves the safe execute-await-reuse pattern.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    // `statement` need not be `sending`: it's non-Sendable, so the compiler already blocks running two
+    // executes over one statement concurrently, and this preserves the safe execute-await-reuse pattern.
     func execute(
         statement: CassandraClient.Statement,
         logger: Logger? = .none
@@ -1898,7 +1094,7 @@ extension CassandraClient.Session {
                     startedAt: startedAt,
                     query: query,
                     consistency: consistency,
-                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    threshold: self.configuration.slowQueryThreshold,
                     boundValues: boundValues,
                     logger: logger
                 ) {
@@ -1908,7 +1104,6 @@ extension CassandraClient.Session {
         }
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
         statement: sending CassandraClient.Statement,
         pageSize: Int32,
@@ -1931,7 +1126,6 @@ extension CassandraClient.Session {
         return CassandraClient.PaginatedRows(session: self, statement: statement, logger: logger)
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
         batch: consuming CassandraClient.Batch,
         logger: Logger?
@@ -1951,7 +1145,7 @@ extension CassandraClient.Session {
                     startedAt: startedAt,
                     query: "batch",
                     consistency: nil,
-                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    threshold: self.configuration.slowQueryThreshold,
                     logger: logger
                 ) {
                     try await self.underlying.execute(batch: optionalBatch.take()!).await()
@@ -1966,7 +1160,6 @@ extension CassandraClient.Session {
     ///   - configuration: Options to apply to the batch.
     ///   - logger: If `nil`, the client's default `Logger` is used.
     ///   - build: Closure that adds statements to the batch.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     public func batch(
         configuration: CassandraClient.Batch.Configuration = .init(),
         logger: Logger? = .none,
@@ -1979,28 +1172,24 @@ extension CassandraClient.Session {
                     CassandraClient.Statement.Options
                 ) throws -> CassandraClient.Statement
             )?
-        if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-            resolver = { [self] prepared, parameters, options in
-                let resolvedParameters = try self.resolveEncryptionContexts(
-                    prepared: prepared,
-                    parameters: parameters,
-                    options: options
-                )
-                try self.validateEncryptionBindings(
-                    prepared: prepared,
-                    parameters: resolvedParameters,
-                    options: options
-                )
-                return try CassandraClient.Statement(
-                    preparedRawPointer: prepared.bind(),
-                    query: prepared.query,
-                    parameters: resolvedParameters,
-                    options: options,
-                    _encryptor: self.encryptor
-                )
-            }
-        } else {
-            resolver = nil
+        resolver = { [self] prepared, parameters, options in
+            let resolvedParameters = try self.resolveEncryptionContexts(
+                prepared: prepared,
+                parameters: parameters,
+                options: options
+            )
+            try self.validateEncryptionBindings(
+                prepared: prepared,
+                parameters: resolvedParameters,
+                options: options
+            )
+            return try CassandraClient.Statement(
+                preparedRawPointer: prepared.bind(),
+                query: prepared.query,
+                parameters: resolvedParameters,
+                options: options,
+                encryptor: self.encryptor
+            )
         }
         let batch: CassandraClient.Batch
         do {
@@ -2022,7 +1211,6 @@ extension CassandraClient.Session {
         try await self.execute(batch: batch, logger: logger)
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func prepare(
         _ query: String,
         encryptionTable: String? = nil,
@@ -2041,7 +1229,7 @@ extension CassandraClient.Session {
                     startedAt: startedAt,
                     query: query,
                     consistency: nil,
-                    thresholdMillis: self.configuration.slowQueryThresholdMillis,
+                    threshold: self.configuration.slowQueryThreshold,
                     logger: logger
                 ) {
                     try await self.underlying.prepare(query: query).await()
@@ -2075,7 +1263,6 @@ extension CassandraClient.Session {
         )
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     func execute(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value] = [],
@@ -2084,33 +1271,23 @@ extension CassandraClient.Session {
     ) async throws -> CassandraClient.Rows {
         let statement: CassandraClient.Statement
         do {
-            if #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) {
-                let resolvedParameters = try self.resolveEncryptionContexts(
-                    prepared: prepared,
-                    parameters: parameters,
-                    options: options
-                )
-                try self.validateEncryptionBindings(
-                    prepared: prepared,
-                    parameters: resolvedParameters,
-                    options: options
-                )
-                statement = try CassandraClient.Statement(
-                    preparedRawPointer: prepared.bind(),
-                    query: prepared.query,
-                    parameters: resolvedParameters,
-                    options: options,
-                    _encryptor: self.encryptor
-                )
-            } else {
-                statement = try CassandraClient.Statement(
-                    preparedRawPointer: prepared.bind(),
-                    query: prepared.query,
-                    parameters: parameters,
-                    options: options,
-                    _encryptor: nil
-                )
-            }
+            let resolvedParameters = try self.resolveEncryptionContexts(
+                prepared: prepared,
+                parameters: parameters,
+                options: options
+            )
+            try self.validateEncryptionBindings(
+                prepared: prepared,
+                parameters: resolvedParameters,
+                options: options
+            )
+            statement = try CassandraClient.Statement(
+                preparedRawPointer: prepared.bind(),
+                query: prepared.query,
+                parameters: resolvedParameters,
+                options: options,
+                encryptor: self.encryptor
+            )
         } catch {
             if let cassError = error as? CassandraClient.Error {
                 CassandraClient.RequestLog.logFailure(
@@ -2126,7 +1303,6 @@ extension CassandraClient.Session {
         return try await self.execute(statement: statement, logger: logger)
     }
 
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     private func connect(logger: Logger) -> Task<Void, Swift.Error> {
         Task {
             logger.debug("connecting to: \(self.configuration)")
@@ -2139,7 +1315,7 @@ extension CassandraClient.Session {
                 startedAt: startedAt,
                 query: nil,
                 consistency: nil,
-                thresholdMillis: nil,
+                threshold: nil,
                 logger: logger
             ) {
                 let cluster = try await self.configuration.makeCluster()

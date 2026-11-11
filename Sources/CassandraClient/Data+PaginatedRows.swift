@@ -14,7 +14,6 @@
 
 internal import CDataStaxDriver
 import Logging
-import NIO
 import NIOConcurrencyHelpers
 
 extension CassandraClient {
@@ -25,7 +24,6 @@ extension CassandraClient {
         /// guard serializes all access from `PaginatedRows`, and the entry points take the `Statement`
         /// as `sending` so the caller can't alias it.
         nonisolated(unsafe) let statement: Statement
-        let eventLoop: EventLoop?
         let logger: Logger?
 
         /// Lock-protected paging state. `fetchInFlight` serializes `nextPage()` so only one fetch
@@ -36,127 +34,19 @@ extension CassandraClient {
         }
         private let _state = NIOLockedValueBox(PagingState())
 
-        /// If `true`, calling ``nextPage()-4komz`` will return a new set of ``CassandraClient/Rows``.
+        /// If `true`, calling ``nextPage()`` will return a new set of ``CassandraClient/Rows``.
         /// Otherwise it will throw ``CassandraClient/Error/rowsExhausted`` error.
         public var hasMorePages: Bool { self._state.withLockedValue { $0.hasMorePages } }
 
-        internal init(session: Session, statement: sending Statement, on eventLoop: EventLoop, logger: Logger?) {
-            self.session = session
-            self.statement = statement
-            self.eventLoop = eventLoop
-            self.logger = logger
-        }
-
-        /// Fetches next page of rows or throw ``CassandraClient/Error/rowsExhausted`` error if there are no more pages.
-        public func nextPage() -> EventLoopFuture<Rows> {
-            guard let eventLoop = self.eventLoop else {
-                preconditionFailure("EventLoop must not be nil")
-            }
-
-            // Claim the in-flight slot atomically with the has-more-pages check (rejecting overlap).
-            let rejection = self._state.withLockedValue { state -> CassandraClient.Error? in
-                guard state.hasMorePages else { return .rowsExhausted }
-                guard !state.fetchInFlight else { return .concurrentPaginationUnsupported }
-                state.fetchInFlight = true
-                return nil
-            }
-            if let rejection {
-                return eventLoop.makeFailedFuture(rejection)
-            }
-
-            let future = self.session.execute(
-                statement: self.statement,
-                on: eventLoop,
-                logger: self.logger
-            )
-            future.whenComplete { result in
-                // Flag write + C paging-state mutation + release of the in-flight slot, all under the lock.
-                self._state.withLockedValue { state in
-                    switch result {
-                    case .success(let rows):
-                        state.hasMorePages = cass_result_has_more_pages(rows.rawPointer) == cass_true
-                        if state.hasMorePages {
-                            cass_statement_set_paging_state(self.statement.rawPointer, rows.rawPointer)
-                        }
-                    case .failure:
-                        state.hasMorePages = false
-                    }
-                    state.fetchInFlight = false
-                }
-            }
-            return future
-        }
-
-        /// Iterates through all rows in all pages and invokes the given closure on each.
-        @available(*, deprecated, message: "Use Swift Concurrency and AsyncSequence APIs instead.")
-        public func forEach(_ body: @escaping @Sendable (Row) throws -> Void) -> EventLoopFuture<Void> {
-            precondition(
-                self.hasMorePages,
-                "Only one of 'forEach' or 'map' can be called once per PaginatedRows"
-            )
-
-            guard let eventLoop = self.eventLoop else {
-                preconditionFailure("EventLoop must not be nil")
-            }
-
-            @Sendable func _forEach() -> EventLoopFuture<Void> {
-                self.nextPage().flatMap { rows in
-                    do {
-                        try rows.forEach(body)
-                    } catch {
-                        return eventLoop.makeFailedFuture(error)
-                    }
-
-                    guard self.hasMorePages else {
-                        return eventLoop.makeSucceededFuture(())
-                    }
-                    return _forEach()
-                }
-            }
-            return _forEach()
-        }
-
-        /// Iterates through all rows in all pages and applies `transform` on each.
-        @available(*, deprecated, message: "Use Swift Concurrency and AsyncSequence APIs instead.")
-        public func map<T: Sendable>(_ transform: @escaping @Sendable (Row) throws -> T) -> EventLoopFuture<[T]> {
-            precondition(
-                self.hasMorePages,
-                "Only one of 'forEach' or 'map' can be called once per PaginatedRows"
-            )
-
-            guard let eventLoop = self.eventLoop else {
-                preconditionFailure("EventLoop must not be nil in EventLoop based APIs")
-            }
-
-            @Sendable func _map(_ accumulated: [T]) -> EventLoopFuture<[T]> {
-                self.nextPage().flatMap { rows in
-                    do {
-                        let transformed = try rows.map(transform)
-                        let newAccumulated = accumulated + transformed
-                        guard self.hasMorePages else {
-                            return eventLoop.makeSucceededFuture(newAccumulated)
-                        }
-                        return _map(newAccumulated)
-                    } catch {
-                        return eventLoop.makeFailedFuture(error)
-                    }
-                }
-            }
-            return _map([])
-        }
-
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         internal init(session: Session, statement: sending Statement, logger: Logger?) {
             self.session = session
             self.statement = statement
-            self.eventLoop = nil
             self.logger = logger
         }
 
         /// Fetches next page of rows or throw ``CassandraClient/Error/rowsExhausted`` error if there are no more pages.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         public func nextPage() async throws -> Rows {
-            // Claim the in-flight slot atomically with the has-more-pages check (see EL variant).
+            // Claim the in-flight slot atomically with the has-more-pages check, rejecting overlap.
             try self._state.withLockedValue { state in
                 guard state.hasMorePages else { throw CassandraClient.Error.rowsExhausted }
                 guard !state.fetchInFlight else { throw CassandraClient.Error.concurrentPaginationUnsupported }
@@ -184,7 +74,6 @@ extension CassandraClient {
         }
 
         /// Iterates through all rows in all pages and invokes the given closure on each.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func forEach(_ body: @escaping (Row) throws -> Void) async throws {
             precondition(
@@ -205,7 +94,6 @@ extension CassandraClient {
         }
 
         /// Iterates through all rows in all pages and applies `transform` on each.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func map<T>(_ transform: @escaping (Row) throws -> T) async throws -> [T] {
             precondition(
@@ -228,7 +116,6 @@ extension CassandraClient {
     }
 }
 
-@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 extension CassandraClient.PaginatedRows: AsyncSequence {
     public typealias Element = CassandraClient.Row
 

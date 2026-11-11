@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import CassandraClient
-import NIO
 import XCTest
 
 /// Unit tests for ``CassandraClient/Statement/setPagingSize(_:)``. Statement configuration needs no
@@ -88,31 +87,19 @@ final class StatementPagingSizeTests: XCTestCase {
 
     /// The public `pageSize:` entry points share this validation, so a size the driver would ignore
     /// fails the call rather than returning every row from a paginated one.
-    func testPaginatedQueryRejectsNonPositivePageSize() throws {
-        let client = self.makeClient()
-        defer { XCTAssertNoThrow(try client.shutdown()) }
-
-        XCTAssertThrowsError(
-            try client.query("select id from test;", pageSize: Int32(0)).wait()
-        ) { error in
-            self.assertBadParams(error, "pageSize 0 on the EventLoopFuture query")
-        }
-    }
-
-    /// The async paginated path applies the page size in separate code from the `EventLoopFuture`
-    /// path, so it gets its own assertion.
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    func testPaginatedAsyncQueryRejectsNonPositivePageSize() async throws {
+    func testPaginatedQueryRejectsNonPositivePageSize() async throws {
         let client = self.makeClient()
 
-        do {
-            let rows: CassandraClient.PaginatedRows = try await client.query(
-                "select id from test;",
-                pageSize: Int32(-1)
-            )
-            XCTFail("expected a bad parameter error, got \(rows)")
-        } catch {
-            self.assertBadParams(error, "pageSize -1 on the async query")
+        for pageSize in [Int32(0), -1] {
+            do {
+                let rows: CassandraClient.PaginatedRows = try await client.query(
+                    "select id from test;",
+                    pageSize: pageSize
+                )
+                XCTFail("expected a bad parameter error, got \(rows)")
+            } catch {
+                self.assertBadParams(error, "pageSize \(pageSize) on the query")
+            }
         }
 
         try await client.shutdownAsync()
@@ -122,22 +109,19 @@ final class StatementPagingSizeTests: XCTestCase {
     /// overwrite a size already set on the statement. Applying a rejected size to a statement that
     /// carries a valid one pins that: the call fails, so the argument was applied unconditionally
     /// rather than deferring to what the statement already held.
-    func testPaginatedExecuteOverwritesTheStatementPagingSize() throws {
+    func testPaginatedExecuteOverwritesTheStatementPagingSize() async throws {
         let client = self.makeClient()
-        defer { XCTAssertNoThrow(try client.shutdown()) }
 
         let statement = try Self.makeStatement()
         try statement.setPagingSize(10)
 
-        // `statement` is handed over `sending`. The call stays out of the `XCTAssertThrowsError`
-        // autoclosure, and `makeStatement` is `static`, so the statement is not in the test case's
-        // region — the error closure below reads `self`. `execute` does not throw; the page-size
-        // failure arrives through the future, which `wait()` still surfaces.
-        let paginated = client.execute(statement: statement, pageSize: Int32(0), on: nil)
-        XCTAssertThrowsError(
-            try paginated.wait()
-        ) { error in
+        do {
+            let rows = try await client.execute(statement: statement, pageSize: Int32(0))
+            XCTFail("expected a bad parameter error, got \(rows)")
+        } catch {
             self.assertBadParams(error, "pageSize 0 over a statement already set to 10")
         }
+
+        try await client.shutdownAsync()
     }
 }
