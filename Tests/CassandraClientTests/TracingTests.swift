@@ -33,7 +33,6 @@ import XCTest
 
 // MARK: - Unit (no cluster) — deterministic, load-bearing
 
-@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 final class TracingUnitTests: XCTestCase {
     override func setUp() {
         super.setUp()
@@ -166,7 +165,6 @@ final class TracingUnitTests: XCTestCase {
 
 // The helpers below are `static` so the async test bodies never capture `self`: a test case is not
 // `Sendable`, and none of these need instance state.
-@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 final class TracingIntegrationTests: XCTestCase {
     override func setUp() {
         super.setUp()
@@ -183,11 +181,12 @@ final class TracingIntegrationTests: XCTestCase {
             port: env["CASSANDRA_CQL_PORT"].flatMap(Int32.init) ?? 9042,
             protocolVersion: .v3
         )
-        config.username = env["CASSANDRA_USER"]
-        config.password = env["CASSANDRA_PASSWORD"]
+        if let username = env["CASSANDRA_USER"], let password = env["CASSANDRA_PASSWORD"] {
+            config.authenticator = CassandraClient.PasswordAuthenticator(username: username, password: password)
+        }
         config.keyspace = env["CASSANDRA_KEYSPACE"] ?? "test"
-        config.requestTimeoutMillis = 24_000
-        config.connectTimeoutMillis = 10_000
+        config.requestTimeout = .milliseconds(24_000)
+        config.connectTimeout = .milliseconds(10_000)
         return config
     }
 
@@ -430,7 +429,7 @@ final class TracingIntegrationTests: XCTestCase {
                     protocolVersion: .v3
                 )
                 config.keyspace = "test"
-                config.connectTimeoutMillis = 2_000
+                config.connectTimeout = .milliseconds(2_000)
                 let client = CassandraClient(configuration: config)
                 defer { XCTAssertNoThrow(try client.shutdown()) }
 

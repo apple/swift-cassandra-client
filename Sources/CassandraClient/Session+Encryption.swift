@@ -18,7 +18,6 @@ import Foundation
 
 extension CassandraSession {
     /// Resolve "table" or "keyspace.table" into the registry lookup key and schema.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     internal func resolveSchema(
         tableName: String
     ) throws -> CassandraClient.EncryptionSchema {
@@ -54,7 +53,6 @@ extension CassandraSession {
     /// Plaintext values bound to encrypted columns go undetected.
     /// When executing prepared statements, ``validateEncryptionBindings(prepared:parameters:options:)``
     /// checks both directions using parameter metadata.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     func validateEncryptionBindings(
         parameters: [CassandraClient.Statement.Value],
         options: CassandraClient.Statement.Options
@@ -77,7 +75,6 @@ extension CassandraSession {
     ///
     /// This validation requires prepared statement metadata to map parameter indices to column names,
     /// so it only runs for prepared statement execution.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     func validateEncryptionBindings(
         prepared: CassandraClient.PreparedStatement,
         parameters: [CassandraClient.Statement.Value],
@@ -107,7 +104,6 @@ extension CassandraSession {
 
     /// Build an EncryptionContext.Base from a row using the registered schema.
     /// Reads PK and CK columns as-is from the row, then constructs the full primaryKey.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     internal func buildEncryptionContext(
         row: CassandraClient.Row,
         tableName: String,
@@ -131,7 +127,6 @@ extension CassandraSession {
     }
 
     /// Read a cleartext column value from a row and return it as a KeyComponent.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     private static func readKeyComponent(
         from row: CassandraClient.Row,
         name: String,
