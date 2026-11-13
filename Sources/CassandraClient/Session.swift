@@ -1012,7 +1012,7 @@ extension CassandraClient.Session {
         }
 
         logger.debug("connecting to: \(self.configuration)")
-        if let warning = self.configuration.insecureSSLWarning {
+        if let warning = self.configuration.insecureTLSWarning {
             logger.warning("\(warning)")
         }
         do {

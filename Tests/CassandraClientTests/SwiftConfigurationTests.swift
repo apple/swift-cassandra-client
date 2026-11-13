@@ -148,12 +148,12 @@ struct SwiftConfigurationTests {
             "metricsPollIntervalMillis": 5000,
             "metricsSessionName": "primary",
 
-            "ssl.enabled": true,
-            "ssl.trustedCertificates": .init(.stringArray(["cert-one", "cert-two"]), isSecret: false),
-            "ssl.certificateVerification": "fullVerification",
-            "ssl.certificate": "client-cert",
-            "ssl.privateKey": "client-key",
-            "ssl.privateKeyPassword": "key-password",
+            "tls.enabled": true,
+            "tls.trustedCertificates": .init(.stringArray(["cert-one", "cert-two"]), isSecret: false),
+            "tls.certificateVerification": "fullVerification",
+            "tls.certificate": "client-cert",
+            "tls.privateKey": "client-key",
+            "tls.privateKeyPassword": "key-password",
 
             "loadBalancingStrategy.strategy": "dataCenterAware",
             "loadBalancingStrategy.localDataCenter": "dc1",
@@ -199,12 +199,12 @@ struct SwiftConfigurationTests {
         #expect(config.metricsPollInterval == .milliseconds(5000))
         #expect(config.metricsSessionName == "primary")
 
-        let ssl = try #require(config.ssl)
-        #expect(ssl.trustedCertificates == ["cert-one", "cert-two"])
-        #expect(ssl.certificateVerification == .fullVerification)
-        #expect(ssl.certificate == "client-cert")
-        #expect(ssl.privateKey?.key == "client-key")
-        #expect(ssl.privateKey?.password == "key-password")
+        let tls = try #require(config.transportSecurity.tls)
+        #expect(tls.trustedCertificates == ["cert-one", "cert-two"])
+        #expect(tls.certificateVerification == .fullVerification)
+        #expect(tls.clientCredentials?.certificate == "client-cert")
+        #expect(tls.clientCredentials?.privateKey.key == "client-key")
+        #expect(tls.clientCredentials?.privateKey.password == "key-password")
 
         #expect(config.loadBalancingStrategy == .dataCenterAware(.init(localDataCenter: "dc1")))
         #expect(config.speculativeExecutionPolicy == .constant(delay: .milliseconds(100), maxExecutions: 3))
@@ -248,7 +248,7 @@ struct SwiftConfigurationTests {
         #expect(config.metricsPollInterval == .seconds(10))
         #expect(config.metricsSessionName == nil)
 
-        #expect(config.ssl == nil)
+        #expect(config.transportSecurity.tls == nil)
         #expect(config.loadBalancingStrategy == nil)
         #expect(config.speculativeExecutionPolicy == nil)
     }
@@ -343,8 +343,8 @@ struct SwiftConfigurationTests {
                 "protocolVersion": 3,
                 "keyspace": "test",
                 "consistency": "localQuorum",
-                "ssl.enabled": true,
-                "ssl.certificateVerification": "noHostnameVerification",
+                "tls.enabled": true,
+                "tls.certificateVerification": "noHostnameVerification",
                 "loadBalancingStrategy.strategy": "dataCenterAware",
                 "loadBalancingStrategy.localDataCenter": "dc1",
             ],
@@ -355,7 +355,7 @@ struct SwiftConfigurationTests {
         #expect(config.protocolVersion == .v3)
         #expect(config.keyspace == "test")
         #expect(config.consistency == .localQuorum)
-        #expect(config.ssl?.certificateVerification == .noHostnameVerification)
+        #expect(config.transportSecurity.tls?.certificateVerification == .noHostnameVerification)
         #expect(config.loadBalancingStrategy == .dataCenterAware(.init(localDataCenter: "dc1")))
     }
 
@@ -430,15 +430,29 @@ struct SwiftConfigurationTests {
             ("compact", .init(.bool(true), isSecret: false), "isNoCompactEnabled"),
             ("connectionHeartbeatInterval", .init(.int(45), isSecret: false), "connectionHeartbeatIntervalSeconds"),
             ("connectionIdleTimeout", .init(.int(120), isSecret: false), "connectionIdleTimeoutSeconds"),
-            ("ssl.verifyFlag", .init(.string("peerCert"), isSecret: false), "certificateVerification"),
-            ("ssl.cert", .init(.string("client-cert"), isSecret: false), "ssl.certificate"),
+            ("ssl.enabled", .init(.bool(true), isSecret: false), "tls.enabled"),
+            ("ssl.trustedCertificates", .init(.stringArray(["cert"]), isSecret: false), "tls.trustedCertificates"),
+            (
+                "ssl.certificateVerification", .init(.string("fullVerification"), isSecret: false),
+                "tls.certificateVerification"
+            ),
+            ("ssl.certificate", .init(.string("client-cert"), isSecret: false), "tls.certificate"),
+            ("ssl.privateKey", .init(.string("client-key"), isSecret: true), "tls.privateKey"),
+            ("ssl.privateKeyPassword", .init(.string("key-password"), isSecret: true), "tls.privateKeyPassword"),
+            ("ssl.verifyFlag", .init(.string("peerCert"), isSecret: false), "tls.certificateVerification"),
+            ("ssl.cert", .init(.string("client-cert"), isSecret: false), "tls.certificate"),
         ] as [(AbsoluteConfigKey, ConfigValue, String)]
     )
     func replacedKeyThrows(key: AbsoluteConfigKey, value: ConfigValue, replacement: String) throws {
         let error = #expect(throws: CassandraClient.ConfigurationError.self) {
             try self.makeConfiguration(adding: [key: value])
         }
-        #expect(try #require(error).message.contains(replacement))
+        let message = try #require(error).message
+        #expect(message.contains(replacement))
+        #expect(message.contains("'\(key)'"))
+        // The message names keys, never their values.
+        #expect(!message.contains("client-key"))
+        #expect(!message.contains("key-password"))
     }
 
     // MARK: - Credentials
@@ -457,13 +471,13 @@ struct SwiftConfigurationTests {
             "consistency",
             "serialConsistency",
             "prepareStrategy",
-            "ssl.certificateVerification",
+            "tls.certificateVerification",
         ] as [AbsoluteConfigKey]
     )
     func unrecognizedEnumeratedValueThrows(key: AbsoluteConfigKey) throws {
         let error = #expect(throws: CassandraClient.ConfigurationError.self) {
-            // 'ssl.enabled' so that the SSL scope, and with it 'ssl.certificateVerification', is read at all.
-            try self.makeConfiguration(adding: ["ssl.enabled": true, key: "notAValidValue"])
+            // 'tls.enabled' so that the TLS scope, and with it 'tls.certificateVerification', is read at all.
+            try self.makeConfiguration(adding: ["tls.enabled": true, key: "notAValidValue"])
         }
         // The offending key is named, so which of several enumerated keys was wrong is unambiguous.
         // Scoped keys are reported relative to their scope, hence the last component only.
@@ -480,58 +494,70 @@ struct SwiftConfigurationTests {
         }
     }
 
-    // MARK: - SSL
+    // MARK: - TLS
 
     @Test
-    func sslIsIgnoredWhenNotEnabled() throws {
-        let config = try self.makeConfiguration(adding: ["ssl.certificate": "client-cert"])
-        #expect(config.ssl == nil)
+    func tlsIsIgnoredWhenNotEnabled() throws {
+        let config = try self.makeConfiguration(adding: ["tls.certificate": "client-cert"])
+        #expect(config.transportSecurity.tls == nil)
     }
 
     @Test
-    func sslDefaults() throws {
-        let config = try self.makeConfiguration(adding: ["ssl.enabled": true])
-        let ssl = try #require(config.ssl)
-        #expect(ssl.trustedCertificates == nil)
-        #expect(ssl.certificateVerification == .ipAddressVerification)
-        #expect(ssl.certificate == nil)
-        #expect(ssl.privateKey == nil)
+    func tlsDefaults() throws {
+        let config = try self.makeConfiguration(adding: ["tls.enabled": true])
+        let tls = try #require(config.transportSecurity.tls)
+        #expect(tls.trustedCertificates == nil)
+        #expect(tls.certificateVerification == .ipAddressVerification)
+        #expect(tls.clientCredentials == nil)
     }
 
     @Test
-    func sslPrivateKeyWithoutPasswordThrows() {
+    func tlsPrivateKeyWithoutPasswordThrows() {
         #expect(throws: (any Error).self) {
-            try self.makeConfiguration(adding: ["ssl.enabled": true, "ssl.privateKey": "client-key"])
+            try self.makeConfiguration(adding: ["tls.enabled": true, "tls.privateKey": "client-key"])
+        }
+    }
+
+    /// A certificate without a key, or a key without a certificate, cannot authenticate the client.
+    @Test(
+        arguments: [
+            ["tls.certificate": "client-cert"],
+            ["tls.privateKey": "client-key", "tls.privateKeyPassword": "key-password"],
+        ] as [[AbsoluteConfigKey: ConfigValue]]
+    )
+    func tlsClientCredentialsNeedBothHalves(extra: [AbsoluteConfigKey: ConfigValue]) {
+        #expect(throws: CassandraClient.ConfigurationError.self) {
+            try self.makeConfiguration(adding: extra.merging(["tls.enabled": true]) { $1 })
         }
     }
 
     @Test(arguments: [nil, false] as [Bool?])
-    func sslPropertiesSetWhileDisabledWarns(enabled: Bool?) throws {
+    func tlsPropertiesSetWhileDisabledWarns(enabled: Bool?) throws {
         var values: [AbsoluteConfigKey: ConfigValue] = [
-            "ssl.trustedCertificates": .init(.stringArray(["cert-one"]), isSecret: false),
-            "ssl.certificateVerification": "fullVerification",
-            "ssl.certificate": "client-cert",
-            "ssl.privateKey": .init(.string("client-key"), isSecret: true),
-            "ssl.privateKeyPassword": .init(.string("key-password"), isSecret: true),
+            "tls.trustedCertificates": .init(.stringArray(["cert-one"]), isSecret: false),
+            "tls.certificateVerification": "fullVerification",
+            "tls.certificate": "client-cert",
+            "tls.privateKey": .init(.string("client-key"), isSecret: true),
+            "tls.privateKeyPassword": .init(.string("key-password"), isSecret: true),
         ]
         if let enabled {
-            values["ssl.enabled"] = .init(.bool(enabled), isSecret: false)
+            values["tls.enabled"] = .init(.bool(enabled), isSecret: false)
         }
         let (config, logs) = try self.makeConfigurationCapturingLogs(adding: values)
 
-        #expect(config.ssl == nil)
+        #expect(config.transportSecurity.tls == nil)
         let warning = try #require(logs.all.first { $0.level == .warning })
         #expect(logs.all.filter { $0.level == .warning }.count == 1)
         #expect(
             warning.metadata[CassandraClient.ConfigurationLogKey.ignoredKeys]?.description
-                == "ssl.trustedCertificates, ssl.certificateVerification, ssl.certificate, ssl.privateKey, ssl.privateKeyPassword"
+                == "tls.trustedCertificates, tls.certificateVerification, tls.certificate, tls.privateKey, tls.privateKeyPassword"
         )
     }
 
     @Test
-    func sslDisabledWithNoSSLPropertiesDoesNotWarn() throws {
-        let (config, logs) = try self.makeConfigurationCapturingLogs(adding: ["ssl.enabled": false])
-        #expect(config.ssl == nil)
+    func tlsDisabledWithNoTLSPropertiesDoesNotWarn() throws {
+        let (config, logs) = try self.makeConfigurationCapturingLogs(adding: ["tls.enabled": false])
+        #expect(config.transportSecurity.tls == nil)
         #expect(logs.all.filter { $0.level >= .warning }.isEmpty)
     }
 

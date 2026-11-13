@@ -29,9 +29,12 @@ struct ConfigurationRedactionTests {
             username: "user",
             password: "user-password"
         )
-        var ssl = CassandraClient.Configuration.SSL()
-        ssl.privateKey = (key: "PRIVATE KEY PEM", password: "key-password")
-        configuration.ssl = ssl
+        var tls = CassandraClient.Configuration.TLS()
+        tls.clientCredentials = .init(
+            certificate: "CERTIFICATE PEM",
+            privateKey: (key: "PRIVATE KEY PEM", password: "key-password")
+        )
+        configuration.transportSecurity = .tls(tls)
         return configuration
     }
 
@@ -50,11 +53,11 @@ struct ConfigurationRedactionTests {
     }
 
     @Test
-    func sslRedactsSecrets() throws {
-        let ssl = try #require(self.makeConfiguration().ssl)
+    func tlsRedactsSecrets() throws {
+        let tls = try #require(self.makeConfiguration().transportSecurity.tls)
         var dumped = ""
-        dump(ssl, to: &dumped)
-        for rendered in [String(describing: ssl), String(reflecting: ssl), dumped] {
+        dump(tls, to: &dumped)
+        for rendered in [String(describing: tls), String(reflecting: tls), dumped] {
             for secret in Self.secrets {
                 #expect(!rendered.contains(secret), "\(secret) in \(rendered)")
             }

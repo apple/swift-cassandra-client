@@ -60,8 +60,8 @@ extension CassandraClient.Configuration {
     /// - `metricsEnabled` (bool, optional): Whether driver metrics are emitted.
     /// - `metricsPollIntervalMillis` (int, optional): ``metricsPollInterval``, in milliseconds. `0` leaves ``metricsEnabled`` on but stops the poller.
     /// - `metricsSessionName` (string, optional): Value of the `session` dimension on emitted metrics.
-    /// - `ssl` (scoped, optional): SSL configuration read by ``CassandraClient/Configuration/SSL/init(configReader:)``.
-    ///   Only applied if `ssl.enabled` is `true`. If it is not, but other `ssl` keys are set, those keys are
+    /// - `tls` (scoped, optional): TLS configuration read by ``CassandraClient/Configuration/TLS/init(configReader:)``.
+    ///   Only applied if `tls.enabled` is `true`. If it is not, but other `tls` keys are set, those keys are
     ///   ignored and a warning is logged to `logger`.
     /// - `loadBalancingStrategy` (scoped, optional): Load balancing strategy read by
     ///   ``CassandraClient/Configuration/LoadBalancingStrategy/init(configReader:)``. Only applied if
@@ -71,8 +71,8 @@ extension CassandraClient.Configuration {
     /// A custom ``authenticator``, ``encryptor`` and ``encryptionSchemas`` cannot be expressed in
     /// configuration and must be set in code.
     ///
-    /// The keys `schema`, `compact`, `connectionHeartbeatInterval`, `connectionIdleTimeout`, `ssl.verifyFlag`
-    /// and `ssl.cert` were replaced. Setting one throws, naming its replacement, rather than being ignored.
+    /// The keys `schema`, `compact`, `connectionHeartbeatInterval` and `connectionIdleTimeout` were replaced, and
+    /// the `ssl` scope was renamed to `tls`. Setting one throws, naming its replacement, rather than being ignored.
     ///
     /// - Throws: If a value is out of range or is not one of the accepted values for its key, a required key is
     ///   missing, or a replaced key is set. `contactPoints` is
@@ -80,7 +80,7 @@ extension CassandraClient.Configuration {
     ///
     /// - Parameters:
     ///   - configReader: The reader to read configuration from.
-    ///   - logger: Logger for configuration warnings, such as SSL properties set while SSL is disabled
+    ///   - logger: Logger for configuration warnings, such as TLS properties set while TLS is disabled
     public init(configReader: ConfigReader, logger: Logger) throws {
         // Read once here so a malformed list is a configuration error at init rather than a connect-time
         // failure. The value is deliberately discarded: the provider below re-reads on every cluster
@@ -116,7 +116,7 @@ extension CassandraClient.Configuration {
     ///   - contactPointsProvider: Provides the initial `ContactPoints` of the Cassandra cluster, and is
     ///     invoked once per cluster creation. This can be a subset since each Cassandra instance is capable
     ///     of discovering its peers.
-    ///   - logger: Logger for configuration warnings, such as SSL properties set while SSL is disabled
+    ///   - logger: Logger for configuration warnings, such as TLS properties set while TLS is disabled
     public init(
         configReader: ConfigReader,
         contactPointsProvider:
@@ -237,12 +237,12 @@ extension CassandraClient.Configuration {
         }
         self.metricsSessionName = configReader.string(forKey: "metricsSessionName")
 
-        let sslConfigReader = configReader.scoped(to: "ssl")
-        if let ssl = try SSL(configReader: sslConfigReader) {
-            self.ssl = ssl
+        let tlsConfigReader = configReader.scoped(to: "tls")
+        if let tls = try TLS(configReader: tlsConfigReader) {
+            self.transportSecurity = .tls(tls)
         } else {
-            SSL.warnAboutIgnoredKeys(
-                configReader: sslConfigReader,
+            TLS.warnAboutIgnoredKeys(
+                configReader: tlsConfigReader,
                 logger: logger
             )
         }
@@ -261,27 +261,36 @@ extension CassandraClient.Configuration {
     /// Throws if a replaced key is set, naming its replacement. Reading it as unset instead would
     /// change behaviour without notice — an old `compact` value, for one, now means the opposite.
     private static func rejectReplacedKeys(in configReader: ConfigReader) throws {
-        let replaced: [(key: ConfigKey, reader: ConfigReader, message: String)] = [
-            ("schema", configReader, "'schema' was renamed to 'isSchemaMetadataEnabled'"),
+        let replaced: [(key: ConfigKey, isSecret: Bool, message: String)] = [
+            ("schema", false, "'schema' was renamed to 'isSchemaMetadataEnabled'"),
             (
-                "compact", configReader,
+                "compact", false,
                 "'compact' was replaced by 'isNoCompactEnabled', which takes the opposite value"
             ),
             (
-                "connectionHeartbeatInterval", configReader,
+                "connectionHeartbeatInterval", false,
                 "'connectionHeartbeatInterval' was renamed to 'connectionHeartbeatIntervalSeconds'"
             ),
             (
-                "connectionIdleTimeout", configReader,
+                "connectionIdleTimeout", false,
                 "'connectionIdleTimeout' was renamed to 'connectionIdleTimeoutSeconds'"
             ),
+            ("ssl.enabled", false, "'ssl.enabled' was renamed to 'tls.enabled'"),
+            ("ssl.trustedCertificates", false, "'ssl.trustedCertificates' was renamed to 'tls.trustedCertificates'"),
             (
-                "verifyFlag", configReader.scoped(to: "ssl"),
-                "'ssl.verifyFlag' was renamed to 'ssl.certificateVerification', with renamed values"
+                "ssl.certificateVerification", false,
+                "'ssl.certificateVerification' was renamed to 'tls.certificateVerification'"
             ),
-            ("cert", configReader.scoped(to: "ssl"), "'ssl.cert' was renamed to 'ssl.certificate'"),
+            ("ssl.certificate", false, "'ssl.certificate' was renamed to 'tls.certificate'"),
+            ("ssl.privateKey", true, "'ssl.privateKey' was renamed to 'tls.privateKey'"),
+            ("ssl.privateKeyPassword", true, "'ssl.privateKeyPassword' was renamed to 'tls.privateKeyPassword'"),
+            (
+                "ssl.verifyFlag", false,
+                "'ssl.verifyFlag' was renamed to 'tls.certificateVerification', with renamed values"
+            ),
+            ("ssl.cert", false, "'ssl.cert' was renamed to 'tls.certificate'"),
         ]
-        for entry in replaced where entry.reader.hasValue(forKey: entry.key) {
+        for entry in replaced where configReader.hasValue(forKey: entry.key, isSecret: entry.isSecret) {
             throw CassandraClient.ConfigurationError(message: entry.message)
         }
     }
@@ -305,21 +314,21 @@ extension CassandraClient.Configuration {
     }
 }
 
-extension CassandraClient.Configuration.SSL {
-    /// Initializes SSL configuration from a `ConfigReader`.
+extension CassandraClient.Configuration.TLS {
+    /// Initializes TLS configuration from a `ConfigReader`.
     ///
     /// ## Configuration keys:
-    /// - `enabled` (bool, optional, default: false): Whether SSL is enabled. If `false`, the initializer
+    /// - `enabled` (bool, optional, default: false): Whether TLS is enabled. If `false`, the initializer
     ///   returns `nil`.
     /// - `trustedCertificates` (string array, optional): PEM encoded certificates used to verify the peer.
     /// - `certificateVerification` (string, optional, default: "ipAddressVerification"): Verification performed
     ///   on the peer's certificate, one of "none", "noHostnameVerification", "ipAddressVerification" or
     ///   "fullVerification".
-    /// - `certificate` (string, optional): PEM encoded client certificate chain.
+    /// - `certificate` (string, optional): PEM encoded client certificate chain. Set together with `privateKey`.
     /// - `privateKey` (string, optional, secret): PEM encoded client private key.
     /// - `privateKeyPassword` (string, secret): Password for `privateKey`. Required when `privateKey` is set.
     ///
-    /// - Throws: If `certificateVerification` is not one of the accepted values, or `privateKey` is set without `privateKeyPassword`.
+    /// - Throws: If `certificateVerification` is not one of the accepted values, `privateKey` is set without `privateKeyPassword`, or only one of `certificate` and `privateKey` is set.
     public init?(configReader: ConfigReader) throws {
         guard configReader.bool(forKey: "enabled", default: false) else {
             return nil
@@ -337,14 +346,25 @@ extension CassandraClient.Configuration.SSL {
             self.certificateVerification = CertificateVerification(verification)
         }
 
-        self.certificate = configReader.string(forKey: "certificate")
-        if let privateKey = configReader.string(forKey: "privateKey", isSecret: true) {
+        let certificate = configReader.string(forKey: "certificate")
+        let privateKey = configReader.string(forKey: "privateKey", isSecret: true)
+        switch (certificate, privateKey) {
+        case (let certificate?, let privateKey?):
             let password = try configReader.requiredString(forKey: "privateKeyPassword", isSecret: true)
-            self.privateKey = (key: privateKey, password: password)
+            self.clientCredentials = ClientCredentials(
+                certificate: certificate,
+                privateKey: (key: privateKey, password: password)
+            )
+        case (nil, nil):
+            break
+        default:
+            throw CassandraClient.ConfigurationError(
+                message: "'certificate' and 'privateKey' must be set together"
+            )
         }
     }
 
-    /// Warns about SSL keys that are set but ignored because SSL is not enabled.
+    /// Warns about TLS keys that are set but ignored because TLS is not enabled.
     ///
     /// Configuring certificates and then connecting in plain text is potentially a mistake, so we should make the user aware
     internal static func warnAboutIgnoredKeys(configReader: ConfigReader, logger: Logger) {
@@ -368,17 +388,17 @@ extension CassandraClient.Configuration.SSL {
             return
         }
         logger.warning(
-            "SSL properties are set but 'ssl.enabled' is not true, so they are ignored.",
+            "TLS properties are set but 'tls.enabled' is not true, so they are ignored.",
             metadata: [
                 CassandraClient.ConfigurationLogKey.ignoredKeys: .string(
-                    ignoredKeys.map { "ssl.\($0)" }.joined(separator: ", ")
+                    ignoredKeys.map { "tls.\($0)" }.joined(separator: ", ")
                 )
             ]
         )
     }
 }
 
-extension CassandraClient.Configuration.SSL {
+extension CassandraClient.Configuration.TLS {
     /// The accepted values of the `certificateVerification` key.
     fileprivate enum CertificateVerificationName: String, CaseIterable {
         case none
@@ -388,8 +408,8 @@ extension CassandraClient.Configuration.SSL {
     }
 }
 
-extension CassandraClient.Configuration.SSL.CertificateVerification {
-    fileprivate init(_ name: CassandraClient.Configuration.SSL.CertificateVerificationName) {
+extension CassandraClient.Configuration.TLS.CertificateVerification {
+    fileprivate init(_ name: CassandraClient.Configuration.TLS.CertificateVerificationName) {
         switch name {
         case .none: self = .none
         case .noHostnameVerification: self = .noHostnameVerification
@@ -491,8 +511,10 @@ extension ConfigReader {
     }
 
     /// Whether the key holds a value of any type this package reads.
-    fileprivate func hasValue(forKey key: ConfigKey) -> Bool {
-        self.string(forKey: key) != nil || self.bool(forKey: key) != nil || self.int(forKey: key) != nil
+    fileprivate func hasValue(forKey key: ConfigKey, isSecret: Bool) -> Bool {
+        self.string(forKey: key, isSecret: isSecret) != nil || self.bool(forKey: key, isSecret: isSecret) != nil
+            || self.int(forKey: key, isSecret: isSecret) != nil
+            || self.stringArray(forKey: key, isSecret: isSecret) != nil
     }
 
     fileprivate func requiredInt32(forKey key: ConfigKey) throws -> Int32 {

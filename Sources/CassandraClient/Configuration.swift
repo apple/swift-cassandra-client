@@ -37,8 +37,8 @@ extension CassandraClient {
         /// all connections and invoked concurrently; see ``CassandraClient/Authenticator``.
         public var authenticator: (any CassandraClient.Authenticator)? = nil
 
-        /// SSL configuration. `nil` connects in plain text.
-        public var ssl: SSL?
+        /// Whether and how connections to the cluster are encrypted. Default ``TransportSecurity/plaintext``.
+        public var transportSecurity: TransportSecurity = .plaintext
         /// The keyspace the session connects to, used to resolve unqualified table names.
         public var keyspace: String?
         /// Number of driver I/O threads. `nil` leaves the driver's default.
@@ -87,7 +87,7 @@ extension CassandraClient {
         public var isSchemaMetadataEnabled: Bool = true
         /// Whether to resolve each cluster host's hostname with a reverse DNS lookup. Default `false`.
         ///
-        /// Required by ``SSL/CertificateVerification/fullVerification``, which matches the certificate
+        /// Required by ``TLS/CertificateVerification/fullVerification``, which matches the certificate
         /// against that hostname.
         public var hostnameResolution: Bool = false
         /// Whether to shuffle the resolved contact points before connecting. Default `true`.
@@ -248,16 +248,16 @@ extension CassandraClient {
             } else if let authenticator = self.authenticator {
                 try cluster.setAuthenticator(authenticator)
             }
-            if let ssl = self.ssl {
+            if let tls = self.transportSecurity.tls {
                 // The driver matches DNS identity against a hostname it only resolves when hostname
                 // resolution is on; without it peers reached by IP carry no hostname and every
                 // handshake fails the subject match.
-                if ssl.certificateVerification == .fullVerification, !self.hostnameResolution {
+                if tls.certificateVerification == .fullVerification, !self.hostnameResolution {
                     throw CassandraClient.Error.badParams(
-                        "SSL certificateVerification .fullVerification requires hostnameResolution to be true"
+                        "TLS certificateVerification .fullVerification requires hostnameResolution to be true"
                     )
                 }
-                try cluster.setSSL(try ssl.makeSSLContext())
+                try cluster.setTLS(try tls.makeTLSContext())
             }
             if let value = self.numIOThreads {
                 try cluster.setNumThreadsIO(value)
@@ -323,19 +323,19 @@ extension CassandraClient {
             return cluster
         }
 
-        /// A warning to log when SSL is enabled but the peer's identity is not verified, otherwise
+        /// A warning to log when TLS is enabled but the peer's identity is not verified, otherwise
         /// `nil`. The driver raises its own anti-pattern warning for this, but only for the
         /// no-verification case and only from a startup message a non-DSE cluster never triggers.
-        internal var insecureSSLWarning: String? {
-            guard let ssl = self.ssl else { return nil }
-            switch ssl.certificateVerification.backing {
+        internal var insecureTLSWarning: String? {
+            guard let tls = self.transportSecurity.tls else { return nil }
+            switch tls.certificateVerification.backing {
             case .none:
                 return
-                    "SSL is enabled with certificateVerification .none: the peer's certificate is not "
+                    "TLS is enabled with certificateVerification .none: the peer's certificate is not "
                     + "checked at all, leaving the connection open to interception"
             case .noHostnameVerification:
                 return
-                    "SSL is enabled with certificateVerification .noHostnameVerification: the peer's "
+                    "TLS is enabled with certificateVerification .noHostnameVerification: the peer's "
                     + "identity is not verified, so any certificate chaining to trustedCertificates is "
                     + "accepted for any host"
             case .ipAddressVerification, .fullVerification:
@@ -345,7 +345,7 @@ extension CassandraClient {
     }
 }
 
-// Redact secrets from every string form. The authenticator typically holds credentials and the SSL
+// Redact secrets from every string form. The authenticator typically holds credentials and the TLS
 // configuration holds a private key and its password; default reflection would print them through any
 // interpolation, `dump(_:)` or `Mirror` of a configuration. Same approach as `Encrypted<T>`.
 extension CassandraClient.Configuration: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
@@ -356,7 +356,7 @@ extension CassandraClient.Configuration: CustomStringConvertible, CustomDebugStr
         protocolVersion: \(self.protocolVersion),
         keyspace: \(self.keyspace ?? "none"),
         authenticator: \(self.authenticator == nil ? "none" : "<redacted>"),
-        ssl: \(self.ssl.map(\.description) ?? "disabled")]
+        transportSecurity: \(self.transportSecurity.tls.map(\.description) ?? "plaintext")]
         """
     }
 
@@ -370,7 +370,7 @@ extension CassandraClient.Configuration: CustomStringConvertible, CustomDebugStr
                 "protocolVersion": self.protocolVersion,
                 "keyspace": self.keyspace as Any,
                 "authenticator": self.authenticator == nil ? "none" : "<redacted>",
-                "ssl": self.ssl as Any,
+                "transportSecurity": self.transportSecurity.tls as Any,
             ]
         )
     }
@@ -524,8 +524,8 @@ internal final class Cluster {
         try self.checkResult { cass_cluster_set_serial_consistency(self.rawPointer, consistency) }
     }
 
-    func setSSL(_ ssl: SSLContext) throws {
-        cass_cluster_set_ssl(self.rawPointer, ssl.rawPointer)
+    func setTLS(_ tls: TLSContext) throws {
+        cass_cluster_set_ssl(self.rawPointer, tls.rawPointer)
     }
 
     private func checkResult(body: () -> CassError) throws {
@@ -536,22 +536,61 @@ internal final class Cluster {
     }
 }
 
-// MARK: - SSL
+// MARK: - Transport security
 
 extension CassandraClient.Configuration {
-    /// SSL configuration for connections to the cluster.
-    public struct SSL: Sendable {
+    /// Whether connections to the cluster are encrypted, and the TLS settings if they are.
+    public struct TransportSecurity: Sendable {
+        fileprivate enum Backing {
+            case plaintext
+            case tls(TLS)
+        }
+
+        fileprivate let backing: Backing
+
+        /// Connects in plain text.
+        public static var plaintext: Self { Self(backing: .plaintext) }
+
+        /// Connects over TLS with the given settings.
+        public static func tls(_ tls: TLS) -> Self { Self(backing: .tls(tls)) }
+
+        /// The TLS settings, or `nil` when connecting in plain text.
+        public var tls: TLS? {
+            switch self.backing {
+            case .plaintext: return nil
+            case .tls(let tls): return tls
+            }
+        }
+    }
+}
+
+// MARK: - TLS
+
+extension CassandraClient.Configuration {
+    /// TLS configuration for connections to the cluster.
+    public struct TLS: Sendable {
         /// PEM encoded certificates the peer's certificate chain is validated against. The driver loads no
         /// system trust anchors, so `nil` fails every verification mode except
         /// ``CertificateVerification/none``.
         public var trustedCertificates: [String]?
         /// Verification performed on the peer's certificate. Default ``CertificateVerification/ipAddressVerification``.
         public var certificateVerification: CertificateVerification = .ipAddressVerification
-        /// PEM encoded client certificate chain, starting with the certificate itself, used to authenticate
-        /// the client to the server.
-        public var certificate: String?
-        /// PEM encoded client private key and its password, used to authenticate the client to the server.
-        public var privateKey: (key: String, password: String)?
+        /// The certificate and private key the client presents to authenticate itself to the server. `nil`
+        /// presents none.
+        public var clientCredentials: ClientCredentials?
+
+        /// A client certificate and the private key that goes with it.
+        public struct ClientCredentials: Sendable {
+            /// PEM encoded client certificate chain, starting with the certificate itself.
+            public var certificate: String
+            /// PEM encoded client private key and its password.
+            public var privateKey: (key: String, password: String)
+
+            public init(certificate: String, privateKey: (key: String, password: String)) {
+                self.certificate = certificate
+                self.privateKey = privateKey
+            }
+        }
 
         /// Verification performed on the peer's certificate.
         ///
@@ -606,7 +645,7 @@ extension CassandraClient.Configuration {
                 self.backing = backing
             }
 
-            /// The mode's name, for ``CassandraClient/Configuration/SSL``'s description.
+            /// The mode's name, for ``CassandraClient/Configuration/TLS``'s description.
             internal var name: String {
                 switch self.backing {
                 case .none: return "none"
@@ -640,39 +679,36 @@ extension CassandraClient.Configuration {
             }
         }
 
-        func makeSSLContext() throws -> SSLContext {
-            let sslContext = SSLContext()
+        func makeTLSContext() throws -> TLSContext {
+            let tlsContext = TLSContext()
 
             if let trustedCerts = trustedCertificates {
                 for cert in trustedCerts {
-                    try sslContext.addTrustedCert(cert)
+                    try tlsContext.addTrustedCert(cert)
                 }
             }
 
-            sslContext.setVerifyFlags(self.cassVerifyFlags)
+            tlsContext.setVerifyFlags(self.cassVerifyFlags)
 
-            if let certificate = self.certificate {
-                try sslContext.setCert(certificate)
-            }
-            if let privateKey = self.privateKey {
-                try sslContext.setPrivateKey(privateKey.key, password: privateKey.password)
+            if let credentials = self.clientCredentials {
+                try tlsContext.setCert(credentials.certificate)
+                try tlsContext.setPrivateKey(credentials.privateKey.key, password: credentials.privateKey.password)
             }
 
-            return sslContext
+            return tlsContext
         }
     }
 }
 
-extension CassandraClient.Configuration.SSL: CustomStringConvertible, CustomDebugStringConvertible,
+extension CassandraClient.Configuration.TLS: CustomStringConvertible, CustomDebugStringConvertible,
     CustomReflectable
 {
     public var description: String {
         """
-        [\(CassandraClient.Configuration.SSL.self):
+        [\(CassandraClient.Configuration.TLS.self):
         certificateVerification: \(self.certificateVerification.name),
         trustedCertificates: \(self.trustedCertificates?.count ?? 0),
-        certificate: \(self.certificate == nil ? "none" : "set"),
-        privateKey: \(self.privateKey == nil ? "none" : "<redacted>")]
+        clientCredentials: \(self.clientCredentials == nil ? "none" : "set, private key <redacted>")]
         """
     }
 
@@ -684,14 +720,13 @@ extension CassandraClient.Configuration.SSL: CustomStringConvertible, CustomDebu
             children: [
                 "trustedCertificates": self.trustedCertificates as Any,
                 "certificateVerification": self.certificateVerification.name,
-                "certificate": self.certificate as Any,
-                "privateKey": self.privateKey == nil ? "none" : "<redacted>",
+                "clientCredentials": self.clientCredentials == nil ? "none" : "<redacted>",
             ]
         )
     }
 }
 
-internal final class SSLContext {
+internal final class TLSContext {
     let rawPointer: OpaquePointer
 
     /// The verify flags last applied through ``setVerifyFlags(_:)``.
@@ -731,7 +766,7 @@ internal final class SSLContext {
     private func checkResult(body: () -> CassError) throws {
         let result = body()
         guard result == CASS_OK else {
-            throw CassandraClient.Error(result, message: "Failed to configure SSL")
+            throw CassandraClient.Error(result, message: "Failed to configure TLS")
         }
     }
 }
@@ -783,6 +818,21 @@ extension Duration {
 // MARK: - Renamed
 
 extension CassandraClient.Configuration {
+    @available(*, unavailable, message: "Use 'transportSecurity' with '.tls(_:)' instead.")
+    public var ssl: TLS? {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+
+    @available(*, unavailable, message: "Use 'transportSecurity' with '.tls(_:)' instead.")
+    public var tls: TLS? {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+
+    @available(*, unavailable, renamed: "TLS")
+    public typealias SSL = TLS
+
     @available(*, unavailable, renamed: "isSchemaMetadataEnabled")
     public var schema: Bool {
         get { fatalError("unavailable") }
@@ -790,7 +840,7 @@ extension CassandraClient.Configuration {
     }
 }
 
-extension CassandraClient.Configuration.SSL {
+extension CassandraClient.Configuration.TLS {
     @available(*, unavailable, renamed: "CertificateVerification")
     public typealias VerifyFlag = CertificateVerification
 
@@ -800,14 +850,26 @@ extension CassandraClient.Configuration.SSL {
         set { fatalError("unavailable") }
     }
 
-    @available(*, unavailable, renamed: "certificate")
+    @available(*, unavailable, message: "Use 'clientCredentials' instead.")
     public var cert: String? {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+
+    @available(*, unavailable, message: "Use 'clientCredentials' instead.")
+    public var certificate: String? {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+
+    @available(*, unavailable, message: "Use 'clientCredentials' instead.")
+    public var privateKey: (key: String, password: String)? {
         get { fatalError("unavailable") }
         set { fatalError("unavailable") }
     }
 }
 
-extension CassandraClient.Configuration.SSL.CertificateVerification {
+extension CassandraClient.Configuration.TLS.CertificateVerification {
     @available(*, unavailable, renamed: "noHostnameVerification")
     public static var peerCert: Self { fatalError("unavailable") }
 
