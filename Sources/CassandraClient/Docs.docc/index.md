@@ -71,18 +71,18 @@ Or using free-form transformations on the row:
 
 ## TLS
 
-TLS is off by default. To turn it on, set `ssl` on the configuration and give it the PEM-encoded certificates to trust:
+TLS is off by default (`transportSecurity` is `.plaintext`). To turn it on, set `transportSecurity` to `.tls(_:)` and give it the PEM-encoded certificates to trust:
 
 ```swift
   var configuration = CassandraClient.Configuration(...)
-  var ssl = CassandraClient.Configuration.SSL()
-  ssl.trustedCertificates = [certificate]
-  configuration.ssl = ssl
+  var tls = CassandraClient.Configuration.TLS()
+  tls.trustedCertificates = [certificate]
+  configuration.transportSecurity = .tls(tls)
 ```
 
 ### If you are upgrading
 
-As of 0.13.0 the client verifies both the certificate chain and the server's identity, so a configuration that worked before can start failing two ways. A certificate that doesn't name the address the client connects to fails with `sslIdentityMismatch`, "Peer certificate subject name does not match". `trustedCertificates` left unset fails with `sslInvalidPeerCert` and an X509 reason such as "unable to get local issuer certificate". Also, `verifyFlag`'s `.default` case has been removed; use `.noHostnameVerification` (named `.peerCert` in earlier versions) for the previous behavior. A configuration file setting `ssl.verifyFlag` to `"default"` now throws when it is read, rather than being accepted.
+As of 0.13.0 the client verifies both the certificate chain and the server's identity, so a configuration that worked before can start failing two ways. A certificate that doesn't name the address the client connects to fails with `tlsIdentityMismatch`, "Peer certificate subject name does not match". `trustedCertificates` left unset fails with `tlsInvalidPeerCert` and an X509 reason such as "unable to get local issuer certificate". Also, `verifyFlag`'s `.default` case has been removed; use `.noHostnameVerification` (named `.peerCert` in earlier versions) for the previous behavior. A configuration file that still sets the old `ssl.verifyFlag` key now throws when it is read, naming `tls.certificateVerification`, rather than being accepted.
 
 ### What is verified
 
@@ -90,11 +90,11 @@ For every option except `none`, certificates are checked against `trustedCertifi
 
 By default (`ipAddressVerification`) the client also checks that the certificate belongs to the node it connected to, by matching that node's IP address against an `iPAddress` subject alternative name. For the node reached through a contact point, that is the contact point's resolved address. For nodes discovered from the cluster, it is their `system.peers` `rpc_address`, which need not be a configured contact point.
 
-To match hostnames instead, set `fullVerification` and turn on `hostnameResolution`, which is what lets the driver work out a hostname per node. Note that `ssl` is a struct, so it has to be assigned back to the configuration after being changed:
+To match hostnames instead, set `fullVerification` and turn on `hostnameResolution`, which is what lets the driver work out a hostname per node. Note that `TLS` is a struct, so it has to be assigned back to the configuration after being changed:
 
 ```swift
-  ssl.certificateVerification = .fullVerification
-  configuration.ssl = ssl
+  tls.certificateVerification = .fullVerification
+  configuration.transportSecurity = .tls(tls)
   configuration.hostnameResolution = true
 ```
 

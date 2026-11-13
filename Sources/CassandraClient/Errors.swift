@@ -76,14 +76,14 @@ extension CassandraClient {
             case serverConfigError(String)
             case alreadyExists(String)
             case unprepared(String)
-            // ssl errors
-            case sslInvalidCert(String)
-            case sslInvalidPrivateKey(String)
-            case sslNoPeerCert(String)
-            case sslInvalidPeerCert(String)
-            case sslIdentityMismatch(String)
-            case sslProtocolError(String)
-            case sslClosed(String)
+            // tls errors
+            case tlsInvalidCert(String)
+            case tlsInvalidPrivateKey(String)
+            case tlsNoPeerCert(String)
+            case tlsInvalidPeerCert(String)
+            case tlsIdentityMismatch(String)
+            case tlsProtocolError(String)
+            case tlsClosed(String)
             // encryption errors
             case encryptionError(String)
             case decryptionError(String)
@@ -205,19 +205,19 @@ extension CassandraClient {
             case CASS_ERROR_SERVER_UNPREPARED:
                 self = .unprepared(message)
             case CASS_ERROR_SSL_INVALID_CERT:
-                self = .sslInvalidCert(message)
+                self = .tlsInvalidCert(message)
             case CASS_ERROR_SSL_INVALID_PRIVATE_KEY:
-                self = .sslInvalidPrivateKey(message)
+                self = .tlsInvalidPrivateKey(message)
             case CASS_ERROR_SSL_NO_PEER_CERT:
-                self = .sslNoPeerCert(message)
+                self = .tlsNoPeerCert(message)
             case CASS_ERROR_SSL_INVALID_PEER_CERT:
-                self = .sslInvalidPeerCert(message)
+                self = .tlsInvalidPeerCert(message)
             case CASS_ERROR_SSL_IDENTITY_MISMATCH:
-                self = .sslIdentityMismatch(message)
+                self = .tlsIdentityMismatch(message)
             case CASS_ERROR_SSL_PROTOCOL_ERROR:
-                self = .sslProtocolError(message)
+                self = .tlsProtocolError(message)
             case CASS_ERROR_SSL_CLOSED:
-                self = .sslClosed(message)
+                self = .tlsClosed(message)
             default:
                 self = .other(code: error.rawValue, description: message)
             }
@@ -334,19 +334,19 @@ extension CassandraClient {
                 return "Already exists: \(description)"
             case .unprepared(let description):
                 return "Unprepared: \(description)"
-            case .sslInvalidCert(let description):
+            case .tlsInvalidCert(let description):
                 return "Unable to load certificate: \(description)"
-            case .sslInvalidPrivateKey(let description):
+            case .tlsInvalidPrivateKey(let description):
                 return "Unable to load private key: \(description)"
-            case .sslNoPeerCert(let description):
+            case .tlsNoPeerCert(let description):
                 return "No peer certificate: \(description)"
-            case .sslInvalidPeerCert(let description):
+            case .tlsInvalidPeerCert(let description):
                 return "Invalid peer certificate: \(description)"
-            case .sslIdentityMismatch(let description):
+            case .tlsIdentityMismatch(let description):
                 return "Certificate does not match host or IP address: \(description)"
-            case .sslProtocolError(let description):
+            case .tlsProtocolError(let description):
                 return "Protocol error: \(description)"
-            case .sslClosed(let description):
+            case .tlsClosed(let description):
                 return "Connection closed: \(description)"
             case .encryptionError(let description):
                 return "Encryption error: \(description)"
@@ -471,19 +471,19 @@ extension CassandraClient {
                 return "Already exists"
             case .unprepared:
                 return "Unprepared"
-            case .sslInvalidCert:
+            case .tlsInvalidCert:
                 return "Unable to load certificate"
-            case .sslInvalidPrivateKey:
+            case .tlsInvalidPrivateKey:
                 return "Unable to load private key"
-            case .sslNoPeerCert:
+            case .tlsNoPeerCert:
                 return "No peer certificate"
-            case .sslInvalidPeerCert:
+            case .tlsInvalidPeerCert:
                 return "Invalid peer certificate"
-            case .sslIdentityMismatch:
+            case .tlsIdentityMismatch:
                 return "Certificate does not match host or IP address"
-            case .sslProtocolError:
+            case .tlsProtocolError:
                 return "Protocol error"
-            case .sslClosed:
+            case .tlsClosed:
                 return "Connection closed"
             case .encryptionError:
                 return "Encryption error"
@@ -517,8 +517,8 @@ extension CassandraClient {
             // is deliberately categorised — this function is the single source of truth reused by metrics.
             case .serverError, .protocolError, .readFailure, .writeFailure, .functionFailure, .truncateError,
                 .alreadyExists, .serverConfigError, .requestQueueFull, .unprepared,
-                .sslInvalidCert, .sslInvalidPrivateKey, .sslNoPeerCert, .sslInvalidPeerCert,
-                .sslIdentityMismatch, .sslProtocolError, .sslClosed,
+                .tlsInvalidCert, .tlsInvalidPrivateKey, .tlsNoPeerCert, .tlsInvalidPeerCert,
+                .tlsIdentityMismatch, .tlsProtocolError, .tlsClosed,
                 .encryptionError, .decryptionError,
                 .noStreams, .unableToInit, .messageEncode, .unexpectedResponse, .noAvailableIOThread,
                 .writeError, .unableToSetKeyspace, .invalidStatementType, .unableToDetermineProtocol,
@@ -746,33 +746,68 @@ extension CassandraClient {
             .init(code: .unprepared(description))
         }
 
-        // ssl errors
+        // tls errors
+        public static func tlsInvalidCert(_ description: String) -> Error {
+            .init(code: .tlsInvalidCert(description))
+        }
+
+        public static func tlsInvalidPrivateKey(_ description: String) -> Error {
+            .init(code: .tlsInvalidPrivateKey(description))
+        }
+
+        public static func tlsNoPeerCert(_ description: String) -> Error {
+            .init(code: .tlsNoPeerCert(description))
+        }
+
+        public static func tlsInvalidPeerCert(_ description: String) -> Error {
+            .init(code: .tlsInvalidPeerCert(description))
+        }
+
+        public static func tlsIdentityMismatch(_ description: String) -> Error {
+            .init(code: .tlsIdentityMismatch(description))
+        }
+
+        public static func tlsProtocolError(_ description: String) -> Error {
+            .init(code: .tlsProtocolError(description))
+        }
+
+        public static func tlsClosed(_ description: String) -> Error {
+            .init(code: .tlsClosed(description))
+        }
+
+        @available(*, unavailable, renamed: "tlsInvalidCert")
         public static func sslInvalidCert(_ description: String) -> Error {
-            .init(code: .sslInvalidCert(description))
+            fatalError("unavailable")
         }
 
+        @available(*, unavailable, renamed: "tlsInvalidPrivateKey")
         public static func sslInvalidPrivateKey(_ description: String) -> Error {
-            .init(code: .sslInvalidPrivateKey(description))
+            fatalError("unavailable")
         }
 
+        @available(*, unavailable, renamed: "tlsNoPeerCert")
         public static func sslNoPeerCert(_ description: String) -> Error {
-            .init(code: .sslNoPeerCert(description))
+            fatalError("unavailable")
         }
 
+        @available(*, unavailable, renamed: "tlsInvalidPeerCert")
         public static func sslInvalidPeerCert(_ description: String) -> Error {
-            .init(code: .sslInvalidPeerCert(description))
+            fatalError("unavailable")
         }
 
+        @available(*, unavailable, renamed: "tlsIdentityMismatch")
         public static func sslIdentityMismatch(_ description: String) -> Error {
-            .init(code: .sslIdentityMismatch(description))
+            fatalError("unavailable")
         }
 
+        @available(*, unavailable, renamed: "tlsProtocolError")
         public static func sslProtocolError(_ description: String) -> Error {
-            .init(code: .sslProtocolError(description))
+            fatalError("unavailable")
         }
 
+        @available(*, unavailable, renamed: "tlsClosed")
         public static func sslClosed(_ description: String) -> Error {
-            .init(code: .sslClosed(description))
+            fatalError("unavailable")
         }
 
         // encryption errors

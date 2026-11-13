@@ -17,10 +17,10 @@ import XCTest
 
 @testable import CassandraClient
 
-/// Unit tests for the SSL verify-flag mapping and the configuration checks around it. No cluster
+/// Unit tests for the TLS verify-flag mapping and the configuration checks around it. No cluster
 /// required — the flags are asserted as the bitmask handed to the driver, and building a cluster
 /// opens no connections.
-final class SSLConfigurationTests: XCTestCase {
+final class TLSConfigurationTests: XCTestCase {
     private static let peerCertBit = Int32(CASS_SSL_VERIFY_PEER_CERT.rawValue)
     private static let peerIdentityBit = Int32(CASS_SSL_VERIFY_PEER_IDENTITY.rawValue)
     private static let peerIdentityDNSBit = Int32(CASS_SSL_VERIFY_PEER_IDENTITY_DNS.rawValue)
@@ -38,7 +38,7 @@ final class SSLConfigurationTests: XCTestCase {
     /// The default verifies the peer's identity, so a certificate that merely chains to a trusted
     /// issuer is not accepted for an address it does not name.
     func testDefaultVerifiesPeerIdentity() {
-        XCTAssertEqual(CassandraClient.Configuration.SSL().certificateVerification, .ipAddressVerification)
+        XCTAssertEqual(CassandraClient.Configuration.TLS().certificateVerification, .ipAddressVerification)
     }
 
     // MARK: - Flag mapping
@@ -68,13 +68,34 @@ final class SSLConfigurationTests: XCTestCase {
         XCTAssertEqual(flags, Self.peerCertBit | Self.peerIdentityDNSBit)
     }
 
+    /// A configuration connects in plain text unless TLS is chosen.
+    func testTransportSecurityDefaultsToPlaintext() {
+        XCTAssertNil(self.makeConfiguration().transportSecurity.tls)
+    }
+
+    /// Each driver TLS error code maps to its matching error.
+    func testDriverErrorCodesMapToTLSErrors() {
+        let expected: [(CassError, CassandraClient.Error)] = [
+            (CASS_ERROR_SSL_INVALID_CERT, .tlsInvalidCert("m")),
+            (CASS_ERROR_SSL_INVALID_PRIVATE_KEY, .tlsInvalidPrivateKey("m")),
+            (CASS_ERROR_SSL_NO_PEER_CERT, .tlsNoPeerCert("m")),
+            (CASS_ERROR_SSL_INVALID_PEER_CERT, .tlsInvalidPeerCert("m")),
+            (CASS_ERROR_SSL_IDENTITY_MISMATCH, .tlsIdentityMismatch("m")),
+            (CASS_ERROR_SSL_PROTOCOL_ERROR, .tlsProtocolError("m")),
+            (CASS_ERROR_SSL_CLOSED, .tlsClosed("m")),
+        ]
+        for (code, error) in expected {
+            XCTAssertEqual(CassandraClient.Error(code, message: "m"), error)
+        }
+    }
+
     /// The mask actually reaches the context the driver is handed. Asserting ``cassVerifyFlags`` alone
-    /// would stay green if `makeSSLContext()` stopped applying it.
-    func testMakeSSLContextAppliesTheMask() throws {
-        for verification in CassandraClient.Configuration.SSL.CertificateVerification.allCases {
-            let sslContext = try self.makeSSL(verification: verification).makeSSLContext()
+    /// would stay green if `makeTLSContext()` stopped applying it.
+    func testMakeTLSContextAppliesTheMask() throws {
+        for verification in CassandraClient.Configuration.TLS.CertificateVerification.allCases {
+            let tlsContext = try self.makeTLS(verification: verification).makeTLSContext()
             XCTAssertEqual(
-                sslContext.verifyFlags,
+                tlsContext.verifyFlags,
                 self.flags(for: verification),
                 "verification: \(verification)"
             )
@@ -88,14 +109,14 @@ final class SSLConfigurationTests: XCTestCase {
     func testPeerIdentityDNSRequiresHostnameResolution() async {
         for hostnameResolution in [false] {
             var configuration = self.makeConfiguration()
-            configuration.ssl = self.makeSSL(verification: .fullVerification)
+            configuration.transportSecurity = .tls(self.makeTLS(verification: .fullVerification))
             configuration.hostnameResolution = hostnameResolution
 
             await assertThrowsErrorAsync(try await self.makeCluster(configuration)) { error in
                 XCTAssertEqual(
                     error as? CassandraClient.Error,
                     .badParams(
-                        "SSL certificateVerification .fullVerification requires hostnameResolution to be true"
+                        "TLS certificateVerification .fullVerification requires hostnameResolution to be true"
                     ),
                     "hostnameResolution: \(String(describing: hostnameResolution))"
                 )
@@ -106,7 +127,7 @@ final class SSLConfigurationTests: XCTestCase {
     /// With hostname resolution enabled the driver has a hostname to match, so the pairing is allowed.
     func testPeerIdentityDNSWithHostnameResolutionIsAccepted() async throws {
         var configuration = self.makeConfiguration()
-        configuration.ssl = self.makeSSL(verification: .fullVerification)
+        configuration.transportSecurity = .tls(self.makeTLS(verification: .fullVerification))
         configuration.hostnameResolution = true
 
         try await self.makeCluster(configuration)
@@ -115,11 +136,11 @@ final class SSLConfigurationTests: XCTestCase {
     /// The requirement is specific to DNS matching; the other options resolve no hostname and so are
     /// accepted with hostname resolution off.
     func testOtherCertificateVerificationsDoNotRequireHostnameResolution() async {
-        for verification in CassandraClient.Configuration.SSL.CertificateVerification.allCases
+        for verification in CassandraClient.Configuration.TLS.CertificateVerification.allCases
         where verification != .fullVerification {
             for hostnameResolution in [false] {
                 var configuration = self.makeConfiguration()
-                configuration.ssl = self.makeSSL(verification: verification)
+                configuration.transportSecurity = .tls(self.makeTLS(verification: verification))
                 configuration.hostnameResolution = hostnameResolution
 
                 do {
@@ -134,8 +155,8 @@ final class SSLConfigurationTests: XCTestCase {
         }
     }
 
-    /// A configuration with no SSL at all is unaffected by the requirement.
-    func testNoSSLIsUnaffected() async throws {
+    /// A configuration with no TLS at all is unaffected by the requirement.
+    func testNoTLSIsUnaffected() async throws {
         var configuration = self.makeConfiguration()
         configuration.hostnameResolution = false
 
@@ -147,60 +168,60 @@ final class SSLConfigurationTests: XCTestCase {
     /// Exactly the options that verify no identity are warned about. Asserted as a partition over
     /// `allCases` rather than two hardcoded lists, so a new case is covered without being named here.
     func testWarningCoversExactlyTheFlagsThatVerifyNoIdentity() {
-        let expectedToWarn: [CassandraClient.Configuration.SSL.CertificateVerification] = [
+        let expectedToWarn: [CassandraClient.Configuration.TLS.CertificateVerification] = [
             .none, .noHostnameVerification,
         ]
 
-        for verification in CassandraClient.Configuration.SSL.CertificateVerification.allCases {
+        for verification in CassandraClient.Configuration.TLS.CertificateVerification.allCases {
             var configuration = self.makeConfiguration()
-            configuration.ssl = self.makeSSL(verification: verification)
+            configuration.transportSecurity = .tls(self.makeTLS(verification: verification))
 
             if expectedToWarn.contains(verification) {
-                XCTAssertNotNil(configuration.insecureSSLWarning, "verification: \(verification)")
+                XCTAssertNotNil(configuration.insecureTLSWarning, "verification: \(verification)")
             } else {
-                XCTAssertNil(configuration.insecureSSLWarning, "verification: \(verification)")
+                XCTAssertNil(configuration.insecureTLSWarning, "verification: \(verification)")
             }
         }
     }
 
-    /// A configuration without SSL is not warned about.
-    func testNoSSLIsNotWarnedAbout() {
-        XCTAssertNil(self.makeConfiguration().insecureSSLWarning)
+    /// A configuration without TLS is not warned about.
+    func testNoTLSIsNotWarnedAbout() {
+        XCTAssertNil(self.makeConfiguration().insecureTLSWarning)
     }
 
     // MARK: - Description
 
-    /// SSL disabled and SSL enabled without verification are distinguishable in the connect log.
+    /// Plaintext and TLS without verification are distinguishable in the connect log.
     /// Both once rendered as `none`, which is the one line meant to diagnose this.
     func testDescriptionDistinguishesDisabledFromUnverified() {
         var unverified = self.makeConfiguration()
-        unverified.ssl = self.makeSSL(verification: .none)
+        unverified.transportSecurity = .tls(self.makeTLS(verification: .none))
 
         XCTAssertNotEqual(unverified.description, self.makeConfiguration().description)
-        XCTAssertTrue(self.makeConfiguration().description.contains("ssl: disabled"))
+        XCTAssertTrue(self.makeConfiguration().description.contains("transportSecurity: plaintext"))
     }
 
     /// The verify mode reaches the description, so a handshake that starts failing after an upgrade
     /// can be diagnosed from the existing connect log.
     func testDescriptionCarriesTheVerifyMode() {
         var configuration = self.makeConfiguration()
-        configuration.ssl = self.makeSSL(verification: .fullVerification)
+        configuration.transportSecurity = .tls(self.makeTLS(verification: .fullVerification))
 
         XCTAssertTrue(configuration.description.contains("fullVerification"))
     }
 
     // MARK: - Helpers
 
-    private func flags(for verification: CassandraClient.Configuration.SSL.CertificateVerification) -> Int32 {
-        self.makeSSL(verification: verification).cassVerifyFlags
+    private func flags(for verification: CassandraClient.Configuration.TLS.CertificateVerification) -> Int32 {
+        self.makeTLS(verification: verification).cassVerifyFlags
     }
 
-    private func makeSSL(
-        verification: CassandraClient.Configuration.SSL.CertificateVerification
-    ) -> CassandraClient.Configuration.SSL {
-        var ssl = CassandraClient.Configuration.SSL()
-        ssl.certificateVerification = verification
-        return ssl
+    private func makeTLS(
+        verification: CassandraClient.Configuration.TLS.CertificateVerification
+    ) -> CassandraClient.Configuration.TLS {
+        var tls = CassandraClient.Configuration.TLS()
+        tls.certificateVerification = verification
+        return tls
     }
 
     /// Builds the cluster and discards it. The tests assert on whether building throws; none of them use
