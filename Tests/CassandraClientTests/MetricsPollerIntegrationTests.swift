@@ -15,7 +15,6 @@
 import Foundation
 import Metrics
 import MetricsTestKit
-import NIOConcurrencyHelpers
 import XCTest
 
 @testable import CassandraClient

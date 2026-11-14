@@ -14,7 +14,6 @@
 
 import Configuration
 import Logging
-import NIOConcurrencyHelpers
 import Testing
 
 @testable import CassandraClient
@@ -59,11 +58,11 @@ struct SwiftConfigurationTests {
     /// Resolves the contact points the configuration was built with. The provider synthesised from
     /// configuration is synchronous, so the result is available as soon as it returns.
     private func contactPoints(of configuration: CassandraClient.Configuration) throws -> [String] {
-        let result = NIOLockedValueBox<Result<CassandraClient.Configuration.ContactPoints, Swift.Error>?>(nil)
+        let result = LockedBox<Result<CassandraClient.Configuration.ContactPoints, Swift.Error>?>(nil)
         configuration.contactPointsProvider { outcome in
-            result.withLockedValue { $0 = outcome }
+            result.withLock { $0 = outcome }
         }
-        return try #require(result.withLockedValue { $0 }).get()
+        return try #require(result.withLock { $0 }).get()
     }
 
     /// As ``makeConfiguration(_:)``, but with the contact points supplied in code.

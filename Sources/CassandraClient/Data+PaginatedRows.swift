@@ -14,7 +14,7 @@
 
 internal import CDataStaxDriver
 import Logging
-import NIOConcurrencyHelpers
+import Synchronization
 
 extension CassandraClient {
     /// Resulting row(s) of a Cassandra query. Data are paginated.
@@ -32,11 +32,11 @@ extension CassandraClient {
             var hasMorePages = true
             var fetchInFlight = false
         }
-        private let _state = NIOLockedValueBox(PagingState())
+        private let _state = Mutex(PagingState())
 
         /// If `true`, calling ``nextPage()`` will return a new set of ``CassandraClient/Rows``.
         /// Otherwise it will throw ``CassandraClient/Error/rowsExhausted`` error.
-        public var hasMorePages: Bool { self._state.withLockedValue { $0.hasMorePages } }
+        public var hasMorePages: Bool { self._state.withLock { $0.hasMorePages } }
 
         internal init(session: Session, statement: sending Statement, logger: Logger) {
             self.session = session
@@ -47,7 +47,7 @@ extension CassandraClient {
         /// Fetches next page of rows or throw ``CassandraClient/Error/rowsExhausted`` error if there are no more pages.
         public func nextPage() async throws -> Rows {
             // Claim the in-flight slot atomically with the has-more-pages check, rejecting overlap.
-            try self._state.withLockedValue { state in
+            try self._state.withLock { state in
                 guard state.hasMorePages else { throw CassandraClient.Error.rowsExhausted }
                 guard !state.fetchInFlight else { throw CassandraClient.Error.concurrentPaginationUnsupported }
                 state.fetchInFlight = true
@@ -56,7 +56,7 @@ extension CassandraClient {
             do {
                 // The await runs outside the lock; only the state writes are locked.
                 let rows = try await session.execute(statement: self.statement, logger: self.logger)
-                self._state.withLockedValue { state in
+                self._state.withLock { state in
                     state.hasMorePages = cass_result_has_more_pages(rows.rawPointer) == cass_true
                     if state.hasMorePages {
                         cass_statement_set_paging_state(self.statement.rawPointer, rows.rawPointer)
@@ -65,7 +65,7 @@ extension CassandraClient {
                 }
                 return rows
             } catch {
-                self._state.withLockedValue { state in
+                self._state.withLock { state in
                     state.hasMorePages = false
                     state.fetchInFlight = false
                 }

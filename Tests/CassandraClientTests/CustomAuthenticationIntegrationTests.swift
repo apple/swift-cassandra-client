@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
-import NIOConcurrencyHelpers
 import XCTest
 
 @testable import CassandraClient
@@ -216,7 +215,7 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
     /// After a connect/query/close, the retained authenticator box is released — its `deinit` runs — showing
     /// the driver's data-cleanup fired on teardown. Proves release on normal teardown only.
     func testBoxReleasedOnSessionTeardown() async throws {
-        let deinitCounter = NIOLockedValueBox<Int>(0)
+        let deinitCounter = LockedBox<Int>(0)
 
         func connectQueryAndShutdown() async throws {
             let authenticator = DeinitCountingAuthenticator(
@@ -235,11 +234,11 @@ final class CustomAuthenticationIntegrationTests: XCTestCase {
 
         // The data-cleanup trampoline may run on a driver thread during teardown, so poll briefly.
         let deadline = Date().addingTimeInterval(5)
-        while deinitCounter.withLockedValue({ $0 }) == 0, Date() < deadline {
+        while deinitCounter.withLock({ $0 }) == 0, Date() < deadline {
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTAssertEqual(
-            deinitCounter.withLockedValue { $0 },
+            deinitCounter.withLock { $0 },
             1,
             "the authenticator box must be released exactly once when the driver destroys its provider"
         )

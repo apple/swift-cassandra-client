@@ -15,7 +15,6 @@
 import Atomics
 internal import CDataStaxDriver
 import Logging
-import NIOConcurrencyHelpers
 import ServiceLifecycle
 
 /// `CassandraClient` is a wrapper around the [Datastax Cassandra C++ Driver](https://github.com/datastax/cpp-driver)

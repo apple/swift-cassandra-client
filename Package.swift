@@ -101,7 +101,6 @@ let package = Package(
         .library(name: "CassandraClient", targets: ["CassandraClient"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio", .upToNextMajor(from: "2.41.1")),
         .package(url: "https://github.com/apple/swift-nio-ssl", exact: "2.37.2"),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
         .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.14.0")),
@@ -164,8 +163,6 @@ let package = Package(
             name: "CassandraClient",
             dependencies: [
                 "CDataStaxDriver",
-                .product(name: "NIO", package: "swift-nio"),
-                .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),

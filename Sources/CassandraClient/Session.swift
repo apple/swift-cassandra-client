@@ -16,7 +16,7 @@ internal import CDataStaxDriver
 import Dispatch
 import Foundation
 import Logging
-import NIOConcurrencyHelpers
+import Synchronization
 
 extension CassandraClient.Session {
     private func logDecryptedRows(count: Int, options: CassandraClient.Statement.Options, logger: Logger) {
@@ -260,13 +260,13 @@ extension CassandraClient {
         }
 
         private let configuration: Configuration
-        private let _state = NIOLockedValueBox(State.idle)
+        private let _state = Mutex(State.idle)
         /// Completed once: succeeded when `connect(logger:)` connects, failed if the connect fails. Requests that
         /// arrive before the session is connected wait on it.
         private let ready = OneShotSignal()
         /// Set by `stopMetricsPoller()` when shutdown begins; a poller tick records gauges only while it is
         /// `false`. See `runMetricsPoller()`.
-        private let _pollerStopped = NIOLockedValueBox(false)
+        private let _pollerStopped = Mutex(false)
 
         private let underlying: CassSession
 
@@ -287,7 +287,7 @@ extension CassandraClient {
         }
 
         deinit {
-            switch self._state.withLockedValue({ $0 }) {
+            switch self._state.withLock({ $0 }) {
             case .idle, .disconnected:
                 return
             case .connecting, .connected, .disconnecting:
@@ -299,14 +299,14 @@ extension CassandraClient {
 
         /// Close the session. Called once, by `run()`, after the session has connected.
         func shutdownAsync() async throws {
-            self._state.withLockedValue { state in
+            self._state.withLock { state in
                 guard case .connected = state else {
                     preconditionFailure("Session closed while \(state), expected connected")
                 }
                 state = .disconnecting
             }
             defer {
-                self._state.withLockedValue { $0 = .disconnected }
+                self._state.withLock { $0 = .disconnected }
             }
             self.stopMetricsPoller()
             try await self.underlying.close().await()
@@ -459,7 +459,7 @@ extension CassandraClient {
             from value: CassandraClient.Statement.Value,
             columnName: String
         ) throws -> CassandraClient.KeyComponent {
-            switch value {
+            switch value.backing {
             case .string(let v): return .string(v)
             case .uuid(let v): return .uuid(v)
             case .int32(let v): return .int32(v)
@@ -498,12 +498,12 @@ extension CassandraClient {
                 } catch {
                     return
                 }
-                let isConnected = self._state.withLockedValue { state in
+                let isConnected = self._state.withLock { state in
                     if case .connected = state { return true }
                     return false
                 }
                 guard isConnected else { continue }
-                self._pollerStopped.withLockedValue { stopped in
+                self._pollerStopped.withLock { stopped in
                     guard !stopped else { return }
                     let recorder = gauges ?? SnapshotGauges(sessionName: self.configuration.metricsSessionName)
                     recorder.record(self.getMetrics())
@@ -514,7 +514,7 @@ extension CassandraClient {
 
         /// Stop the metrics poller before the session closes. Acquiring the lock waits for an in-flight tick.
         private func stopMetricsPoller() {
-            self._pollerStopped.withLockedValue { $0 = true }
+            self._pollerStopped.withLock { $0 = true }
         }
     }
 }
@@ -725,7 +725,7 @@ extension CassandraClient.Session {
         logger: Logger,
         _ body: (Logger) async throws -> T
     ) async throws -> T {
-        let action: ConnectionAction = self._state.withLockedValue { state in
+        let action: ConnectionAction = self._state.withLock { state in
             switch state {
             case .connected:
                 return .ready
@@ -995,7 +995,7 @@ extension CassandraClient.Session {
     /// Mark the session as connecting. Called once, when `run()` claims the client and before `connect(logger:)`,
     /// so a request that arrives in between knows `run()` has started.
     func beginConnecting() {
-        self._state.withLockedValue { state in
+        self._state.withLock { state in
             guard case .idle = state else {
                 preconditionFailure("Session connecting while \(state), expected idle")
             }
@@ -1005,7 +1005,7 @@ extension CassandraClient.Session {
 
     /// Connect the session. Called once, by `run()`; requests that arrive meanwhile wait on `ready`.
     func connect(logger: Logger) async throws {
-        self._state.withLockedValue { state in
+        self._state.withLock { state in
             guard case .connecting = state else {
                 preconditionFailure("Session connected while \(state), expected connecting")
             }
@@ -1028,12 +1028,12 @@ extension CassandraClient.Session {
                 try await self.underlying.connect(cluster: cluster, keyspace: self.configuration.keyspace).await()
             }
         } catch {
-            self._state.withLockedValue { $0 = .disconnected }
+            self._state.withLock { $0 = .disconnected }
             self.ready.complete(.failure(error))
             throw error
         }
 
-        self._state.withLockedValue { $0 = .connected }
+        self._state.withLock { $0 = .connected }
         self.ready.complete(.success(()))
     }
 }

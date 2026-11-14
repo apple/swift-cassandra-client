@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-import NIOConcurrencyHelpers
+import Synchronization
 
 @testable import CassandraClient
 
@@ -48,21 +48,21 @@ struct ThrowingAuthenticator: CassandraClient.Authenticator {
 /// Byte-reverses each challenge and records challenges and the success token, for the challenge/success
 /// round-trip that no live `PasswordAuthenticator` exchange reaches.
 final class RecordingChallengeAuthenticator: CassandraClient.Authenticator {
-    private let state = NIOLockedValueBox<(challenges: [[UInt8]], successToken: [UInt8]?)>(([], nil))
+    private let state = Mutex<(challenges: [[UInt8]], successToken: [UInt8]?)>(([], nil))
 
     func initialResponse() throws -> [UInt8]? { [] }
 
     func evaluateChallenge(_ challenge: [UInt8]) throws -> [UInt8]? {
-        self.state.withLockedValue { $0.challenges.append(challenge) }
+        self.state.withLock { $0.challenges.append(challenge) }
         return Array(challenge.reversed())
     }
 
     func onSuccess(_ token: [UInt8]) throws {
-        self.state.withLockedValue { $0.successToken = token }
+        self.state.withLock { $0.successToken = token }
     }
 
-    var recordedChallenges: [[UInt8]] { self.state.withLockedValue { $0.challenges } }
-    var recordedSuccessToken: [UInt8]? { self.state.withLockedValue { $0.successToken } }
+    var recordedChallenges: [[UInt8]] { self.state.withLock { $0.challenges } }
+    var recordedSuccessToken: [UInt8]? { self.state.withLock { $0.successToken } }
 }
 
 /// Plaintext credentials plus lock-protected invocation counts. Serves the success-observability test
@@ -70,7 +70,7 @@ final class RecordingChallengeAuthenticator: CassandraClient.Authenticator {
 final class RecordingPlaintextAuthenticator: CassandraClient.Authenticator {
     let username: String
     let password: String
-    private let counts = NIOLockedValueBox<(initial: Int, success: Int)>((0, 0))
+    private let counts = Mutex<(initial: Int, success: Int)>((0, 0))
 
     init(username: String, password: String) {
         self.username = username
@@ -78,16 +78,16 @@ final class RecordingPlaintextAuthenticator: CassandraClient.Authenticator {
     }
 
     func initialResponse() throws -> [UInt8]? {
-        self.counts.withLockedValue { $0.initial += 1 }
+        self.counts.withLock { $0.initial += 1 }
         return [0x00] + Array(self.username.utf8) + [0x00] + Array(self.password.utf8)
     }
 
     func onSuccess(_ token: [UInt8]) throws {
-        self.counts.withLockedValue { $0.success += 1 }
+        self.counts.withLock { $0.success += 1 }
     }
 
-    var initialResponseCount: Int { self.counts.withLockedValue { $0.initial } }
-    var onSuccessCount: Int { self.counts.withLockedValue { $0.success } }
+    var initialResponseCount: Int { self.counts.withLock { $0.initial } }
+    var onSuccessCount: Int { self.counts.withLock { $0.success } }
     var onSuccessFired: Bool { self.onSuccessCount > 0 }
 }
 
@@ -96,16 +96,16 @@ final class RecordingPlaintextAuthenticator: CassandraClient.Authenticator {
 final class DeinitCountingAuthenticator: CassandraClient.Authenticator {
     let username: String
     let password: String
-    private let deinitCounter: NIOLockedValueBox<Int>
+    private let deinitCounter: LockedBox<Int>
 
-    init(username: String, password: String, deinitCounter: NIOLockedValueBox<Int>) {
+    init(username: String, password: String, deinitCounter: LockedBox<Int>) {
         self.username = username
         self.password = password
         self.deinitCounter = deinitCounter
     }
 
     deinit {
-        self.deinitCounter.withLockedValue { $0 += 1 }
+        self.deinitCounter.withLock { $0 += 1 }
     }
 
     func initialResponse() throws -> [UInt8]? {

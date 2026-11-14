@@ -14,7 +14,6 @@
 
 import Foundation
 import Logging
-import NIOConcurrencyHelpers
 import ServiceLifecycle
 import XCTest
 

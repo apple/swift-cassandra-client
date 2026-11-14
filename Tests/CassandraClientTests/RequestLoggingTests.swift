@@ -70,6 +70,7 @@ final class RequestLoggingTests: XCTestCase {
         XCTAssertEqual(entry.message, "request failed")  // constant message, not the interpolated error
         XCTAssertEqual(entry.metadata[CassandraClient.LogKey.errorCategory], "callerFault")
         XCTAssertEqual(entry.metadata[CassandraClient.LogKey.query], "SELECT * FROM t WHERE id = ?")
+        XCTAssertEqual(entry.metadata[CassandraClient.LogKey.consistency], "localOne")
         // The error rides swift-log's `error:` param, carrying only the code label — the server-provided
         // message must NOT leak into the message or the error.
         XCTAssertEqual(entry.error, error.shortDescription)

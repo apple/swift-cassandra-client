@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 import Foundation
-import NIOConcurrencyHelpers
+import Synchronization
 
 /// A result that is set once and that any number of tasks can wait for.
 final class OneShotSignal: Sendable {
@@ -21,11 +21,11 @@ final class OneShotSignal: Sendable {
         case completed(Result<Void, any Error>)
     }
 
-    private let state = NIOLockedValueBox(State.pending([:]))
+    private let state = Mutex(State.pending([:]))
 
     /// Sets the result and resumes every waiting task. Later calls do nothing.
     func complete(_ result: Result<Void, any Error>) {
-        let waiters: [CheckedContinuation<Void, any Error>] = self.state.withLockedValue { state in
+        let waiters: [CheckedContinuation<Void, any Error>] = self.state.withLock { state in
             guard case .pending(let waiters) = state else { return [] }
             state = .completed(result)
             return Array(waiters.values)
@@ -41,7 +41,7 @@ final class OneShotSignal: Sendable {
         let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let outcome: Result<Void, any Error>? = self.state.withLockedValue { state in
+                let outcome: Result<Void, any Error>? = self.state.withLock { state in
                     switch state {
                     case .completed(let result):
                         return result
@@ -60,7 +60,7 @@ final class OneShotSignal: Sendable {
                 }
             }
         } onCancel: {
-            let waiter: CheckedContinuation<Void, any Error>? = self.state.withLockedValue { state in
+            let waiter: CheckedContinuation<Void, any Error>? = self.state.withLock { state in
                 guard case .pending(var waiters) = state else { return nil }
                 let waiter = waiters.removeValue(forKey: id)
                 state = .pending(waiters)

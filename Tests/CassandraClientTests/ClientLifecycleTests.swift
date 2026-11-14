@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 import Logging
-import NIOConcurrencyHelpers
+import Synchronization
 import XCTest
 
 @testable import CassandraClient
@@ -37,10 +37,10 @@ final class ClientLifecycleTests: XCTestCase {
             case released
         }
 
-        private let state = NIOLockedValueBox(State.waiting(nil))
+        private let state = Mutex(State.waiting(nil))
 
         func provide(_ callback: @escaping ContactPointsCallback) {
-            let failNow: Bool = self.state.withLockedValue { state in
+            let failNow: Bool = self.state.withLock { state in
                 guard case .waiting = state else { return true }
                 state = .waiting(callback)
                 return false
@@ -51,7 +51,7 @@ final class ClientLifecycleTests: XCTestCase {
         }
 
         func release() {
-            let callback: ContactPointsCallback? = self.state.withLockedValue { state in
+            let callback: ContactPointsCallback? = self.state.withLock { state in
                 defer { state = .released }
                 guard case .waiting(let callback) = state else { return nil }
                 return callback

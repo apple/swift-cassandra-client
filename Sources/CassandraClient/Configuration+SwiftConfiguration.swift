@@ -54,8 +54,8 @@ extension CassandraClient.Configuration {
     /// - `hostnameResolution` (bool, optional, default: false): Whether to perform reverse DNS lookups on cluster hosts.
     /// - `randomizedContactPoints` (bool, optional, default: true): Whether to shuffle the resolved contact points.
     /// - `isNoCompactEnabled` (bool, optional, default: false): Whether to send the `NO_COMPACT` startup option.
-    /// - `consistency` (string, optional): Consistency level, one of the cases from ``CassandraClient/Consistency``.
-    /// - `serialConsistency` (string, optional): Serial consistency level for LWT operations, one of the cases from ``CassandraClient/SerialConsistency``.
+    /// - `consistency` (string, optional): Consistency level, one of the levels of ``CassandraClient/Consistency``.
+    /// - `serialConsistency` (string, optional): Serial consistency level for LWT operations, one of the levels of ``CassandraClient/SerialConsistency``.
     /// - `prepareStrategy` (string, optional): When to prepare statements, one of the cases from ``CassandraClient/Configuration/PrepareStrategy``.
     /// - `metricsEnabled` (bool, optional): Whether driver metrics are emitted.
     /// - `metricsPollIntervalMillis` (int, optional): ``metricsPollInterval``, in milliseconds. `0` leaves ``metricsEnabled`` on but stops the poller.
@@ -80,8 +80,9 @@ extension CassandraClient.Configuration {
     ///
     /// - Parameters:
     ///   - configReader: The reader to read configuration from.
-    ///   - logger: Logger for configuration warnings, such as SSL properties set while SSL is disabled
-    public init(configReader: ConfigReader, logger: Logger) throws {
+    ///   - logger: The `Logger` for configuration warnings, such as SSL properties set while SSL is disabled.
+    ///     Defaults to the task-local `Logger.current`.
+    public init(configReader: ConfigReader, logger: Logger = Logger.current) throws {
         // Read once here so a malformed list is a configuration error at init rather than a connect-time
         // failure. The value is deliberately discarded: the provider below re-reads on every cluster
         // creation so that a reloading provider's new seeds take effect without a process restart.
@@ -116,13 +117,14 @@ extension CassandraClient.Configuration {
     ///   - contactPointsProvider: Provides the initial `ContactPoints` of the Cassandra cluster, and is
     ///     invoked once per cluster creation. This can be a subset since each Cassandra instance is capable
     ///     of discovering its peers.
-    ///   - logger: Logger for configuration warnings, such as SSL properties set while SSL is disabled
+    ///   - logger: The `Logger` for configuration warnings, such as SSL properties set while SSL is disabled.
+    ///     Defaults to the task-local `Logger.current`.
     public init(
         configReader: ConfigReader,
         contactPointsProvider:
             @escaping @Sendable (@escaping @Sendable (Result<ContactPoints, Swift.Error>) -> Void) ->
             Void,
-        logger: Logger
+        logger: Logger = Logger.current
     ) throws {
         if configReader.stringArray(forKey: "contactPoints") != nil {
             logger.warning(

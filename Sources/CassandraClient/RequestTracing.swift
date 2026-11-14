@@ -69,22 +69,9 @@ extension CassandraClient {
             return try result.get()
         }
 
-        /// Map a consistency level to its OpenTelemetry `cassandra.consistency.level` token — exhaustive, so a
-        /// new ``CassandraClient/Consistency`` case can't silently emit a wrong string.
+        /// Map a consistency level to its OpenTelemetry `cassandra.consistency.level` token.
         static func otelToken(_ consistency: CassandraClient.Consistency) -> String {
-            switch consistency {
-            case .any: return "any"
-            case .one: return "one"
-            case .two: return "two"
-            case .three: return "three"
-            case .quorum: return "quorum"
-            case .all: return "all"
-            case .localQuorum: return "local_quorum"
-            case .eachQuorum: return "each_quorum"
-            case .serial: return "serial"
-            case .localSerial: return "local_serial"
-            case .localOne: return "local_one"
-            }
+            consistency.otelToken
         }
     }
 }
