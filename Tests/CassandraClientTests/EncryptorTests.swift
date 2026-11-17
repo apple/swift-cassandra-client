@@ -16,7 +16,6 @@ import CoreMetrics
 import Foundation
 import Logging
 import MetricsTestKit
-import NIOConcurrencyHelpers
 import XCTest
 
 @testable import CassandraClient
@@ -30,7 +29,6 @@ func randomKey() -> Data {
     return Data(bytes)
 }
 
-@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 final class EncryptorTests: XCTestCase {
 
     // Helper: create a simple context for testing
@@ -410,7 +408,7 @@ final class EncryptorTests: XCTestCase {
         let iterations = 100
 
         let group = DispatchGroup()
-        let errors = NIOLockedValueBox<[Error]>([])
+        let errors = LockedBox<[Error]>([])
 
         for i in 0..<iterations {
             group.enter()
@@ -426,18 +424,18 @@ final class EncryptorTests: XCTestCase {
                     let encrypted = try encryptor.encrypt(plaintext, context: context)
                     let decrypted = try encryptor.decrypt(encrypted, context: context)
                     if decrypted != plaintext {
-                        errors.withLockedValue {
+                        errors.withLock {
                             $0.append(CassandraClient.Error.decryptionError("Data mismatch on iteration \(i)"))
                         }
                     }
                 } catch {
-                    errors.withLockedValue { $0.append(error) }
+                    errors.withLock { $0.append(error) }
                 }
             }
         }
 
         group.wait()
-        let collected = errors.withLockedValue { $0 }
+        let collected = errors.withLock { $0 }
         XCTAssertEqual(collected.count, 0, "Concurrent errors: \(collected)")
     }
 
@@ -613,7 +611,7 @@ final class EncryptorTests: XCTestCase {
             query: "INSERT INTO users (ssn) VALUES (?)",
             parameters: [.encryptedString(.init(Self.secret), context: testContext())],
             options: .init(),
-            _encryptor: encryptor
+            encryptor: encryptor
         )
         let rendered = statement.description
         XCTAssertTrue(rendered.contains("<redacted>"))

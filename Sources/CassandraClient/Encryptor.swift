@@ -174,7 +174,7 @@ extension CassandraClient.Encrypted: Sendable where T: Sendable {}
 
 // Redact the wrapped plaintext from every string form. Without this, default reflection
 // renders `value` verbatim, leaking encryption-designated plaintext through any interpolation
-// of an `Encrypted<T>`, a `Statement.Value.encryptedXxx` case, or a `Statement` — e.g. bound-value
+// of an `Encrypted<T>`, a `Statement.Value.encryptedXxx` value, or a `Statement` — e.g. bound-value
 // logs, `Statement.description`. Either string conformance covers both `String(describing:)` and
 // `String(reflecting:)` (each falls back to the other); both are stated so neither can drift.
 // `CustomReflectable` additionally redacts `dump(_:)` / `Mirror`, which walk stored properties and
@@ -190,7 +190,6 @@ extension CassandraClient.Encrypted: CustomStringConvertible, CustomDebugStringC
 extension CassandraClient {
     /// Internal cache for derived column keys and storage for root key material.
     /// Not thread-safe on its own — the `Encryptor` that owns it must hold a lock.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     struct KeysHolder {
         private var rootKeys: [String: Data]
         let salt: Data
@@ -260,7 +259,6 @@ extension CassandraClient {
 
 extension CassandraClient {
     /// Handles column-level encryption and decryption using AES-GCM with HKDF-derived keys.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     public final class Encryptor {
         static let envelopeVersion: UInt8 = 0x02
         /// AES-GCM with a per-row DEK derived deterministically via HKDF from the column KEK and primary key.
@@ -318,14 +316,14 @@ extension CassandraClient {
         ///     while `currentKeyName` selects which key is used for new encryptions.
         ///   - currentKeyName: The key name to use for new encryptions. Must exist in `keyMap`.
         ///   - salt: Salt for HKDF key derivation. Suffixed with `-KEK` and `-DEK` internally for domain separation.
-        ///   - logger: Logger for encryption audit trail.
+        ///   - logger: Logger for encryption audit trail. Defaults to the task-local `Logger.current`.
         /// - Throws: `CassandraClient.Error.encryptionConfigError` if the key map is empty,
         ///   a key name is invalid, a key is not 32 bytes, the salt is empty, or `currentKeyName` is not in the map.
         public init(
             keyMap: [String: Data],
             currentKeyName: String,
             salt: Data,
-            logger: Logger
+            logger: Logger = Logger.current
         ) throws {
             guard !salt.isEmpty else {
                 throw CassandraClient.Error.encryptionConfigError("salt must not be empty")
@@ -676,7 +674,6 @@ extension CassandraClient {
     }
 }
 
-@available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
 extension CassandraClient.Encryptor: Sendable {}
 
 // MARK: - KeyColumnType

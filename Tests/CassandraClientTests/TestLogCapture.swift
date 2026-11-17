@@ -14,7 +14,7 @@
 
 import Foundation
 import Logging
-import NIOConcurrencyHelpers
+import Synchronization
 
 /// Test-only capturing `LogHandler` — records emitted entries into a lock-protected buffer so tests can
 /// assert on level / message / metadata. Shared by the request-logging unit and integration tests.
@@ -27,18 +27,18 @@ final class TestLogCapture: Sendable {
         let error: String?
     }
 
-    private let entries = NIOLockedValueBox<[Entry]>([])
+    private let entries = Mutex<[Entry]>([])
 
     func append(_ entry: Entry) {
-        self.entries.withLockedValue { $0.append(entry) }
+        self.entries.withLock { $0.append(entry) }
     }
 
     var all: [Entry] {
-        self.entries.withLockedValue { $0 }
+        self.entries.withLock { $0 }
     }
 
     func clear() {
-        self.entries.withLockedValue { $0.removeAll() }
+        self.entries.withLock { $0.removeAll() }
     }
 }
 

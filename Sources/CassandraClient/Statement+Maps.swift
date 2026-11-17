@@ -17,7 +17,7 @@ import Foundation
 
 extension CassandraClient.Statement {
     func bindMapCases(_ parameter: Value, _ index: Int) throws -> CassError {
-        switch parameter {
+        switch parameter.backing {
         case .int8Int8Map(let map):
             return try self.bindMap(map, at: index)
         case .int8Int16Map(let map):

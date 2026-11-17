@@ -25,22 +25,19 @@ extension CassandraClient {
         internal let parameters: [Value]
         internal let options: Options
         internal let rawPointer: OpaquePointer
-        private let _encryptor: AnyObject?
-
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        private var encryptor: Encryptor? { self._encryptor as? Encryptor }
+        private let encryptor: Encryptor?
 
         /// Create a new `Statement`.
         public convenience init(query: String, parameters: [Value] = [], options: Options = .init()) throws {
-            try self.init(query: query, parameters: parameters, options: options, _encryptor: nil)
+            try self.init(query: query, parameters: parameters, options: options, encryptor: nil)
         }
 
         /// Internal init that accepts an encryptor injected by Session from Configuration.
-        internal init(query: String, parameters: [Value], options: Options, _encryptor: AnyObject?) throws {
+        internal init(query: String, parameters: [Value], options: Options, encryptor: Encryptor?) throws {
             self.query = query
             self.parameters = parameters
             self.options = options
-            self._encryptor = _encryptor
+            self.encryptor = encryptor
             self.rawPointer = cass_statement_new(query, parameters.count)
 
             try self.bindParameters()
@@ -52,12 +49,12 @@ extension CassandraClient {
             query: String = "(prepared)",
             parameters: [Value],
             options: Options,
-            _encryptor: AnyObject?
+            encryptor: Encryptor?
         ) throws {
             self.query = query
             self.parameters = parameters
             self.options = options
-            self._encryptor = _encryptor
+            self.encryptor = encryptor
             self.rawPointer = preparedRawPointer
 
             try self.bindParameters()
@@ -66,7 +63,7 @@ extension CassandraClient {
         private func bindParameters() throws {
             for (index, parameter) in parameters.enumerated() {
                 let result: CassError
-                switch parameter {
+                switch parameter.backing {
                 case .null:
                     result = cass_statement_bind_null(self.rawPointer, index)
                 case .int8(let value):
@@ -232,13 +229,12 @@ extension CassandraClient {
             }
 
             if let requestTimeout = options.requestTimeout {
-                try checkResult { cass_statement_set_request_timeout(self.rawPointer, requestTimeout) }
+                let milliseconds = try requestTimeout.driverMilliseconds(UInt64.self, name: "requestTimeout")
+                try checkResult { cass_statement_set_request_timeout(self.rawPointer, milliseconds) }
             }
 
-            if let isIdempotent = options.isIdempotent {
-                try checkResult {
-                    cass_statement_set_is_idempotent(self.rawPointer, isIdempotent ? cass_true : cass_false)
-                }
+            try checkResult {
+                cass_statement_set_is_idempotent(self.rawPointer, options.isIdempotent ? cass_true : cass_false)
             }
         }
 
@@ -248,9 +244,6 @@ extension CassandraClient {
             context: EncryptionContext,
             at index: Int
         ) throws -> CassError {
-            guard #available(macOS 15.0, iOS 18.0, visionOS 2.0, *) else {
-                throw CassandraClient.Error.encryptionError("Encryption requires macOS 15.0+")
-            }
             guard let encryptor = self.encryptor else {
                 throw CassandraClient.Error.encryptionConfigError(
                     "Encryptor required but not set in Configuration"
@@ -311,9 +304,6 @@ extension CassandraClient {
         ///
         /// - Parameter pagingSize: Rows per page. Must be in `1...Int32.max`; a non-positive size
         ///   disables paging in the driver rather than limiting the page, and is rejected here.
-        ///
-        /// - Note: The `EventLoopFuture` `execute` takes the statement as `sending`, so a hand-rolled
-        ///   loop needs a new `Statement` for each page.
         public func setPagingSize(_ pagingSize: Int) throws {
             guard let size = Int32(exactly: pagingSize), size > 0 else {
                 throw CassandraClient.Error.badParams(
@@ -349,114 +339,328 @@ extension CassandraClient {
         }
 
         /// Value types
-        public enum Value {
-            case null
-            case int8(Int8)
-            case int16(Int16)
-            case int32(Int32)
-            case int64(Int64)
-            case float32(Float32)
-            case double(Double)
-            case bool(Bool)
-            case string(String)
-            case uuid(Foundation.UUID)
-            case timeuuid(TimeBasedUUID)
-            case date(Foundation.Date)
-            case rawDate(daysSinceEpoch: UInt32)
-            case rawTimestamp(millisecondsSinceEpoch: Int64)
-            case bytes([UInt8])
-            case bytesUnsafe(UnsafeBufferPointer<UInt8>)
+        public struct Value: CustomStringConvertible {
+            internal enum Backing {
+                case null
+                case int8(Int8)
+                case int16(Int16)
+                case int32(Int32)
+                case int64(Int64)
+                case float32(Float32)
+                case double(Double)
+                case bool(Bool)
+                case string(String)
+                case uuid(Foundation.UUID)
+                case timeuuid(TimeBasedUUID)
+                case date(Foundation.Date)
+                case rawDate(daysSinceEpoch: UInt32)
+                case rawTimestamp(millisecondsSinceEpoch: Int64)
+                case bytes([UInt8])
+                case bytesUnsafe(UnsafeBufferPointer<UInt8>)
 
-            case encryptedString(Encrypted<String>, context: EncryptionContext? = nil)
-            case encryptedBytes(Encrypted<[UInt8]>, context: EncryptionContext? = nil)
-            case encryptedInt32(Encrypted<Int32>, context: EncryptionContext? = nil)
-            case encryptedInt64(Encrypted<Int64>, context: EncryptionContext? = nil)
-            case encryptedDouble(Encrypted<Double>, context: EncryptionContext? = nil)
-            case encryptedUUID(Encrypted<Foundation.UUID>, context: EncryptionContext? = nil)
-            case encryptedDate(Encrypted<Foundation.Date>, context: EncryptionContext? = nil)
+                case encryptedString(Encrypted<String>, context: EncryptionContext?)
+                case encryptedBytes(Encrypted<[UInt8]>, context: EncryptionContext?)
+                case encryptedInt32(Encrypted<Int32>, context: EncryptionContext?)
+                case encryptedInt64(Encrypted<Int64>, context: EncryptionContext?)
+                case encryptedDouble(Encrypted<Double>, context: EncryptionContext?)
+                case encryptedUUID(Encrypted<Foundation.UUID>, context: EncryptionContext?)
+                case encryptedDate(Encrypted<Foundation.Date>, context: EncryptionContext?)
 
-            case int8Array([Int8])
-            case int16Array([Int16])
-            case int32Array([Int32])
-            case int64Array([Int64])
-            case float32Array([Float32])
-            case doubleArray([Double])
-            case stringArray([String])
-            case uuidArray([Foundation.UUID])
+                case int8Array([Int8])
+                case int16Array([Int16])
+                case int32Array([Int32])
+                case int64Array([Int64])
+                case float32Array([Float32])
+                case doubleArray([Double])
+                case stringArray([String])
+                case uuidArray([Foundation.UUID])
 
-            case int8Int8Map([Int8: Int8])
-            case int8Int16Map([Int8: Int16])
-            case int8Int32Map([Int8: Int32])
-            case int8Int64Map([Int8: Int64])
-            case int8Float32Map([Int8: Float32])
-            case int8DoubleMap([Int8: Double])
-            case int8BoolMap([Int8: Bool])
-            case int8StringMap([Int8: String])
-            case int8UUIDMap([Int8: Foundation.UUID])
+                case int8Int8Map([Int8: Int8])
+                case int8Int16Map([Int8: Int16])
+                case int8Int32Map([Int8: Int32])
+                case int8Int64Map([Int8: Int64])
+                case int8Float32Map([Int8: Float32])
+                case int8DoubleMap([Int8: Double])
+                case int8BoolMap([Int8: Bool])
+                case int8StringMap([Int8: String])
+                case int8UUIDMap([Int8: Foundation.UUID])
 
-            case int16Int8Map([Int16: Int8])
-            case int16Int16Map([Int16: Int16])
-            case int16Int32Map([Int16: Int32])
-            case int16Int64Map([Int16: Int64])
-            case int16Float32Map([Int16: Float32])
-            case int16DoubleMap([Int16: Double])
-            case int16BoolMap([Int16: Bool])
-            case int16StringMap([Int16: String])
-            case int16UUIDMap([Int16: Foundation.UUID])
+                case int16Int8Map([Int16: Int8])
+                case int16Int16Map([Int16: Int16])
+                case int16Int32Map([Int16: Int32])
+                case int16Int64Map([Int16: Int64])
+                case int16Float32Map([Int16: Float32])
+                case int16DoubleMap([Int16: Double])
+                case int16BoolMap([Int16: Bool])
+                case int16StringMap([Int16: String])
+                case int16UUIDMap([Int16: Foundation.UUID])
 
-            case int32Int8Map([Int32: Int8])
-            case int32Int16Map([Int32: Int16])
-            case int32Int32Map([Int32: Int32])
-            case int32Int64Map([Int32: Int64])
-            case int32Float32Map([Int32: Float32])
-            case int32DoubleMap([Int32: Double])
-            case int32BoolMap([Int32: Bool])
-            case int32StringMap([Int32: String])
-            case int32UUIDMap([Int32: Foundation.UUID])
+                case int32Int8Map([Int32: Int8])
+                case int32Int16Map([Int32: Int16])
+                case int32Int32Map([Int32: Int32])
+                case int32Int64Map([Int32: Int64])
+                case int32Float32Map([Int32: Float32])
+                case int32DoubleMap([Int32: Double])
+                case int32BoolMap([Int32: Bool])
+                case int32StringMap([Int32: String])
+                case int32UUIDMap([Int32: Foundation.UUID])
 
-            case int64Int8Map([Int64: Int8])
-            case int64Int16Map([Int64: Int16])
-            case int64Int32Map([Int64: Int32])
-            case int64Int64Map([Int64: Int64])
-            case int64Float32Map([Int64: Float32])
-            case int64DoubleMap([Int64: Double])
-            case int64BoolMap([Int64: Bool])
-            case int64StringMap([Int64: String])
-            case int64UUIDMap([Int64: Foundation.UUID])
+                case int64Int8Map([Int64: Int8])
+                case int64Int16Map([Int64: Int16])
+                case int64Int32Map([Int64: Int32])
+                case int64Int64Map([Int64: Int64])
+                case int64Float32Map([Int64: Float32])
+                case int64DoubleMap([Int64: Double])
+                case int64BoolMap([Int64: Bool])
+                case int64StringMap([Int64: String])
+                case int64UUIDMap([Int64: Foundation.UUID])
 
-            case stringInt8Map([String: Int8])
-            case stringInt16Map([String: Int16])
-            case stringInt32Map([String: Int32])
-            case stringInt64Map([String: Int64])
-            case stringFloat32Map([String: Float32])
-            case stringDoubleMap([String: Double])
-            case stringBoolMap([String: Bool])
-            case stringStringMap([String: String])
-            case stringUUIDMap([String: Foundation.UUID])
+                case stringInt8Map([String: Int8])
+                case stringInt16Map([String: Int16])
+                case stringInt32Map([String: Int32])
+                case stringInt64Map([String: Int64])
+                case stringFloat32Map([String: Float32])
+                case stringDoubleMap([String: Double])
+                case stringBoolMap([String: Bool])
+                case stringStringMap([String: String])
+                case stringUUIDMap([String: Foundation.UUID])
 
-            case uuidInt8Map([Foundation.UUID: Int8])
-            case uuidInt16Map([Foundation.UUID: Int16])
-            case uuidInt32Map([Foundation.UUID: Int32])
-            case uuidInt64Map([Foundation.UUID: Int64])
-            case uuidFloat32Map([Foundation.UUID: Float32])
-            case uuidDoubleMap([Foundation.UUID: Double])
-            case uuidBoolMap([Foundation.UUID: Bool])
-            case uuidStringMap([Foundation.UUID: String])
-            case uuidUUIDMap([Foundation.UUID: Foundation.UUID])
+                case uuidInt8Map([Foundation.UUID: Int8])
+                case uuidInt16Map([Foundation.UUID: Int16])
+                case uuidInt32Map([Foundation.UUID: Int32])
+                case uuidInt64Map([Foundation.UUID: Int64])
+                case uuidFloat32Map([Foundation.UUID: Float32])
+                case uuidDoubleMap([Foundation.UUID: Double])
+                case uuidBoolMap([Foundation.UUID: Bool])
+                case uuidStringMap([Foundation.UUID: String])
+                case uuidUUIDMap([Foundation.UUID: Foundation.UUID])
 
-            case timeuuidInt8Map([TimeBasedUUID: Int8])
-            case timeuuidInt16Map([TimeBasedUUID: Int16])
-            case timeuuidInt32Map([TimeBasedUUID: Int32])
-            case timeuuidInt64Map([TimeBasedUUID: Int64])
-            case timeuuidFloat32Map([TimeBasedUUID: Float32])
-            case timeuuidDoubleMap([TimeBasedUUID: Double])
-            case timeuuidBoolMap([TimeBasedUUID: Bool])
-            case timeuuidStringMap([TimeBasedUUID: String])
-            case timeuuidUUIDMap([TimeBasedUUID: Foundation.UUID])
+                case timeuuidInt8Map([TimeBasedUUID: Int8])
+                case timeuuidInt16Map([TimeBasedUUID: Int16])
+                case timeuuidInt32Map([TimeBasedUUID: Int32])
+                case timeuuidInt64Map([TimeBasedUUID: Int64])
+                case timeuuidFloat32Map([TimeBasedUUID: Float32])
+                case timeuuidDoubleMap([TimeBasedUUID: Double])
+                case timeuuidBoolMap([TimeBasedUUID: Bool])
+                case timeuuidStringMap([TimeBasedUUID: String])
+                case timeuuidUUIDMap([TimeBasedUUID: Foundation.UUID])
+            }
+
+            internal let backing: Backing
+
+            public var description: String { "\(self.backing)" }
+
+            private init(backing: Backing) {
+                self.backing = backing
+            }
+
+            public static var null: Value { Value(backing: .null) }
+            public static func int8(_ value: Int8) -> Value { Value(backing: .int8(value)) }
+            public static func int16(_ value: Int16) -> Value { Value(backing: .int16(value)) }
+            public static func int32(_ value: Int32) -> Value { Value(backing: .int32(value)) }
+            public static func int64(_ value: Int64) -> Value { Value(backing: .int64(value)) }
+            public static func float32(_ value: Float32) -> Value { Value(backing: .float32(value)) }
+            public static func double(_ value: Double) -> Value { Value(backing: .double(value)) }
+            public static func bool(_ value: Bool) -> Value { Value(backing: .bool(value)) }
+            public static func string(_ value: String) -> Value { Value(backing: .string(value)) }
+            public static func uuid(_ value: Foundation.UUID) -> Value { Value(backing: .uuid(value)) }
+            public static func timeuuid(_ value: TimeBasedUUID) -> Value { Value(backing: .timeuuid(value)) }
+            public static func date(_ value: Foundation.Date) -> Value { Value(backing: .date(value)) }
+            public static func rawDate(daysSinceEpoch: UInt32) -> Value {
+                Value(backing: .rawDate(daysSinceEpoch: daysSinceEpoch))
+            }
+            public static func rawTimestamp(millisecondsSinceEpoch: Int64) -> Value {
+                Value(backing: .rawTimestamp(millisecondsSinceEpoch: millisecondsSinceEpoch))
+            }
+            public static func bytes(_ value: [UInt8]) -> Value { Value(backing: .bytes(value)) }
+            public static func bytesUnsafe(_ value: UnsafeBufferPointer<UInt8>) -> Value {
+                Value(backing: .bytesUnsafe(value))
+            }
+
+            public static func encryptedString(_ value: Encrypted<String>, context: EncryptionContext? = nil) -> Value {
+                Value(backing: .encryptedString(value, context: context))
+            }
+            public static func encryptedBytes(_ value: Encrypted<[UInt8]>, context: EncryptionContext? = nil) -> Value {
+                Value(backing: .encryptedBytes(value, context: context))
+            }
+            public static func encryptedInt32(_ value: Encrypted<Int32>, context: EncryptionContext? = nil) -> Value {
+                Value(backing: .encryptedInt32(value, context: context))
+            }
+            public static func encryptedInt64(_ value: Encrypted<Int64>, context: EncryptionContext? = nil) -> Value {
+                Value(backing: .encryptedInt64(value, context: context))
+            }
+            public static func encryptedDouble(_ value: Encrypted<Double>, context: EncryptionContext? = nil) -> Value {
+                Value(backing: .encryptedDouble(value, context: context))
+            }
+            public static func encryptedUUID(
+                _ value: Encrypted<Foundation.UUID>,
+                context: EncryptionContext? = nil
+            ) -> Value { Value(backing: .encryptedUUID(value, context: context)) }
+            public static func encryptedDate(
+                _ value: Encrypted<Foundation.Date>,
+                context: EncryptionContext? = nil
+            ) -> Value { Value(backing: .encryptedDate(value, context: context)) }
+
+            public static func int8Array(_ value: [Int8]) -> Value { Value(backing: .int8Array(value)) }
+            public static func int16Array(_ value: [Int16]) -> Value { Value(backing: .int16Array(value)) }
+            public static func int32Array(_ value: [Int32]) -> Value { Value(backing: .int32Array(value)) }
+            public static func int64Array(_ value: [Int64]) -> Value { Value(backing: .int64Array(value)) }
+            public static func float32Array(_ value: [Float32]) -> Value { Value(backing: .float32Array(value)) }
+            public static func doubleArray(_ value: [Double]) -> Value { Value(backing: .doubleArray(value)) }
+            public static func stringArray(_ value: [String]) -> Value { Value(backing: .stringArray(value)) }
+            public static func uuidArray(_ value: [Foundation.UUID]) -> Value { Value(backing: .uuidArray(value)) }
+
+            public static func int8Int8Map(_ value: [Int8: Int8]) -> Value { Value(backing: .int8Int8Map(value)) }
+            public static func int8Int16Map(_ value: [Int8: Int16]) -> Value { Value(backing: .int8Int16Map(value)) }
+            public static func int8Int32Map(_ value: [Int8: Int32]) -> Value { Value(backing: .int8Int32Map(value)) }
+            public static func int8Int64Map(_ value: [Int8: Int64]) -> Value { Value(backing: .int8Int64Map(value)) }
+            public static func int8Float32Map(_ value: [Int8: Float32]) -> Value {
+                Value(backing: .int8Float32Map(value))
+            }
+            public static func int8DoubleMap(_ value: [Int8: Double]) -> Value { Value(backing: .int8DoubleMap(value)) }
+            public static func int8BoolMap(_ value: [Int8: Bool]) -> Value { Value(backing: .int8BoolMap(value)) }
+            public static func int8StringMap(_ value: [Int8: String]) -> Value { Value(backing: .int8StringMap(value)) }
+            public static func int8UUIDMap(_ value: [Int8: Foundation.UUID]) -> Value {
+                Value(backing: .int8UUIDMap(value))
+            }
+
+            public static func int16Int8Map(_ value: [Int16: Int8]) -> Value { Value(backing: .int16Int8Map(value)) }
+            public static func int16Int16Map(_ value: [Int16: Int16]) -> Value { Value(backing: .int16Int16Map(value)) }
+            public static func int16Int32Map(_ value: [Int16: Int32]) -> Value { Value(backing: .int16Int32Map(value)) }
+            public static func int16Int64Map(_ value: [Int16: Int64]) -> Value { Value(backing: .int16Int64Map(value)) }
+            public static func int16Float32Map(_ value: [Int16: Float32]) -> Value {
+                Value(backing: .int16Float32Map(value))
+            }
+            public static func int16DoubleMap(_ value: [Int16: Double]) -> Value {
+                Value(backing: .int16DoubleMap(value))
+            }
+            public static func int16BoolMap(_ value: [Int16: Bool]) -> Value { Value(backing: .int16BoolMap(value)) }
+            public static func int16StringMap(_ value: [Int16: String]) -> Value {
+                Value(backing: .int16StringMap(value))
+            }
+            public static func int16UUIDMap(_ value: [Int16: Foundation.UUID]) -> Value {
+                Value(backing: .int16UUIDMap(value))
+            }
+
+            public static func int32Int8Map(_ value: [Int32: Int8]) -> Value { Value(backing: .int32Int8Map(value)) }
+            public static func int32Int16Map(_ value: [Int32: Int16]) -> Value { Value(backing: .int32Int16Map(value)) }
+            public static func int32Int32Map(_ value: [Int32: Int32]) -> Value { Value(backing: .int32Int32Map(value)) }
+            public static func int32Int64Map(_ value: [Int32: Int64]) -> Value { Value(backing: .int32Int64Map(value)) }
+            public static func int32Float32Map(_ value: [Int32: Float32]) -> Value {
+                Value(backing: .int32Float32Map(value))
+            }
+            public static func int32DoubleMap(_ value: [Int32: Double]) -> Value {
+                Value(backing: .int32DoubleMap(value))
+            }
+            public static func int32BoolMap(_ value: [Int32: Bool]) -> Value { Value(backing: .int32BoolMap(value)) }
+            public static func int32StringMap(_ value: [Int32: String]) -> Value {
+                Value(backing: .int32StringMap(value))
+            }
+            public static func int32UUIDMap(_ value: [Int32: Foundation.UUID]) -> Value {
+                Value(backing: .int32UUIDMap(value))
+            }
+
+            public static func int64Int8Map(_ value: [Int64: Int8]) -> Value { Value(backing: .int64Int8Map(value)) }
+            public static func int64Int16Map(_ value: [Int64: Int16]) -> Value { Value(backing: .int64Int16Map(value)) }
+            public static func int64Int32Map(_ value: [Int64: Int32]) -> Value { Value(backing: .int64Int32Map(value)) }
+            public static func int64Int64Map(_ value: [Int64: Int64]) -> Value { Value(backing: .int64Int64Map(value)) }
+            public static func int64Float32Map(_ value: [Int64: Float32]) -> Value {
+                Value(backing: .int64Float32Map(value))
+            }
+            public static func int64DoubleMap(_ value: [Int64: Double]) -> Value {
+                Value(backing: .int64DoubleMap(value))
+            }
+            public static func int64BoolMap(_ value: [Int64: Bool]) -> Value { Value(backing: .int64BoolMap(value)) }
+            public static func int64StringMap(_ value: [Int64: String]) -> Value {
+                Value(backing: .int64StringMap(value))
+            }
+            public static func int64UUIDMap(_ value: [Int64: Foundation.UUID]) -> Value {
+                Value(backing: .int64UUIDMap(value))
+            }
+
+            public static func stringInt8Map(_ value: [String: Int8]) -> Value { Value(backing: .stringInt8Map(value)) }
+            public static func stringInt16Map(_ value: [String: Int16]) -> Value {
+                Value(backing: .stringInt16Map(value))
+            }
+            public static func stringInt32Map(_ value: [String: Int32]) -> Value {
+                Value(backing: .stringInt32Map(value))
+            }
+            public static func stringInt64Map(_ value: [String: Int64]) -> Value {
+                Value(backing: .stringInt64Map(value))
+            }
+            public static func stringFloat32Map(_ value: [String: Float32]) -> Value {
+                Value(backing: .stringFloat32Map(value))
+            }
+            public static func stringDoubleMap(_ value: [String: Double]) -> Value {
+                Value(backing: .stringDoubleMap(value))
+            }
+            public static func stringBoolMap(_ value: [String: Bool]) -> Value { Value(backing: .stringBoolMap(value)) }
+            public static func stringStringMap(_ value: [String: String]) -> Value {
+                Value(backing: .stringStringMap(value))
+            }
+            public static func stringUUIDMap(_ value: [String: Foundation.UUID]) -> Value {
+                Value(backing: .stringUUIDMap(value))
+            }
+
+            public static func uuidInt8Map(_ value: [Foundation.UUID: Int8]) -> Value {
+                Value(backing: .uuidInt8Map(value))
+            }
+            public static func uuidInt16Map(_ value: [Foundation.UUID: Int16]) -> Value {
+                Value(backing: .uuidInt16Map(value))
+            }
+            public static func uuidInt32Map(_ value: [Foundation.UUID: Int32]) -> Value {
+                Value(backing: .uuidInt32Map(value))
+            }
+            public static func uuidInt64Map(_ value: [Foundation.UUID: Int64]) -> Value {
+                Value(backing: .uuidInt64Map(value))
+            }
+            public static func uuidFloat32Map(_ value: [Foundation.UUID: Float32]) -> Value {
+                Value(backing: .uuidFloat32Map(value))
+            }
+            public static func uuidDoubleMap(_ value: [Foundation.UUID: Double]) -> Value {
+                Value(backing: .uuidDoubleMap(value))
+            }
+            public static func uuidBoolMap(_ value: [Foundation.UUID: Bool]) -> Value {
+                Value(backing: .uuidBoolMap(value))
+            }
+            public static func uuidStringMap(_ value: [Foundation.UUID: String]) -> Value {
+                Value(backing: .uuidStringMap(value))
+            }
+            public static func uuidUUIDMap(_ value: [Foundation.UUID: Foundation.UUID]) -> Value {
+                Value(backing: .uuidUUIDMap(value))
+            }
+
+            public static func timeuuidInt8Map(_ value: [TimeBasedUUID: Int8]) -> Value {
+                Value(backing: .timeuuidInt8Map(value))
+            }
+            public static func timeuuidInt16Map(_ value: [TimeBasedUUID: Int16]) -> Value {
+                Value(backing: .timeuuidInt16Map(value))
+            }
+            public static func timeuuidInt32Map(_ value: [TimeBasedUUID: Int32]) -> Value {
+                Value(backing: .timeuuidInt32Map(value))
+            }
+            public static func timeuuidInt64Map(_ value: [TimeBasedUUID: Int64]) -> Value {
+                Value(backing: .timeuuidInt64Map(value))
+            }
+            public static func timeuuidFloat32Map(_ value: [TimeBasedUUID: Float32]) -> Value {
+                Value(backing: .timeuuidFloat32Map(value))
+            }
+            public static func timeuuidDoubleMap(_ value: [TimeBasedUUID: Double]) -> Value {
+                Value(backing: .timeuuidDoubleMap(value))
+            }
+            public static func timeuuidBoolMap(_ value: [TimeBasedUUID: Bool]) -> Value {
+                Value(backing: .timeuuidBoolMap(value))
+            }
+            public static func timeuuidStringMap(_ value: [TimeBasedUUID: String]) -> Value {
+                Value(backing: .timeuuidStringMap(value))
+            }
+            public static func timeuuidUUIDMap(_ value: [TimeBasedUUID: Foundation.UUID]) -> Value {
+                Value(backing: .timeuuidUUIDMap(value))
+            }
 
             /// Whether this value is an encrypted regular column value (`.encryptedXxx` cases).
             internal var isEncrypted: Bool {
-                switch self {
+                switch self.backing {
                 case .encryptedString, .encryptedBytes, .encryptedInt32,
                     .encryptedInt64, .encryptedDouble, .encryptedUUID,
                     .encryptedDate:
@@ -468,7 +672,7 @@ extension CassandraClient {
 
             /// The column name from the encryption context, if this is an encrypted value.
             internal var encryptedColumnName: String? {
-                switch self {
+                switch self.backing {
                 case .encryptedString(_, let ctx),
                     .encryptedBytes(_, let ctx),
                     .encryptedInt32(_, let ctx),
@@ -484,7 +688,7 @@ extension CassandraClient {
 
             /// The encryption context, if this is an encrypted value with an explicit context.
             internal var encryptionContext: CassandraClient.EncryptionContext? {
-                switch self {
+                switch self.backing {
                 case .encryptedString(_, let ctx),
                     .encryptedBytes(_, let ctx),
                     .encryptedInt32(_, let ctx),
@@ -500,14 +704,14 @@ extension CassandraClient {
 
             /// Returns a copy of this value with the given encryption context applied.
             internal func withContext(_ context: CassandraClient.EncryptionContext) -> Self {
-                switch self {
-                case .encryptedString(let v, _): return .encryptedString(v, context: context)
-                case .encryptedBytes(let v, _): return .encryptedBytes(v, context: context)
-                case .encryptedInt32(let v, _): return .encryptedInt32(v, context: context)
-                case .encryptedInt64(let v, _): return .encryptedInt64(v, context: context)
-                case .encryptedDouble(let v, _): return .encryptedDouble(v, context: context)
-                case .encryptedUUID(let v, _): return .encryptedUUID(v, context: context)
-                case .encryptedDate(let v, _): return .encryptedDate(v, context: context)
+                switch self.backing {
+                case .encryptedString(let v, _): return Value(backing: .encryptedString(v, context: context))
+                case .encryptedBytes(let v, _): return Value(backing: .encryptedBytes(v, context: context))
+                case .encryptedInt32(let v, _): return Value(backing: .encryptedInt32(v, context: context))
+                case .encryptedInt64(let v, _): return Value(backing: .encryptedInt64(v, context: context))
+                case .encryptedDouble(let v, _): return Value(backing: .encryptedDouble(v, context: context))
+                case .encryptedUUID(let v, _): return Value(backing: .encryptedUUID(v, context: context))
+                case .encryptedDate(let v, _): return Value(backing: .encryptedDate(v, context: context))
                 default: return self
                 }
             }
@@ -517,12 +721,12 @@ extension CassandraClient {
             /// Sets the statement's consistency level. `nil` inherits
             /// ``CassandraClient/Configuration/consistency``.
             public var consistency: CassandraClient.Consistency?
-            /// Sets the statement's request timeout in milliseconds. `nil` inherits
-            /// ``CassandraClient/Configuration/requestTimeoutMillis``.
-            public var requestTimeout: UInt64?
-            /// Whether the statement is safe to run more than once.
+            /// Sets the statement's request timeout, rounded up to whole milliseconds. `nil` inherits
+            /// ``CassandraClient/Configuration/requestTimeout``.
+            public var requestTimeout: Duration?
+            /// Whether the statement is safe to run more than once. Default `false`.
             ///
-            /// A statement left unset is treated as unsafe to replay, which holds the driver back
+            /// A statement not marked idempotent is treated as unsafe to replay, which holds the driver back
             /// from two recovery behaviors:
             ///
             /// - When a coordinator reports that it is overloaded, shutting down, or hit an internal
@@ -541,27 +745,13 @@ extension CassandraClient {
             /// - Note: This has no effect on a statement added to a ``CassandraClient/Batch``. The
             ///   driver decides whether to replay a batch from the batch's own setting, so use
             ///   ``CassandraClient/Batch/Configuration/isIdempotent`` for that.
-            public var isIdempotent: Bool?
-
-            /// Type-erased backing store for ``encryptionContextBuilder``.
-            private var _encryptionContextBuilder: (any Sendable)?
+            public var isIdempotent: Bool = false
 
             /// Closure that extracts encryption context from each row during Codable decoding.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
             public var encryptionContextBuilder:
                 (
                     @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
                 )?
-            {
-                get {
-                    self._encryptionContextBuilder
-                        as? @Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base
-                }
-                set { self._encryptionContextBuilder = newValue }
-            }
-
-            /// Backing store for ``encryptionTable``.
-            private var _encryptionTable: String?
 
             /// Table name for column-registration-based automatic decryption.
             /// Use `"table"` (combined with the session keyspace) or `"keyspace.table"` for cross-keyspace queries.
@@ -579,21 +769,17 @@ extension CassandraClient {
             ///   check only that each encrypted value's ``EncryptionContext`` names a registered column —
             ///   a plaintext value bound to a registered column is written as-is. Neither path verifies
             ///   that a value's context names the column it is actually bound to.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-            public var encryptionTable: String? {
-                get { self._encryptionTable }
-                set { self._encryptionTable = newValue }
-            }
+            public var encryptionTable: String?
 
             /// Whether any encryption options are set (context builder or table name).
             internal var hasEncryptionOptions: Bool {
-                self._encryptionContextBuilder != nil || self._encryptionTable != nil
+                self.encryptionContextBuilder != nil || self.encryptionTable != nil
             }
 
             public init(
                 consistency: CassandraClient.Consistency? = nil,
-                requestTimeout: UInt64? = nil,
-                isIdempotent: Bool? = nil
+                requestTimeout: Duration? = nil,
+                isIdempotent: Bool = false
             ) {
                 self.consistency = consistency
                 self.requestTimeout = requestTimeout

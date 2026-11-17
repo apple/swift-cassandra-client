@@ -1,4 +1,4 @@
-// swift-tools-version:6.1
+// swift-tools-version:6.2.3
 
 import PackageDescription
 
@@ -96,14 +96,15 @@ do {
 
 let package = Package(
     name: "swift-cassandra-client",
+    platforms: [.macOS(.v15), .iOS(.v18), .tvOS(.v18), .watchOS(.v11), .visionOS(.v2)],
     products: [
         .library(name: "CassandraClient", targets: ["CassandraClient"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio", .upToNextMajor(from: "2.41.1")),
         .package(url: "https://github.com/apple/swift-nio-ssl", exact: "2.37.2"),
         .package(url: "https://github.com/apple/swift-atomics", from: "1.0.2"),
-        .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.12.0")),
+        .package(url: "https://github.com/apple/swift-log", .upToNextMajor(from: "1.14.0")),
+        .package(url: "https://github.com/swift-server/swift-service-lifecycle", .upToNextMajor(from: "2.12.0")),
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"6.0.0"),
         .package(url: "https://github.com/apple/swift-metrics", .upToNextMajor(from: "2.0.0")),
         .package(url: "https://github.com/apple/swift-distributed-tracing", .upToNextMajor(from: "1.1.0")),
@@ -162,10 +163,9 @@ let package = Package(
             name: "CassandraClient",
             dependencies: [
                 "CDataStaxDriver",
-                .product(name: "NIO", package: "swift-nio"),
-                .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Metrics", package: "swift-metrics"),
                 .product(name: "Tracing", package: "swift-distributed-tracing"),
@@ -179,6 +179,7 @@ let package = Package(
                 "CassandraClient",
                 "CDataStaxDriver",
                 .product(name: "MetricsTestKit", package: "swift-metrics"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
                 // The tests bootstrap swift-distributed-tracing's shipped in-memory tracer.
                 .product(name: "Tracing", package: "swift-distributed-tracing"),
                 .product(name: "InMemoryTracing", package: "swift-distributed-tracing"),
@@ -188,14 +189,12 @@ let package = Package(
     cxxLanguageStandard: .cxx17
 )
 
-#if compiler(>=6.2)
 package.dependencies.append(
     .package(url: "https://github.com/apple/swift-configuration.git", from: "1.0.0", traits: [])
 )
 for target in package.targets where ["CassandraClient", "CassandraClientTests"].contains(target.name) {
     target.dependencies.append(.product(name: "Configuration", package: "swift-configuration"))
 }
-#endif
 
 // ---    STANDARD CROSS-REPO SETTINGS DO NOT EDIT   --- //
 for target in package.targets {
