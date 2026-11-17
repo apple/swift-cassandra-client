@@ -56,17 +56,17 @@ extension CassandraClient {
         }
 
         /// If a successful request's elapsed time is at least the threshold, log a `.debug` "slow query" record.
-        /// `thresholdMillis == nil` skips all timing work (hot-path guard); `0` logs every success.
+        /// `threshold == nil` skips all timing work (hot-path guard); `.zero` logs every success.
         static func checkSlowSuccess(
             startedAt: DispatchTime,
             query: String,
-            thresholdMillis: UInt32?,
+            threshold: Duration?,
             boundValues: String? = nil,
             logger: Logger
         ) {
-            guard let thresholdMillis else { return }
+            guard let threshold else { return }
             let elapsed = Self.elapsedMillis(since: startedAt)
-            guard elapsed >= thresholdMillis else { return }
+            guard Duration.milliseconds(elapsed) >= threshold else { return }
             var metadata: Logger.Metadata = [
                 LogKey.query: "\(Self.truncated(query))",
                 LogKey.latencyMs: "\(elapsed)",
@@ -84,7 +84,7 @@ extension CassandraClient {
             startedAt: DispatchTime,
             query: String?,
             consistency: CassandraClient.Consistency?,
-            thresholdMillis: UInt32?,
+            threshold: Duration?,
             boundValues: String?,
             logger: Logger
         ) {
@@ -94,7 +94,7 @@ extension CassandraClient {
                     Self.checkSlowSuccess(
                         startedAt: startedAt,
                         query: query,
-                        thresholdMillis: thresholdMillis,
+                        threshold: threshold,
                         boundValues: boundValues,
                         logger: logger
                     )
@@ -120,7 +120,7 @@ extension CassandraClient {
             startedAt: DispatchTime,
             query: String?,
             consistency: CassandraClient.Consistency?,
-            thresholdMillis: UInt32?,
+            threshold: Duration?,
             boundValues: String? = nil,
             logger: Logger
         ) -> EventLoopFuture<Value> {
@@ -130,7 +130,7 @@ extension CassandraClient {
                     startedAt: startedAt,
                     query: query,
                     consistency: consistency,
-                    thresholdMillis: thresholdMillis,
+                    threshold: threshold,
                     boundValues: boundValues,
                     logger: logger
                 )
@@ -138,12 +138,11 @@ extension CassandraClient {
         }
 
         /// Run an async request body with the same failure + slow-success logging.
-        @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
         static func instrumented<Value>(
             startedAt: DispatchTime,
             query: String?,
             consistency: CassandraClient.Consistency?,
-            thresholdMillis: UInt32?,
+            threshold: Duration?,
             boundValues: String? = nil,
             logger: Logger,
             _ body: () async throws -> Value
@@ -159,7 +158,7 @@ extension CassandraClient {
                 startedAt: startedAt,
                 query: query,
                 consistency: consistency,
-                thresholdMillis: thresholdMillis,
+                threshold: threshold,
                 boundValues: boundValues,
                 logger: logger
             )
