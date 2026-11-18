@@ -4,7 +4,7 @@
 
 - **Area:** Client-side encryption — 56 of the module's public symbols.
 - **Note:** This PR exists to collect API review feedback ahead of 1.0. It will be closed rather than merged; anything it settles lands as its own change.
-- **Generated from:** `Sources/CassandraClient` at `e60f45a`, with Apple Swift version 6.3.1 (swiftlang-6.3.1.1.2 clang-2100.0.123.102). Derived, not maintained by hand — see `api-review/README.md` to regenerate.
+- **Generated from:** `Sources/CassandraClient` at `3780cda`, with Apple Swift version 6.3.1 (swiftlang-6.3.1.1.2 clang-2100.0.123.102). Derived, not maintained by hand — see `api-review/README.md` to regenerate.
 
 Inherited protocol members are listed without their standard-library documentation, grouped under the protocol that declared each. Members the symbol graph does not emit are marked `[reconstructed]`.
 
@@ -104,7 +104,6 @@ extension CassandraClient {
     }
 
     /// Handles column-level encryption and decryption using AES-GCM with HKDF-derived keys.
-    @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
     public final class Encryptor : Sendable {
         /// Create an encryptor with the given key map and current key name.
         ///
@@ -114,20 +113,16 @@ extension CassandraClient {
         ///     while `currentKeyName` selects which key is used for new encryptions.
         ///   - currentKeyName: The key name to use for new encryptions. Must exist in `keyMap`.
         ///   - salt: Salt for HKDF key derivation. Suffixed with `-KEK` and `-DEK` internally for domain separation.
-        ///   - logger: Logger for encryption audit trail.
+        ///   - logger: Logger for encryption audit trail. Defaults to the task-local `Logger.current`.
         /// - Throws: `CassandraClient.Error.encryptionConfigError` if the key map is empty,
         ///   a key name is invalid, a key is not 32 bytes, the salt is empty, or `currentKeyName` is not in the map.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-        public init(keyMap: [String : Data], currentKeyName: String, salt: Data, logger: Logger) throws
+        public init(keyMap: [String : Data], currentKeyName: String, salt: Data, logger: Logger = Logger.current) throws
 
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func addKey(name: String, secret: Data) throws
         /// Replace the entire key map. Existing keys cannot be removed or changed.
         /// The current key name must exist in the new map.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func loadKeys(from newKeyMap: [String : Data]) throws
         /// Set the key name used for new encryptions. The key must already exist in the key map.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func setCurrentKeyName(_ name: String) throws
     }
 

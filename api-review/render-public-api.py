@@ -84,10 +84,9 @@ AREAS = [
         "Client and session",
         [
             "CassandraClient",
-            "CassandraSession",
             "Configuration",
             "Authenticator",
-            "EventLoopGroupProvider",
+            "PasswordAuthenticator",
         ],
     ),
     (
@@ -97,7 +96,6 @@ AREAS = [
             "Statement",
             "PreparedStatement",
             "Batch",
-            "BatchType",
             "Consistency",
             "SerialConsistency",
         ],

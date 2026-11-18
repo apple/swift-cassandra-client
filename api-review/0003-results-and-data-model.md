@@ -2,9 +2,9 @@
 
 ## Overview
 
-- **Area:** Results and data model — 371 of the module's public symbols.
+- **Area:** Results and data model — 400 of the module's public symbols.
 - **Note:** This PR exists to collect API review feedback ahead of 1.0. It will be closed rather than merged; anything it settles lands as its own change.
-- **Generated from:** `Sources/CassandraClient` at `e60f45a`, with Apple Swift version 6.3.1 (swiftlang-6.3.1.1.2 clang-2100.0.123.102). Derived, not maintained by hand — see `api-review/README.md` to regenerate.
+- **Generated from:** `Sources/CassandraClient` at `3780cda`, with Apple Swift version 6.3.1 (swiftlang-6.3.1.1.2 clang-2100.0.123.102). Derived, not maintained by hand — see `api-review/README.md` to regenerate.
 
 Inherited protocol members are listed without their standard-library documentation, grouped under the protocol that declared each. Members the symbol graph does not emit are marked `[reconstructed]`.
 
@@ -143,25 +143,18 @@ extension CassandraClient {
         public var uuidUUIDMap: [Foundation.UUID : Foundation.UUID]? { get }
 
         /// Decrypt column and return as `[UInt8]`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedBytes(encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> [UInt8]?
         /// Decrypt column and return as `Date`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedDate(encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Foundation.Date?
         /// Decrypt column and return as `Double`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedDouble(encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Double?
         /// Decrypt column and return as `Int32`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedInt32(encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Int32?
         /// Decrypt column and return as `Int64`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedInt64(encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Int64?
         /// Decrypt column and return as `String`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedString(encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> String?
         /// Decrypt column and return as `UUID`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedUUID(encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Foundation.UUID?
         public func isNull() -> Bool
         /// Get column value as buffer pointer and pass it to the given closure.
@@ -186,42 +179,351 @@ extension CassandraClient {
 
     /// Resulting row(s) of a Cassandra query. Data are paginated.
     public final class PaginatedRows : AsyncSequence, Sendable {
-        /// If `true`, calling ``nextPage()-4komz`` will return a new set of ``CassandraClient/Rows``.
+        /// If `true`, calling ``nextPage()`` will return a new set of ``CassandraClient/Rows``.
         /// Otherwise it will throw ``CassandraClient/Error/rowsExhausted`` error.
         public var hasMorePages: Bool { get }
 
-        @available(macOS 12, watchOS 8, iOS 15, tvOS 15, *)
         public typealias Element = CassandraClient.Row
+        /// An `AsyncSequence` that iterates over the adjacent pairs of the original
+        /// original `AsyncSequence`.
+        ///
+        /// ```
+        /// for await (first, second) in (1...5).async.adjacentPairs() {
+        ///    print("First: \(first), Second: \(second)")
+        /// }
+        ///
+        /// // First: 1, Second: 2
+        /// // First: 2, Second: 3
+        /// // First: 3, Second: 4
+        /// // First: 4, Second: 5
+        /// ```
+        ///
+        /// - Returns: An `AsyncSequence` where the element is a tuple of two adjacent elements
+        ///   or the original `AsyncSequence`.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func adjacentPairs() -> AsyncAdjacentPairsSequence<Self>
+        /// Creates an asynchronous sequence that buffers elements.
+        ///
+        /// The buffering behaviour is dictated by the policy:
+        /// - bounded: will buffer elements until the limit is reached. Then it will suspend the upstream async sequence.
+        /// - unbounded: will buffer elements without limit.
+        /// - bufferingNewest: will buffer elements until the limit is reached. Then it will discard the oldest elements.
+        /// - bufferingOldest: will buffer elements until the limit is reached. Then it will discard the newest elements.
+        ///
+        /// - Parameter policy: A policy that drives the behaviour of the ``AsyncBufferSequence``
+        /// - Returns: An asynchronous sequence that buffers elements up to a given limit.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func buffer(policy: AsyncBufferSequencePolicy) -> AsyncBufferSequence<Self>
+        /// Creates an asynchronous sequence that creates chunks by testing if elements belong in the same group.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunked(by belongInSameGroup: @escaping @Sendable (Self.Element, Self.Element) -> Bool) -> AsyncChunkedByGroupSequence<Self, [Self.Element]>
+        /// Creates an asynchronous sequence that creates chunks of a given `RangeReplaceableCollection` type when an `AsyncTimerSequence` fires.
+        @available(macOS 13.0, watchOS 9.0, iOS 16.0, tvOS 16.0, *)
+        public func chunked<C, Collected>(by timer: AsyncTimerSequence<C>, into: Collected.Type) -> AsyncChunksOfCountOrSignalSequence<Self, Collected, AsyncTimerSequence<C>> where Self : Sendable, C : Clock, Collected : RangeReplaceableCollection, Self.Element : Sendable, Self.Element == Collected.Element
+        /// Creates an asynchronous sequence that creates chunks of a given `RangeReplaceableCollection` type when a signal `AsyncSequence` produces an element.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunked<Signal, Collected>(by signal: Signal, into: Collected.Type) -> AsyncChunksOfCountOrSignalSequence<Self, Collected, Signal> where Self : Sendable, Signal : Sendable, Signal : AsyncSequence, Collected : RangeReplaceableCollection, Self.Element : Sendable, Self.Element == Collected.Element, Signal.Element : Sendable
+        /// Creates an asynchronous sequence that creates chunks of a given `RangeReplaceableCollection`
+        /// type by testing if elements belong in the same group.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunked<Collected>(into: Collected.Type, by belongInSameGroup: @escaping @Sendable (Self.Element, Self.Element) -> Bool) -> AsyncChunkedByGroupSequence<Self, Collected> where Collected : RangeReplaceableCollection, Self.Element == Collected.Element
+        /// Creates an asynchronous sequence that creates chunks of a given `RangeReplaceableCollection` type on the uniqueness of a given subject.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunked<Subject, Collected>(into: Collected.Type, on projection: @escaping @Sendable (Self.Element) -> Subject) -> AsyncChunkedOnProjectionSequence<Self, Subject, Collected> where Subject : Equatable, Collected : RangeReplaceableCollection, Self.Element == Collected.Element
+        /// Creates an asynchronous sequence that creates chunks on the uniqueness of a given subject.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunked<Subject>(on projection: @escaping @Sendable (Self.Element) -> Subject) -> AsyncChunkedOnProjectionSequence<Self, Subject, [Self.Element]> where Subject : Equatable
+        /// Creates an asynchronous sequence that creates chunks of a given count.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunks(ofCount count: Int) -> AsyncChunksOfCountSequence<Self, [Self.Element]>
+        /// Creates an asynchronous sequence that creates chunks of a given `RangeReplaceableCollection` of a given count.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunks<Collected>(ofCount count: Int, into: Collected.Type) -> AsyncChunksOfCountSequence<Self, Collected> where Collected : RangeReplaceableCollection, Self.Element == Collected.Element
+        /// Creates an asynchronous sequence that creates chunks of a given count or when an `AsyncTimerSequence` fires.
+        @available(macOS 13.0, watchOS 9.0, iOS 16.0, tvOS 16.0, *)
+        public func chunks<C>(ofCount count: Int, or timer: AsyncTimerSequence<C>) -> AsyncChunksOfCountOrSignalSequence<Self, [Self.Element], AsyncTimerSequence<C>> where Self : Sendable, C : Clock, Self.Element : Sendable
+        /// Creates an asynchronous sequence that creates chunks of a given count or when a signal `AsyncSequence` produces an element.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunks<Signal>(ofCount count: Int, or signal: Signal) -> AsyncChunksOfCountOrSignalSequence<Self, [Self.Element], Signal> where Self : Sendable, Signal : Sendable, Signal : AsyncSequence, Self.Element : Sendable, Signal.Element : Sendable
+        /// Creates an asynchronous sequence that creates chunks of a given `RangeReplaceableCollection` type of a given count or when an `AsyncTimerSequence` fires.
+        @available(macOS 13.0, watchOS 9.0, iOS 16.0, tvOS 16.0, *)
+        public func chunks<C, Collected>(ofCount count: Int, or timer: AsyncTimerSequence<C>, into: Collected.Type) -> AsyncChunksOfCountOrSignalSequence<Self, Collected, AsyncTimerSequence<C>> where Self : Sendable, C : Clock, Collected : RangeReplaceableCollection, Self.Element : Sendable, Self.Element == Collected.Element
+        /// Creates an asynchronous sequence that creates chunks of a given `RangeReplaceableCollection` type of a given count or when a signal `AsyncSequence` produces an element.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func chunks<Signal, Collected>(ofCount count: Int, or signal: Signal, into: Collected.Type) -> AsyncChunksOfCountOrSignalSequence<Self, Collected, Signal> where Self : Sendable, Signal : Sendable, Signal : AsyncSequence, Collected : RangeReplaceableCollection, Self.Element : Sendable, Self.Element == Collected.Element, Signal.Element : Sendable
+        /// Returns a new `AsyncSequence` that iterates over every non-nil element from the
+        /// original `AsyncSequence`.
+        ///
+        /// Produces the same result as `c.compactMap { $0 }`.
+        ///
+        /// - Returns: An `AsyncSequence` where the element is the unwrapped original
+        ///   element and iterates over every non-nil element from the original
+        ///   `AsyncSequence`.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func compacted<Unwrapped>() -> AsyncCompactedSequence<Self, Unwrapped> where Self.Element == Unwrapped?
+        /// Creates an asynchronous sequence that emits the latest element after a given quiescence period
+        /// has elapsed.
+        @available(macOS 13.0, watchOS 9.0, iOS 16.0, tvOS 16.0, *)
+        public func debounce(for interval: Duration, tolerance: Duration? = nil) -> AsyncDebounceSequence<Self, ContinuousClock> where Self : Sendable, Self.Element : Sendable
+        /// Creates an asynchronous sequence that emits the latest element after a given quiescence period
+        /// has elapsed by using a specified Clock.
+        @available(macOS 13.0, watchOS 9.0, iOS 16.0, tvOS 16.0, *)
+        public func debounce<C>(for interval: C.Instant.Duration, tolerance: C.Instant.Duration? = nil, clock: C) -> AsyncDebounceSequence<Self, C> where Self : Sendable, C : Clock, Self.Element : Sendable
+        /// Transforms elements into new asynchronous sequences, emitting elements
+        /// from the most recent inner sequence.
+        ///
+        /// When a new element is emitted by this sequence, the `transform`
+        /// is called to produce a new inner sequence. Iteration on the
+        /// previous inner sequence is cancelled, and iteration begins
+        /// on the new one.
+        @available(macOS 15.0, watchOS 11.0, iOS 18.0, visionOS 2.0, tvOS 18.0, *)
+        public func flatMapLatest<T>(_ transform: @escaping @Sendable (Self.Element) -> T) -> some Sendable & AsyncSequence<T.Element, Self.Failure> where T : Sendable, T : AsyncSequence, Self.Element : Sendable, Self.Failure == T.Failure, T.Element : Sendable
+
+        @available(macOS 15.0, watchOS 11.0, iOS 18.0, visionOS 2.0, tvOS 18.0, *)
+        public func flatMapLatest<T>(_ transform: @escaping @Sendable (Self.Element) -> T) -> some Sendable & AsyncSequence<T.Element, Self.Failure> where T : Sendable, T : AsyncSequence, Self.Element : Sendable, T.Element : Sendable, T.Failure == Never
+
+        @available(macOS 15.0, watchOS 11.0, iOS 18.0, visionOS 2.0, tvOS 18.0, *)
+        public func flatMapLatest<T>(_ transform: @escaping @Sendable (Self.Element) -> T) -> some Sendable & AsyncSequence<T.Element, T.Failure> where T : Sendable, T : AsyncSequence, Self.Element : Sendable, Self.Failure == Never, T.Element : Sendable
+
         /// Iterates through all rows in all pages and invokes the given closure on each.
-        @available(macOS 12, watchOS 8, iOS 15, tvOS 15, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func forEach(_ body: @escaping (Row) throws -> Void) async throws
-        /// Iterates through all rows in all pages and invokes the given closure on each.
-        @available(*, deprecated, message: "Use Swift Concurrency and AsyncSequence APIs instead.")
-        public func forEach(_ body: @escaping @Sendable (Row) throws -> Void) -> EventLoopFuture<Void>
+        /// Returns a new asynchronous sequence containing the elements of this asynchronous sequence, inserting
+        /// the given separator between each element.
+        ///
+        /// Any value of this asynchronous sequence's element type can be used as the separator.
+        ///
+        /// The following example shows how an async sequences of `String`s can be interspersed using `-` as the separator:
+        ///
+        /// ```
+        /// let input = ["A", "B", "C"].async
+        /// let interspersed = input.interspersed(with: { "-" })
+        /// for await element in interspersed {
+        ///   print(element)
+        /// }
+        /// // Prints "A" "-" "B" "-" "C"
+        /// ```
+        ///
+        /// - Parameters:
+        ///   - every: Dictates after how many elements a separator should be inserted.
+        ///   - separator: A closure that produces the value to insert in between each of this async sequence’s elements.
+        /// - Returns: The interspersed asynchronous sequence of elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func interspersed(every: Int = 1, with separator: @escaping @Sendable () -> Self.Element) -> AsyncInterspersedSequence<Self>
+        /// Returns a new asynchronous sequence containing the elements of this asynchronous sequence, inserting
+        /// the given separator between each element.
+        ///
+        /// Any value of this asynchronous sequence's element type can be used as the separator.
+        ///
+        /// The following example shows how an async sequences of `String`s can be interspersed using `-` as the separator:
+        ///
+        /// ```
+        /// let input = ["A", "B", "C"].async
+        /// let interspersed = input.interspersed(with: { "-" })
+        /// for await element in interspersed {
+        ///   print(element)
+        /// }
+        /// // Prints "A" "-" "B" "-" "C"
+        /// ```
+        ///
+        /// - Parameters:
+        ///   - every: Dictates after how many elements a separator should be inserted.
+        ///   - separator: A closure that produces the value to insert in between each of this async sequence’s elements.
+        /// - Returns: The interspersed asynchronous sequence of elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func interspersed(every: Int = 1, with separator: @escaping @Sendable () async -> Self.Element) -> AsyncInterspersedSequence<Self>
+        /// Returns a new asynchronous sequence containing the elements of this asynchronous sequence, inserting
+        /// the given separator between each element.
+        ///
+        /// Any value of this asynchronous sequence's element type can be used as the separator.
+        ///
+        /// The following example shows how an async sequences of `String`s can be interspersed using `-` as the separator:
+        ///
+        /// ```
+        /// let input = ["A", "B", "C"].async
+        /// let interspersed = input.interspersed(with: { "-" })
+        /// for await element in interspersed {
+        ///   print(element)
+        /// }
+        /// // Prints "A" "-" "B" "-" "C"
+        /// ```
+        ///
+        /// - Parameters:
+        ///   - every: Dictates after how many elements a separator should be inserted.
+        ///   - separator: A closure that produces the value to insert in between each of this async sequence’s elements.
+        /// - Returns: The interspersed asynchronous sequence of elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func interspersed(every: Int = 1, with separator: @escaping @Sendable () async throws -> Self.Element) -> AsyncThrowingInterspersedSequence<Self>
+        /// Returns a new asynchronous sequence containing the elements of this asynchronous sequence, inserting
+        /// the given separator between each element.
+        ///
+        /// Any value of this asynchronous sequence's element type can be used as the separator.
+        ///
+        /// The following example shows how an async sequences of `String`s can be interspersed using `-` as the separator:
+        ///
+        /// ```
+        /// let input = ["A", "B", "C"].async
+        /// let interspersed = input.interspersed(with: { "-" })
+        /// for await element in interspersed {
+        ///   print(element)
+        /// }
+        /// // Prints "A" "-" "B" "-" "C"
+        /// ```
+        ///
+        /// - Parameters:
+        ///   - every: Dictates after how many elements a separator should be inserted.
+        ///   - separator: A closure that produces the value to insert in between each of this async sequence’s elements.
+        /// - Returns: The interspersed asynchronous sequence of elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func interspersed(every: Int = 1, with separator: @escaping @Sendable () throws -> Self.Element) -> AsyncThrowingInterspersedSequence<Self>
+        /// Returns a new asynchronous sequence containing the elements of this asynchronous sequence, inserting
+        /// the given separator between each element.
+        ///
+        /// Any value of this asynchronous sequence's element type can be used as the separator.
+        ///
+        /// The following example shows how an async sequences of `String`s can be interspersed using `-` as the separator:
+        ///
+        /// ```
+        /// let input = ["A", "B", "C"].async
+        /// let interspersed = input.interspersed(with: "-")
+        /// for await element in interspersed {
+        ///   print(element)
+        /// }
+        /// // Prints "A" "-" "B" "-" "C"
+        /// ```
+        ///
+        /// - Parameters:
+        ///   - every: Dictates after how many elements a separator should be inserted.
+        ///   - separator: The value to insert in between each of this async sequence’s elements.
+        /// - Returns: The interspersed asynchronous sequence of elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func interspersed(every: Int = 1, with separator: Self.Element) -> AsyncInterspersedSequence<Self>
         /// Make async iterator for the ``PaginatedRows``.
         ///
         /// - Warning:
         ///   This can be called only once for each ``PaginatedRows``,
         ///   Otherwise it will throw ``CassandraClient/Error/rowsExhausted`` error.
-        @available(macOS 12, watchOS 8, iOS 15, tvOS 15, *)
         public func makeAsyncIterator() -> AsyncIterator
         /// Iterates through all rows in all pages and applies `transform` on each.
-        @available(macOS 12, watchOS 8, iOS 15, tvOS 15, *)
         @available(*, deprecated, message: "Use AsyncSequence APIs instead.")
         public func map<T>(_ transform: @escaping (Row) throws -> T) async throws -> [T]
-        /// Iterates through all rows in all pages and applies `transform` on each.
-        @available(*, deprecated, message: "Use Swift Concurrency and AsyncSequence APIs instead.")
-        public func map<T>(_ transform: @escaping @Sendable (Row) throws -> T) -> EventLoopFuture<[T]> where T : Sendable
-        /// Fetches next page of rows or throw ``CassandraClient/Error/rowsExhausted`` error if there are no more pages.
-        public func nextPage() -> EventLoopFuture<Rows>
-        /// Fetches next page of rows or throw ``CassandraClient/Error/rowsExhausted`` error if there are no more pages.
-        @available(macOS 12, watchOS 8, iOS 15, tvOS 15, *)
-        public func nextPage() async throws -> Rows
+        /// Converts any failure into a new error.
+        ///
+        /// - Parameter transform: A closure that takes the failure as a parameter and returns a new error.
+        /// - Returns: An asynchronous sequence that maps the error thrown into the one produced by the transform closure.
+        ///
+        /// Use the ``mapError(_:)`` operator when you need to replace one error type with another.
+        @available(macOS 15.0, watchOS 11.0, iOS 18.0, visionOS 2.0, tvOS 18.0, *)
+        public func mapError<MappedError>(_ transform: @escaping @Sendable (Self.Failure) -> MappedError) -> some AsyncSequence<Self.Element, MappedError> where MappedError : Error
 
-        @available(macOS 12, watchOS 8, iOS 15, tvOS 15, *)
+        /// Converts any failure into a new error.
+        ///
+        /// - Parameter transform: A closure that takes the failure as a parameter and returns a new error.
+        /// - Returns: An asynchronous sequence that maps the error thrown into the one produced by the transform closure.
+        ///
+        /// Use the ``mapError(_:)`` operator when you need to replace one error type with another.
+        @available(macOS 15.0, watchOS 11.0, iOS 18.0, visionOS 2.0, tvOS 18.0, *)
+        public func mapError<MappedError>(_ transform: @escaping @Sendable (Self.Failure) -> MappedError) -> some Sendable & AsyncSequence<Self.Element, MappedError> where Self : Sendable, MappedError : Error, Self.Element : Sendable
+
+        /// Fetches next page of rows or throw ``CassandraClient/Error/rowsExhausted`` error if there are no more pages.
+        public func nextPage() async throws -> Rows
+        /// Returns an asynchronous sequence containing the accumulated results of combining the
+        /// elements of the asynchronous sequence using the given closure.
+        ///
+        /// This can be seen as applying the reduce function to each element and
+        /// producing an asynchronous sequence consisting of the initial value followed
+        /// by these results.
+        ///
+        /// ```
+        /// let runningTotal = [1, 2, 3, 4].async.reductions(+)
+        /// print(await Array(runningTotal))
+        ///
+        /// // prints [1, 3, 6, 10]
+        /// ```
+        ///
+        /// - Parameter transform: A closure that combines the previously reduced
+        ///   result and the next element in the receiving sequence, and returns
+        ///   the result.
+        /// - Returns: An asynchronous sequence of the reduced elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func reductions(_ transform: @escaping @Sendable (Self.Element, Self.Element) async -> Self.Element) -> AsyncInclusiveReductionsSequence<Self>
+        /// Returns an asynchronous sequence containing the accumulated results of combining the
+        /// elements of the asynchronous sequence using the given closure.
+        ///
+        /// Starting from the initial value, this combines each element of the base
+        /// asynchronous sequence with the running result and emits each intermediate
+        /// result. The initial value itself is not emitted, so the first element of
+        /// the returned sequence is the result of combining the initial value with
+        /// the first element of the base sequence. If the base sequence is empty, the
+        /// returned sequence is also empty.
+        ///
+        /// - Parameters:
+        ///   - initial: The value to use as the initial value.
+        ///   - transform: A closure that combines the previously-reduced result and
+        ///     the next element in the receiving asynchronous sequence, which it returns.
+        /// - Returns: An asynchronous sequence of the reduced elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func reductions<Result>(_ initial: Result, _ transform: @escaping @Sendable (Result, Self.Element) async -> Result) -> AsyncExclusiveReductionsSequence<Self, Result>
+        /// Returns an asynchronous sequence containing the accumulated results of combining the
+        /// elements of the asynchronous sequence using the given error-throwing closure.
+        ///
+        /// Starting from the initial value, this combines each element of the base
+        /// asynchronous sequence with the running result and emits each intermediate
+        /// result. The initial value itself is not emitted, so the first element of
+        /// the returned sequence is the result of combining the initial value with
+        /// the first element of the base sequence. If the base sequence is empty, the
+        /// returned sequence is also empty.
+        ///
+        /// - Parameters:
+        ///   - initial: The value to use as the initial value.
+        ///   - transform: A closure that combines the previously reduced result and
+        ///     the next element in the receiving asynchronous sequence and returns
+        ///     the result. If the closure throws an error, the sequence throws.
+        /// - Returns: An asynchronous sequence of the reduced elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func reductions<Result>(_ initial: Result, _ transform: @escaping @Sendable (Result, Self.Element) async throws -> Result) -> AsyncThrowingExclusiveReductionsSequence<Self, Result>
+        /// Returns an asynchronous sequence containing the accumulated results of combining the
+        /// elements of the asynchronous sequence using the given closure.
+        ///
+        /// Starting from the initial value, this combines each element of the base
+        /// asynchronous sequence with the running result and emits each intermediate
+        /// result. The initial value itself is not emitted, so the first element of
+        /// the returned sequence is the result of combining the initial value with
+        /// the first element of the base sequence. If the base sequence is empty, the
+        /// returned sequence is also empty.
+        ///
+        /// - Parameters:
+        ///   - initial: The value to use as the initial value.
+        ///   - transform: A closure that combines the previously-reduced result and
+        ///     the next element in the receiving asynchronous sequence, mutating the
+        ///     previous result instead of returning a value.
+        /// - Returns: An asynchronous sequence of the reduced elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func reductions<Result>(into initial: Result, _ transform: @escaping @Sendable (inout Result, Self.Element) async -> Void) -> AsyncExclusiveReductionsSequence<Self, Result>
+        /// Returns an asynchronous sequence containing the accumulated results of combining the
+        /// elements of the asynchronous sequence using the given error-throwing closure.
+        ///
+        /// Starting from the initial value, this combines each element of the base
+        /// asynchronous sequence with the running result and emits each intermediate
+        /// result. The initial value itself is not emitted, so the first element of
+        /// the returned sequence is the result of combining the initial value with
+        /// the first element of the base sequence. If the base sequence is empty, the
+        /// returned sequence is also empty.
+        ///
+        /// - Parameters:
+        ///   - initial: The value to use as the initial value.
+        ///   - transform: A closure that combines the previously reduced result and
+        ///     the next element in the receiving asynchronous sequence, mutating the
+        ///     previous result instead of returning a value. If the closure throws an
+        ///     error, the sequence throws.
+        /// - Returns: An asynchronous sequence of the reduced elements.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func reductions<Result>(into initial: Result, _ transform: @escaping @Sendable (inout Result, Self.Element) async throws -> Void) -> AsyncThrowingExclusiveReductionsSequence<Self, Result>
+        /// Creates an asynchronous sequence that omits repeated elements by testing them with a predicate.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public func removeDuplicates(by predicate: @escaping @Sendable (Self.Element, Self.Element) async -> Bool) -> AsyncRemoveDuplicatesSequence<Self>
+
         public struct AsyncIterator : AsyncIteratorProtocol {
-            @available(macOS 12, watchOS 8, iOS 15, tvOS 15, *)
             public mutating func next() async throws -> CassandraClient.Row?
 
             // [inherited from AsyncIteratorProtocol] 2 members
@@ -231,7 +533,7 @@ extension CassandraClient {
             mutating func next() async throws(Self.Failure) -> Self.Element?
         }
 
-        // [inherited from AsyncSequence] 23 members
+        // [inherited from AsyncSequence] 20 members
         @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
         @preconcurrency func compactMap<ElementOfResult>(_ transform: @escaping @Sendable (Self.Element) async -> ElementOfResult?) -> AsyncCompactMapSequence<Self, ElementOfResult>
         @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
@@ -269,15 +571,9 @@ extension CassandraClient {
         @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
         @preconcurrency func compactMap<ElementOfResult>(_ transform: @escaping @Sendable (Self.Element) async throws -> ElementOfResult?) -> AsyncThrowingCompactMapSequence<Self, ElementOfResult>
         @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
-        @preconcurrency func drop(while predicate: @escaping @Sendable (Self.Element) async throws -> Bool) -> AsyncThrowingDropWhileSequence<Self>
-        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
-        @preconcurrency func filter(_ isIncluded: @escaping @Sendable (Self.Element) async throws -> Bool) -> AsyncThrowingFilterSequence<Self>
-        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
         @preconcurrency func flatMap<SegmentOfResult>(_ transform: @escaping @Sendable (Self.Element) async throws -> SegmentOfResult) -> AsyncThrowingFlatMapSequence<Self, SegmentOfResult> where SegmentOfResult : AsyncSequence
         @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
         @preconcurrency func map<Transformed>(_ transform: @escaping @Sendable (Self.Element) async throws -> Transformed) -> AsyncThrowingMapSequence<Self, Transformed>
-        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
-        @preconcurrency func prefix(while predicate: @escaping @Sendable (Self.Element) async throws -> Bool) rethrows -> AsyncThrowingPrefixWhileSequence<Self>
     }
 
     /// A resulting row of a Cassandra query.
@@ -493,51 +789,42 @@ extension CassandraClient {
         /// Get column value as `[UInt8]`.
         public func column(_ name: String) -> [UInt8]?
         /// Decrypt column by index and return as `[UInt8]`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedBytes(_ index: Int, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> [UInt8]?
         /// Decrypt column by name and return as `[UInt8]`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedBytes(_ name: String, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> [UInt8]?
         /// Decrypt column by index and return as `Date`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedDate(_ index: Int, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Foundation.Date?
         /// Decrypt column by name and return as `Date`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedDate(_ name: String, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Foundation.Date?
         /// Decrypt column by index and return as `Double`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedDouble(_ index: Int, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Double?
         /// Decrypt column by name and return as `Double`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedDouble(_ name: String, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Double?
         /// Decrypt column by index and return as `Int32`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedInt32(_ index: Int, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Int32?
         /// Decrypt column by name and return as `Int32`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedInt32(_ name: String, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Int32?
         /// Decrypt column by index and return as `Int64`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedInt64(_ index: Int, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Int64?
         /// Decrypt column by name and return as `Int64`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedInt64(_ name: String, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Int64?
         /// Decrypt column by index and return as `String`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedString(_ index: Int, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> String?
         /// Decrypt column by name and return as `String`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedString(_ name: String, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> String?
         /// Decrypt column by index and return as `UUID`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedUUID(_ index: Int, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Foundation.UUID?
         /// Decrypt column by name and return as `UUID`.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public func decryptedUUID(_ name: String, encryptor: CassandraClient.Encryptor, context: CassandraClient.EncryptionContext) throws -> Foundation.UUID?
     }
 
     /// Resulting row(s) of a Cassandra query. Data are returned all at once.
     public final class Rows : Sendable, Sequence {
+        /// An asynchronous sequence containing the same elements as this sequence,
+        /// but on which operations, such as `map` and `filter`, are
+        /// implemented asynchronously.
+        @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
+        public var async: AsyncSyncSequence<Self> { get }
         public var columnsCount: Int { get }
         public var count: Int { get }
         public var first: Row? { get }
@@ -563,7 +850,7 @@ extension CassandraClient {
             public func next() -> Row?
         }
 
-        // [inherited from Sequence] 37 members
+        // [inherited from Sequence] 38 members
         func shuffled<T>(using generator: inout T) -> [Self.Element] where T : RandomNumberGenerator
         func shuffled() -> [Self.Element]
         var lazy: LazySequence<Self> { get }
@@ -599,6 +886,8 @@ extension CassandraClient {
         func sorted(by areInIncreasingOrder: (Self.Element, Self.Element) throws -> Bool) rethrows -> [Self.Element]
         @available(macOS 10.15, watchOS 6.0, iOS 13.0, tvOS 13.0, *)
         var publisher: Publishers.Sequence<Self, Never> { get }
+        @available(macOS 14, watchOS 10, iOS 17, tvOS 17, *)
+        func filter(_ predicate: Predicate<Self.Element>) throws -> [Self.Element]
         @available(macOS 12.0, watchOS 8.0, iOS 15.0, tvOS 15.0, *)
         func formatted<S>(_ style: S) -> S.FormatOutput where Self == S.FormatInput, S : FormatStyle
         @available(macOS 12.0, watchOS 8.0, iOS 15.0, tvOS 15.0, *)

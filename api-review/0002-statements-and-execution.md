@@ -2,9 +2,9 @@
 
 ## Overview
 
-- **Area:** Statements and execution — 152 of the module's public symbols.
+- **Area:** Statements and execution — 158 of the module's public symbols.
 - **Note:** This PR exists to collect API review feedback ahead of 1.0. It will be closed rather than merged; anything it settles lands as its own change.
-- **Generated from:** `Sources/CassandraClient` at `e60f45a`, with Apple Swift version 6.3.1 (swiftlang-6.3.1.1.2 clang-2100.0.123.102). Derived, not maintained by hand — see `api-review/README.md` to regenerate.
+- **Generated from:** `Sources/CassandraClient` at `3780cda`, with Apple Swift version 6.3.1 (swiftlang-6.3.1.1.2 clang-2100.0.123.102). Derived, not maintained by hand — see `api-review/README.md` to regenerate.
 
 Inherited protocol members are listed without their standard-library documentation, grouped under the protocol that declared each. Members the symbol graph does not emit are marked `[reconstructed]`.
 
@@ -19,7 +19,6 @@ extension CassandraClient {
     public struct Batch : ~Copyable {
         /// Add a prepared statement with parameters to this batch.
         /// Handles encryption context resolution automatically when encryption is configured.
-        @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
         public mutating func add(prepared: PreparedStatement, parameters: [Statement.Value], options: Statement.Options = .init()) throws
         /// Add a raw statement to this batch. Use this for non-prepared CQL statements only.
         /// For prepared statements, use ``add(prepared:parameters:options:)`` instead.
@@ -31,52 +30,58 @@ extension CassandraClient {
 
             /// The batch's consistency level.
             public var consistency: CassandraClient.Consistency?
-            /// Whether the batch is idempotent.
-            public var isIdempotent: Bool?
+            /// Whether every statement in the batch is safe to apply more than once. When `true`, the driver
+            /// may retry the batch or execute it speculatively. Default `false`.
+            public var isIdempotent: Bool
             /// The keyspace for the batch.
             public var keyspace: String?
-            /// The batch's request timeout in milliseconds.
-            public var requestTimeout: UInt64?
+            /// The batch's request timeout, rounded up to whole milliseconds. `nil` inherits
+            /// ``CassandraClient/Configuration/requestTimeout``.
+            public var requestTimeout: Duration?
             /// The batch's serial consistency level for conditional updates.
             public var serialConsistency: CassandraClient.SerialConsistency?
             /// The batch's write timestamp.
             public var timestamp: Foundation.Date?
-            /// Whether tracing is enabled for this batch.
-            public var tracing: Bool?
-            /// The batch type. Defaults to `.logged`.
-            public var type: CassandraClient.BatchType
+            /// Whether tracing is enabled for this batch. Default `false`.
+            public var tracing: Bool
+            /// The batch kind. Defaults to `.logged`.
+            public var type: Kind
+        }
+
+        /// The kind of a batch operation.
+        public struct Kind : Hashable, Sendable {
+            /// All statements must be counter updates.
+            public static var counter: `Self` { get }
+            /// All statements are applied atomically with a write to the batch log.
+            public static var logged: `Self` { get }
+            /// Statements are applied without atomicity guarantees.
+            public static var unlogged: `Self` { get }
+
+            // [inherited from Equatable] 1 member
+            static func != (lhs: Self, rhs: Self) -> Bool
+
+            // [reconstructed] 1 member guaranteed by a conformance above that the symbol graph does not emit
+            public static func == (lhs: Self, rhs: Self) -> Bool
         }
     }
 
-    /// The type of a batch operation.
-    public struct BatchType : Hashable, Sendable {
-        /// All statements must be counter updates.
-        public static let counter: CassandraClient.BatchType
-        /// All statements are applied atomically with a write to the batch log.
-        public static let logged: CassandraClient.BatchType
-        /// Statements are applied without atomicity guarantees.
-        public static let unlogged: CassandraClient.BatchType
-
-        // [inherited from Equatable] 1 member
-        static func != (lhs: Self, rhs: Self) -> Bool
-
-        // [reconstructed] 1 member guaranteed by a conformance above that the symbol graph does not emit
-        public static func == (lhs: Self, rhs: Self) -> Bool
-    }
-
     /// Consistency levels
-    public enum Consistency : Hashable, RawRepresentable, Sendable {
-        case all
-        case any
-        case eachQuorum
-        case localOne
-        case localQuorum
-        case localSerial
-        case one
-        case quorum
-        case serial
-        case three
-        case two
+    public struct Consistency : CustomStringConvertible, Hashable, RawRepresentable, Sendable {
+        public init?(rawValue: String)
+
+        public static var all: `Self` { get }
+        public static var any: `Self` { get }
+        public var description: String { get }
+        public static var eachQuorum: `Self` { get }
+        public static var localOne: `Self` { get }
+        public static var localQuorum: `Self` { get }
+        public static var localSerial: `Self` { get }
+        public static var one: `Self` { get }
+        public static var quorum: `Self` { get }
+        public var rawValue: String { get }
+        public static var serial: `Self` { get }
+        public static var three: `Self` { get }
+        public static var two: `Self` { get }
 
         // [inherited from Equatable] 1 member
         static func != (lhs: Self, rhs: Self) -> Bool
@@ -85,15 +90,12 @@ extension CassandraClient {
         var hashValue: Int { get }
         func hash(into hasher: inout Hasher)
 
-        // [compiler-synthesized] 1 member
-        init?(rawValue: String)
-
         // [reconstructed] 1 member guaranteed by a conformance above that the symbol graph does not emit
         public static func == (lhs: Self, rhs: Self) -> Bool
     }
 
     /// A server-side prepared statement that can be efficiently executed multiple times with different parameters.
-    public final class PreparedStatement : Sendable {
+    public struct PreparedStatement : Sendable {
         /// The table name for encryption context resolution.
         public let encryptionTable: String?
         /// The number of bind parameters in this prepared statement.
@@ -107,9 +109,13 @@ extension CassandraClient {
     }
 
     /// Serial consistency levels
-    public enum SerialConsistency : Hashable, RawRepresentable, Sendable {
-        case localSerial
-        case serial
+    public struct SerialConsistency : CustomStringConvertible, Hashable, RawRepresentable, Sendable {
+        public init?(rawValue: String)
+
+        public var description: String { get }
+        public static var localSerial: `Self` { get }
+        public var rawValue: String { get }
+        public static var serial: `Self` { get }
 
         // [inherited from Equatable] 1 member
         static func != (lhs: Self, rhs: Self) -> Bool
@@ -117,9 +123,6 @@ extension CassandraClient {
         // [inherited from RawRepresentable] 2 members
         var hashValue: Int { get }
         func hash(into hasher: inout Hasher)
-
-        // [compiler-synthesized] 1 member
-        init?(rawValue: String)
 
         // [reconstructed] 1 member guaranteed by a conformance above that the symbol graph does not emit
         public static func == (lhs: Self, rhs: Self) -> Bool
@@ -145,9 +148,6 @@ extension CassandraClient {
         ///
         /// - Parameter pagingSize: Rows per page. Must be in `1...Int32.max`; a non-positive size
         ///   disables paging in the driver rather than limiting the page, and is rejected here.
-        ///
-        /// - Note: The `EventLoopFuture` `execute` takes the statement as `sending`, so a hand-rolled
-        ///   loop needs a new `Statement` for each page.
         public func setPagingSize(_ pagingSize: Int) throws
         /// Sets the starting page of the returned paginated results.
         ///
@@ -156,15 +156,14 @@ extension CassandraClient {
         public func setPagingStateToken(_ pagingStateToken: OpaquePagingStateToken) throws
 
         public struct Options : CustomStringConvertible, Sendable {
-            public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: UInt64? = nil)
+            public init(consistency: CassandraClient.Consistency? = nil, requestTimeout: Duration? = nil, isIdempotent: Bool = false)
 
             /// Sets the statement's consistency level. `nil` inherits
             /// ``CassandraClient/Configuration/consistency``.
             public var consistency: CassandraClient.Consistency?
             public var description: String { get }
             /// Closure that extracts encryption context from each row during Codable decoding.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-            public var encryptionContextBuilder: (@Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base)? { get set }
+            public var encryptionContextBuilder: (@Sendable (CassandraClient.Row) throws -> CassandraClient.EncryptionContext.Base)?
             /// Table name for column-registration-based automatic decryption.
             /// Use `"table"` (combined with the session keyspace) or `"keyspace.table"` for cross-keyspace queries.
             /// When set and a matching ``EncryptionSchema`` is registered, the decoder builds
@@ -181,109 +180,132 @@ extension CassandraClient {
             ///   check only that each encrypted value's ``EncryptionContext`` names a registered column —
             ///   a plaintext value bound to a registered column is written as-is. Neither path verifies
             ///   that a value's context names the column it is actually bound to.
-            @available(macOS 15.0, iOS 18.0, visionOS 2.0, *)
-            public var encryptionTable: String? { get set }
-            /// Sets the statement's request timeout in milliseconds. `nil` inherits
-            /// ``CassandraClient/Configuration/requestTimeoutMillis``.
-            public var requestTimeout: UInt64?
+            public var encryptionTable: String?
+            /// Whether the statement is safe to run more than once. Default `false`.
+            ///
+            /// A statement not marked idempotent is treated as unsafe to replay, which holds the driver back
+            /// from two recovery behaviors:
+            ///
+            /// - When a coordinator reports that it is overloaded, shutting down, or hit an internal
+            ///   error, the driver hands the request to the next host in its query plan instead of
+            ///   failing the call. Without this, a single node draining during a rolling restart
+            ///   surfaces as an error even though the rest of the cluster can serve the request.
+            /// - Speculative execution, configured by
+            ///   ``CassandraClient/Configuration/speculativeExecutionPolicy``, has no effect at all
+            ///   until a statement is marked safe to replay.
+            ///
+            /// - Important: Only mark a statement idempotent when running it twice leaves the same
+            ///   result as running it once. Counter updates, lightweight transactions, and appends to
+            ///   collections are not idempotent, and replaying one corrupts the value it touches.
+            ///   Plain reads, and writes that set fixed values, are.
+            ///
+            /// - Note: This has no effect on a statement added to a ``CassandraClient/Batch``. The
+            ///   driver decides whether to replay a batch from the batch's own setting, so use
+            ///   ``CassandraClient/Batch/Configuration/isIdempotent`` for that.
+            public var isIdempotent: Bool
+            /// Sets the statement's request timeout, rounded up to whole milliseconds. `nil` inherits
+            /// ``CassandraClient/Configuration/requestTimeout``.
+            public var requestTimeout: Duration?
         }
 
         /// Value types
-        public enum Value {
-            case bool(Bool)
-            case bytes([UInt8])
-            case bytesUnsafe(UnsafeBufferPointer<UInt8>)
-            case date(Foundation.Date)
-            case double(Double)
-            case doubleArray([Double])
-            case encryptedBytes(Encrypted<[UInt8]>, context: EncryptionContext? = nil)
-            case encryptedDate(Encrypted<Foundation.Date>, context: EncryptionContext? = nil)
-            case encryptedDouble(Encrypted<Double>, context: EncryptionContext? = nil)
-            case encryptedInt32(Encrypted<Int32>, context: EncryptionContext? = nil)
-            case encryptedInt64(Encrypted<Int64>, context: EncryptionContext? = nil)
-            case encryptedString(Encrypted<String>, context: EncryptionContext? = nil)
-            case encryptedUUID(Encrypted<Foundation.UUID>, context: EncryptionContext? = nil)
-            case float32(Float32)
-            case float32Array([Float32])
-            case int16(Int16)
-            case int16Array([Int16])
-            case int16BoolMap([Int16 : Bool])
-            case int16DoubleMap([Int16 : Double])
-            case int16Float32Map([Int16 : Float32])
-            case int16Int16Map([Int16 : Int16])
-            case int16Int32Map([Int16 : Int32])
-            case int16Int64Map([Int16 : Int64])
-            case int16Int8Map([Int16 : Int8])
-            case int16StringMap([Int16 : String])
-            case int16UUIDMap([Int16 : Foundation.UUID])
-            case int32(Int32)
-            case int32Array([Int32])
-            case int32BoolMap([Int32 : Bool])
-            case int32DoubleMap([Int32 : Double])
-            case int32Float32Map([Int32 : Float32])
-            case int32Int16Map([Int32 : Int16])
-            case int32Int32Map([Int32 : Int32])
-            case int32Int64Map([Int32 : Int64])
-            case int32Int8Map([Int32 : Int8])
-            case int32StringMap([Int32 : String])
-            case int32UUIDMap([Int32 : Foundation.UUID])
-            case int64(Int64)
-            case int64Array([Int64])
-            case int64BoolMap([Int64 : Bool])
-            case int64DoubleMap([Int64 : Double])
-            case int64Float32Map([Int64 : Float32])
-            case int64Int16Map([Int64 : Int16])
-            case int64Int32Map([Int64 : Int32])
-            case int64Int64Map([Int64 : Int64])
-            case int64Int8Map([Int64 : Int8])
-            case int64StringMap([Int64 : String])
-            case int64UUIDMap([Int64 : Foundation.UUID])
-            case int8(Int8)
-            case int8Array([Int8])
-            case int8BoolMap([Int8 : Bool])
-            case int8DoubleMap([Int8 : Double])
-            case int8Float32Map([Int8 : Float32])
-            case int8Int16Map([Int8 : Int16])
-            case int8Int32Map([Int8 : Int32])
-            case int8Int64Map([Int8 : Int64])
-            case int8Int8Map([Int8 : Int8])
-            case int8StringMap([Int8 : String])
-            case int8UUIDMap([Int8 : Foundation.UUID])
-            case null
-            case rawDate(daysSinceEpoch: UInt32)
-            case rawTimestamp(millisecondsSinceEpoch: Int64)
-            case string(String)
-            case stringArray([String])
-            case stringBoolMap([String : Bool])
-            case stringDoubleMap([String : Double])
-            case stringFloat32Map([String : Float32])
-            case stringInt16Map([String : Int16])
-            case stringInt32Map([String : Int32])
-            case stringInt64Map([String : Int64])
-            case stringInt8Map([String : Int8])
-            case stringStringMap([String : String])
-            case stringUUIDMap([String : Foundation.UUID])
-            case timeuuid(TimeBasedUUID)
-            case timeuuidBoolMap([TimeBasedUUID : Bool])
-            case timeuuidDoubleMap([TimeBasedUUID : Double])
-            case timeuuidFloat32Map([TimeBasedUUID : Float32])
-            case timeuuidInt16Map([TimeBasedUUID : Int16])
-            case timeuuidInt32Map([TimeBasedUUID : Int32])
-            case timeuuidInt64Map([TimeBasedUUID : Int64])
-            case timeuuidInt8Map([TimeBasedUUID : Int8])
-            case timeuuidStringMap([TimeBasedUUID : String])
-            case timeuuidUUIDMap([TimeBasedUUID : Foundation.UUID])
-            case uuid(Foundation.UUID)
-            case uuidArray([Foundation.UUID])
-            case uuidBoolMap([Foundation.UUID : Bool])
-            case uuidDoubleMap([Foundation.UUID : Double])
-            case uuidFloat32Map([Foundation.UUID : Float32])
-            case uuidInt16Map([Foundation.UUID : Int16])
-            case uuidInt32Map([Foundation.UUID : Int32])
-            case uuidInt64Map([Foundation.UUID : Int64])
-            case uuidInt8Map([Foundation.UUID : Int8])
-            case uuidStringMap([Foundation.UUID : String])
-            case uuidUUIDMap([Foundation.UUID : Foundation.UUID])
+        public struct Value : CustomStringConvertible {
+            public var description: String { get }
+            public static var null: Value { get }
+
+            public static func bool(_ value: Bool) -> Value
+            public static func bytes(_ value: [UInt8]) -> Value
+            public static func bytesUnsafe(_ value: UnsafeBufferPointer<UInt8>) -> Value
+            public static func date(_ value: Foundation.Date) -> Value
+            public static func double(_ value: Double) -> Value
+            public static func doubleArray(_ value: [Double]) -> Value
+            public static func encryptedBytes(_ value: Encrypted<[UInt8]>, context: EncryptionContext? = nil) -> Value
+            public static func encryptedDate(_ value: Encrypted<Foundation.Date>, context: EncryptionContext? = nil) -> Value
+            public static func encryptedDouble(_ value: Encrypted<Double>, context: EncryptionContext? = nil) -> Value
+            public static func encryptedInt32(_ value: Encrypted<Int32>, context: EncryptionContext? = nil) -> Value
+            public static func encryptedInt64(_ value: Encrypted<Int64>, context: EncryptionContext? = nil) -> Value
+            public static func encryptedString(_ value: Encrypted<String>, context: EncryptionContext? = nil) -> Value
+            public static func encryptedUUID(_ value: Encrypted<Foundation.UUID>, context: EncryptionContext? = nil) -> Value
+            public static func float32(_ value: Float32) -> Value
+            public static func float32Array(_ value: [Float32]) -> Value
+            public static func int16(_ value: Int16) -> Value
+            public static func int16Array(_ value: [Int16]) -> Value
+            public static func int16BoolMap(_ value: [Int16 : Bool]) -> Value
+            public static func int16DoubleMap(_ value: [Int16 : Double]) -> Value
+            public static func int16Float32Map(_ value: [Int16 : Float32]) -> Value
+            public static func int16Int16Map(_ value: [Int16 : Int16]) -> Value
+            public static func int16Int32Map(_ value: [Int16 : Int32]) -> Value
+            public static func int16Int64Map(_ value: [Int16 : Int64]) -> Value
+            public static func int16Int8Map(_ value: [Int16 : Int8]) -> Value
+            public static func int16StringMap(_ value: [Int16 : String]) -> Value
+            public static func int16UUIDMap(_ value: [Int16 : Foundation.UUID]) -> Value
+            public static func int32(_ value: Int32) -> Value
+            public static func int32Array(_ value: [Int32]) -> Value
+            public static func int32BoolMap(_ value: [Int32 : Bool]) -> Value
+            public static func int32DoubleMap(_ value: [Int32 : Double]) -> Value
+            public static func int32Float32Map(_ value: [Int32 : Float32]) -> Value
+            public static func int32Int16Map(_ value: [Int32 : Int16]) -> Value
+            public static func int32Int32Map(_ value: [Int32 : Int32]) -> Value
+            public static func int32Int64Map(_ value: [Int32 : Int64]) -> Value
+            public static func int32Int8Map(_ value: [Int32 : Int8]) -> Value
+            public static func int32StringMap(_ value: [Int32 : String]) -> Value
+            public static func int32UUIDMap(_ value: [Int32 : Foundation.UUID]) -> Value
+            public static func int64(_ value: Int64) -> Value
+            public static func int64Array(_ value: [Int64]) -> Value
+            public static func int64BoolMap(_ value: [Int64 : Bool]) -> Value
+            public static func int64DoubleMap(_ value: [Int64 : Double]) -> Value
+            public static func int64Float32Map(_ value: [Int64 : Float32]) -> Value
+            public static func int64Int16Map(_ value: [Int64 : Int16]) -> Value
+            public static func int64Int32Map(_ value: [Int64 : Int32]) -> Value
+            public static func int64Int64Map(_ value: [Int64 : Int64]) -> Value
+            public static func int64Int8Map(_ value: [Int64 : Int8]) -> Value
+            public static func int64StringMap(_ value: [Int64 : String]) -> Value
+            public static func int64UUIDMap(_ value: [Int64 : Foundation.UUID]) -> Value
+            public static func int8(_ value: Int8) -> Value
+            public static func int8Array(_ value: [Int8]) -> Value
+            public static func int8BoolMap(_ value: [Int8 : Bool]) -> Value
+            public static func int8DoubleMap(_ value: [Int8 : Double]) -> Value
+            public static func int8Float32Map(_ value: [Int8 : Float32]) -> Value
+            public static func int8Int16Map(_ value: [Int8 : Int16]) -> Value
+            public static func int8Int32Map(_ value: [Int8 : Int32]) -> Value
+            public static func int8Int64Map(_ value: [Int8 : Int64]) -> Value
+            public static func int8Int8Map(_ value: [Int8 : Int8]) -> Value
+            public static func int8StringMap(_ value: [Int8 : String]) -> Value
+            public static func int8UUIDMap(_ value: [Int8 : Foundation.UUID]) -> Value
+            public static func rawDate(daysSinceEpoch: UInt32) -> Value
+            public static func rawTimestamp(millisecondsSinceEpoch: Int64) -> Value
+            public static func string(_ value: String) -> Value
+            public static func stringArray(_ value: [String]) -> Value
+            public static func stringBoolMap(_ value: [String : Bool]) -> Value
+            public static func stringDoubleMap(_ value: [String : Double]) -> Value
+            public static func stringFloat32Map(_ value: [String : Float32]) -> Value
+            public static func stringInt16Map(_ value: [String : Int16]) -> Value
+            public static func stringInt32Map(_ value: [String : Int32]) -> Value
+            public static func stringInt64Map(_ value: [String : Int64]) -> Value
+            public static func stringInt8Map(_ value: [String : Int8]) -> Value
+            public static func stringStringMap(_ value: [String : String]) -> Value
+            public static func stringUUIDMap(_ value: [String : Foundation.UUID]) -> Value
+            public static func timeuuid(_ value: TimeBasedUUID) -> Value
+            public static func timeuuidBoolMap(_ value: [TimeBasedUUID : Bool]) -> Value
+            public static func timeuuidDoubleMap(_ value: [TimeBasedUUID : Double]) -> Value
+            public static func timeuuidFloat32Map(_ value: [TimeBasedUUID : Float32]) -> Value
+            public static func timeuuidInt16Map(_ value: [TimeBasedUUID : Int16]) -> Value
+            public static func timeuuidInt32Map(_ value: [TimeBasedUUID : Int32]) -> Value
+            public static func timeuuidInt64Map(_ value: [TimeBasedUUID : Int64]) -> Value
+            public static func timeuuidInt8Map(_ value: [TimeBasedUUID : Int8]) -> Value
+            public static func timeuuidStringMap(_ value: [TimeBasedUUID : String]) -> Value
+            public static func timeuuidUUIDMap(_ value: [TimeBasedUUID : Foundation.UUID]) -> Value
+            public static func uuid(_ value: Foundation.UUID) -> Value
+            public static func uuidArray(_ value: [Foundation.UUID]) -> Value
+            public static func uuidBoolMap(_ value: [Foundation.UUID : Bool]) -> Value
+            public static func uuidDoubleMap(_ value: [Foundation.UUID : Double]) -> Value
+            public static func uuidFloat32Map(_ value: [Foundation.UUID : Float32]) -> Value
+            public static func uuidInt16Map(_ value: [Foundation.UUID : Int16]) -> Value
+            public static func uuidInt32Map(_ value: [Foundation.UUID : Int32]) -> Value
+            public static func uuidInt64Map(_ value: [Foundation.UUID : Int64]) -> Value
+            public static func uuidInt8Map(_ value: [Foundation.UUID : Int8]) -> Value
+            public static func uuidStringMap(_ value: [Foundation.UUID : String]) -> Value
+            public static func uuidUUIDMap(_ value: [Foundation.UUID : Foundation.UUID]) -> Value
         }
     }
 }
