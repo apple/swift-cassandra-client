@@ -84,7 +84,7 @@ final class RequestLoggingTests: XCTestCase {
         CassandraClient.RequestLog.checkSlowSuccess(
             startedAt: past,
             query: "SELECT 1",
-            thresholdMillis: 0,
+            threshold: .zero,
             logger: logger
         )
         let entries = capture.all
@@ -101,7 +101,7 @@ final class RequestLoggingTests: XCTestCase {
         CassandraClient.RequestLog.checkSlowSuccess(
             startedAt: past,
             query: "SELECT 1",
-            thresholdMillis: nil,
+            threshold: nil,
             logger: logger
         )
         XCTAssertTrue(capture.all.isEmpty)
@@ -114,7 +114,7 @@ final class RequestLoggingTests: XCTestCase {
         CassandraClient.RequestLog.checkSlowSuccess(
             startedAt: past,
             query: "SELECT 1",
-            thresholdMillis: 600_000,
+            threshold: .seconds(600),
             logger: logger
         )
         XCTAssertTrue(capture.all.isEmpty)
