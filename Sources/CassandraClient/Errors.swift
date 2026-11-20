@@ -803,6 +803,30 @@ extension CassandraClient.Error: LocalizedError {
     public var errorDescription: String? { self.description }
 }
 
+extension CassandraClient.Error {
+    /// The coordinator rejected the request before execution began, so the statement had no
+    /// effect and is always safe to retry on another coordinator — even when the statement is
+    /// not idempotent.
+    ///
+    /// This is true for a bootstrapping node (which never processes the request), for
+    /// `UNAVAILABLE` (the coordinator found too few replicas before contacting any of them), and
+    /// for the `OVERLOADED` response a node sends while shutting down (server message
+    /// "Server is shutting down"). A genuinely overloaded server is not covered here, since the
+    /// request may have been applied before the overload response.
+    public var wasRequestUnexecuted: Bool {
+        switch self.code {
+        case .serverBootstrapping, .serverUnavailable:
+            return true
+        case .serverOverloaded(let message):
+            return message.contains(Self.serverShuttingDownMessage)
+        default:
+            return false
+        }
+    }
+
+    private static let serverShuttingDownMessage = "Server is shutting down"
+}
+
 extension CassandraClient {
     public struct ConfigurationError: Swift.Error, CustomStringConvertible {
         public let message: String
