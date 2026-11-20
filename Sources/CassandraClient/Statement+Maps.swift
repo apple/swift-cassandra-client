@@ -205,4 +205,44 @@ extension CassandraClient.Statement {
             throw CassandraClient.Error.badParams("Map element of type \(T.self) is not supported")
         }
     }
+
+    func bindUDTMapCases(_ parameter: Value, at index: Int, keyspaceMeta: OpaquePointer) throws -> CassError {
+        switch parameter {
+        case .stringUDTMap(let map):
+            return try self.bindUDTMap(map, at: index, keyspaceMeta: keyspaceMeta)
+        case .int32UDTMap(let map):
+            return try self.bindUDTMap(map, at: index, keyspaceMeta: keyspaceMeta)
+        case .uuidUDTMap(let map):
+            return try self.bindUDTMap(map, at: index, keyspaceMeta: keyspaceMeta)
+        default:
+            fatalError("Not a UDT map case")
+        }
+    }
+
+    private func bindUDTMap<K>(
+        _ map: [K: CassandraClient.UDT],
+        at index: Int,
+        keyspaceMeta: OpaquePointer
+    ) throws -> CassError {
+        guard let collection = cass_collection_new(CASS_COLLECTION_TYPE_MAP, map.count * 2) else {
+            throw CassandraClient.Error.badParams("Failed to create collection")
+        }
+        defer { cass_collection_free(collection) }
+
+        for (key, udt) in map {
+            let keyResult = try self.appendToCollection(collection, element: key)
+            guard keyResult == CASS_OK else {
+                throw CassandraClient.Error(keyResult)
+            }
+
+            let userType = try self.makeUserType(udt, keyspaceMeta: keyspaceMeta)
+            defer { cass_user_type_free(userType) }
+            let valueResult = cass_collection_append_user_type(collection, userType)
+            guard valueResult == CASS_OK else {
+                throw CassandraClient.Error(valueResult)
+            }
+        }
+
+        return cass_statement_bind_collection(self.rawPointer, index, collection)
+    }
 }
