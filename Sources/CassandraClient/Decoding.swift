@@ -370,6 +370,16 @@ extension CassandraClient {
                     throw self.columnFailure(type, forKey: key)
                 }
                 return value as! T
+            } else if type == Foundation.Decimal.self {
+                guard let value: Foundation.Decimal = row.column(key.stringValue)?.decimal else {
+                    throw self.columnFailure(type, forKey: key)
+                }
+                return value as! T
+            } else if type == [Foundation.Decimal].self {
+                guard let value: [Foundation.Decimal] = row.column(key.stringValue) else {
+                    throw self.columnFailure(type, forKey: key)
+                }
+                return value as! T
             } else {
                 throw DecodingError.unsupportedType(
                     type,
