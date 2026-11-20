@@ -1052,6 +1052,11 @@ extension CassandraClient {
                     self.configuration.logBoundValues
                     ? CassandraClient.RequestLog.formatValues(statement.parameters) : nil
                 let startedAt = DispatchTime.now()
+                do {
+                    try self.bindUDTsIfNeeded(statement)
+                } catch {
+                    return eventLoop.makeFailedFuture(error)
+                }
                 let future = self.underlying.execute(statement: statement)
                 return CassandraClient.RequestLog.instrument(
                     future.asNIOFuture(eventLoop: eventLoop),
@@ -1063,6 +1068,19 @@ extension CassandraClient {
                     logger: logger
                 )
             }
+        }
+
+        /// Resolve and bind any UDT parameters from the connected session's schema metadata.
+        /// No-op when the statement has no UDT parameters.
+        private func bindUDTsIfNeeded(_ statement: Statement) throws {
+            guard statement.needsUDTBinding else { return }
+            guard let schemaMeta = self.underlying.getSchemaMeta() else {
+                throw CassandraClient.Error.badParams(
+                    "Cannot retrieve schema metadata to resolve UDT types"
+                )
+            }
+            defer { cass_schema_meta_free(schemaMeta) }
+            try statement.bindUDTs(schemaMeta: schemaMeta, keyspace: self.keyspace)
         }
 
         func execute(
@@ -1887,6 +1905,7 @@ extension CassandraClient.Session {
             let boundValues =
                 self.configuration.logBoundValues
                 ? CassandraClient.RequestLog.formatValues(statement.parameters) : nil
+            try self.bindUDTsIfNeeded(statement)
             let startedAt = DispatchTime.now()
             return try await CassandraClient.RequestTrace.traced(
                 .execute,
